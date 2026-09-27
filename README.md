@@ -186,3 +186,4 @@
 * **ランタイム実測検証**:
   * `/api/health` 実測: `build_version="learned-reply-v3.1"`, `pid=48768`
   * ポート 8000 リスナー: 1 系統のみ稼働実測確認
+"# aichatapp" 

@@ -270,6 +270,43 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - 長さ適応は傾向情報のみで、LLM が無視すれば膨張は起こり得る。実 LLM での効果測定は未実施（今回はモック確認のみ）。
 - 維持したもの: HARD INVARIANTS（話者分離・架空自己開示禁止・さん付け・オウム返し禁止等）、JSON・3案独立、Tone Hard Lock、Batch/History/Learning/Manual Replacement フロー、followup 構造・催促禁止。
 
+## Step 3 実装結果（counterpart_intent 分類の導入）
+
+- 実施日: 2026-09-28 / コミット: `feat: add counterpart intent classification`
+- 成功条件の達成: 「相手が質問している／単なる報告／感情共有／誘い等」を区別する情報が Prompt に入るようになった。
+
+### Intentの種類（6種・優先順位つき）
+
+- `question`（相手の質問）> `invitation`（誘い・提案）> `answer_required`（疑問符なし要回答連絡）> `emotional_share`（感情・悩みの共有）> `reaction`（感情・リアクション）> `report`（情報共有・デフォルト）
+- `report` だから短文必須、`question` だから質問返し必須のような Hard Rule は作っていない（強い参考情報として扱う）。`report → 質問禁止` のような新固定ルールもなし（Step 2 の質問任意化を維持）。
+
+### 判定方法
+
+- 新規 `prompt.classify_counterpart_intent(text)`（`backend/app/ai/prompt.py`）。LLM 不使用の決定論的ルール。
+  - question: `？/?`・疑問語尾（ですか/ますか/でしょうか/かな/かい/だっけ/っけ等）・疑問詞（どこ/いつ/なに/何時/誰/どれ/どっち等）・「どう」（どうでも/どうだってを除外）。
+  - invitation: 行こう/しよう/一緒に/しませんか/食べに行等の誘い表現。
+  - answer_required: 集合/待ち合わせ/待ってる/空いてる/来れる/了解等（「よろしく」は挨拶誤爆のため除外）。
+  - emotional_share: しんど/つら/悲し/嫌な/落ち込/最悪/悩/怒られ/泣等＋「最近〜疲れ」型。医学的診断はしない（会話上の分類のみ）。「疲れた」単体は reaction 側に譲る。
+  - reaction: 眠/疲れた/やば/楽しみ/笑等のリアクション表現。
+  - report: 上記いずれにも該当しない場合のデフォルト。
+- `build_conversation_state_ledger()` に `counterpart_intent` を追加（相手直近文から算出。履歴なし時は `report`）。`_build_context()` の `pieces["conversation_ledger"]` 経由で将来 retrieval 等からも取得可能な構造。
+
+### Promptへの反映
+
+- Block 3（CONVERSATION STATE）に `【COUNTERPART INTENT】`＋Intent別方針（`_INTENT_POLICIES`）を追加。例: report →「無理に質問して会話を延長しない。短いリアクションだけでもよい」/ question →「回答を最優先。回答だけで成立するなら無理に追加質問しない」/ emotional_share →「まず自然に反応。質問攻めにしない」。
+- followup モードには方針文を出さない（独自の役割構造を優先）が、ledger 自体は共通。
+- `score_candidate_style()`・`learning/retrieval.py` は無変更（仕様通り）。
+
+### テスト結果
+
+- 新規 `backend/tests/test_counterpart_intent.py`（16件）: Test 1〜6（仕様の例文どおりに分類）＋優先順位（`今週どっか行く？`→question）＋疲れた系の切り分け＋デフォルト/空文＋Ledger 配線＋Prompt 反映（全6 Intent）＋E2E（実メッセージ→context→prompt）＋report 時の短文返信 E2E。
+- `python -m pytest backend/tests -q` → **138 passed**（Step 2 時点 122 件＋新規 16 件）。無関係テストの失敗なし。
+
+### 誤判定と残課題
+
+- 検証中に1件の誤判定を発見し修正: 「はじめまして！よろしくお願いします」が `answer_required` になっていた（`よろしく` が広すぎ）。パターンから `よろしく` を除外して解消。
+- 残課題: 皮肉・冗談・文脈依存の意図は取れない（決定論ルールの限界）。`ほんと？` のような疑問符つきリアクションは priority 通り `question` になる。Naturalness Judge・Emotion/Intent の LLM 化・Repetition Detection・Memory relevance は未実装（対象外）。実 LLM での効果測定は未実施。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

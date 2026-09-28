@@ -244,6 +244,7 @@ def build_conversation_state_ledger(messages: list[dict[str, Any]], condition: s
             "already_asked_questions": [],
             "already_answered_topics": [],
             "current_topic": "会話開始",
+            "counterpart_intent": "report",
             "unresolved_question": None,
             "last_contact_message": "",
             "latest_user_intent": condition.strip() or "自然な返信",
@@ -283,6 +284,7 @@ def build_conversation_state_ledger(messages: list[dict[str, Any]], condition: s
         "known_self_facts": self_msgs[-10:] if self_msgs else [],
         "already_asked_questions": asked_qs[-10:],
         "current_topic": current_topic,
+        "counterpart_intent": classify_counterpart_intent(last_contact),
         "unresolved_question": unresolved_q,
         "last_contact_message": last_contact,
         "latest_user_intent": condition.strip() or "自然な返信",
@@ -323,6 +325,103 @@ def classify_message_length(text: str) -> str:
     if n <= 80:
         return "medium"
     return "long"
+
+
+# --- Step 3: 相手意図の決定論的分類（LLM 不使用の軽量ルール） ---
+# 優先順位: question > invitation > answer_required > emotional_share > reaction > report
+_INTENT_QUESTION_KEYWORDS = (
+    "どこ", "いつ", "なに", "何時", "何時", "誰", "どれ", "どっち", "どちら", "なぜ", "どうして",
+)
+_INTENT_QUESTION_ENDINGS = re.compile(
+    r"(?:ですか|ますか|でしょうか|だろうか|のかな|かな|かい|だっけ|っけ|？|\?)\s*$"
+)
+_INTENT_QUESTION_PARTICLES = re.compile(r"(?:なに|何[がをにへ])")
+_INTENT_INVITATION = re.compile(
+    r"行こう|来なよ|来てよ|しようよ|しよう|一緒に|しませんか|行きませんか|来ませんか"
+    r"|食べに行|飲みに行|遊びに行|観に行|見に行|今度.{0,10}(?:行|会|食|飲|遊)"
+)
+_INTENT_ANSWER_REQUIRED = re.compile(
+    r"集合|待ち合わせ|待ってる|待ってます|空いてる|空いてます|来れる|来られます"
+    r"|大丈夫そう|了解"
+)
+_INTENT_EMOTIONAL = re.compile(
+    r"しんど|つら|辛い|悲し|嫌な|嫌だっ|落ち込|最悪|凹|へこ|悩|怒られ|泣"
+    r"|(?:最近|なんか|ずっと|毎日).{0,8}疲れ"
+)
+_INTENT_REACTION = re.compile(
+    r"眠|疲れた|やば|楽しみ|嬉し|うれし|最高|笑|よかった|びっくり|すご|まじ|ウケる|草|おつかれ|お疲れ"
+)
+
+
+# Step 3: Intent ごとの返信方針（強い参考情報。Hard Rule ではない）
+_INTENT_POLICIES = {
+    "question": (
+        "相手の質問への回答を最優先すること。回答を無視して別の話題へ移らないこと。"
+        "回答だけで自然に成立するなら、無理に追加質問しないこと。"
+    ),
+    "invitation": (
+        "相手の提案・誘いに対する自分の意思を優先して返信すること。"
+        "架空の予定や意思を作らないこと。"
+    ),
+    "answer_required": (
+        "相手が求めている回答・確認を優先すること。"
+    ),
+    "report": (
+        "相手は単純に情報共有している。無理に質問して会話を延長しないこと。"
+        "短いリアクションだけでもよい（質問することも許可する）。"
+    ),
+    "reaction": (
+        "相手の感情・リアクションに自然に反応すること。質問は必要な場合だけにすること。"
+    ),
+    "emotional_share": (
+        "まず相手の感情共有に自然に反応すること。質問攻めにしないこと。"
+        "相手が話を続けたい可能性が高い場合のみ、自然な質問を検討すること。"
+    ),
+}
+
+
+def classify_counterpart_intent(text: str) -> str:
+    """相手の直近メッセージの意図を決定論的に分類する（Step 3）。
+
+    返り値: question / invitation / answer_required / emotional_share / reaction / report。
+    完璧な自然言語理解ではなく、返信方針を決めるための強い参考情報。
+    医学的・心理学的診断は行わない（emotional_share は会話上の分類のみ）。
+    """
+    t = (text or "").strip()
+    if not t:
+        return "report"
+
+    # 1. question: 疑問符・疑問語尾・疑問詞
+    if "？" in t or "?" in t:
+        return "question"
+    if _INTENT_QUESTION_ENDINGS.search(t):
+        return "question"
+    if any(k in t for k in _INTENT_QUESTION_KEYWORDS):
+        return "question"
+    if _INTENT_QUESTION_PARTICLES.search(t):
+        return "question"
+    # 「どう」は「どうでも」「どうだって」を除外して判定
+    if "どう" in t and "どうでも" not in t and "どうだって" not in t:
+        return "question"
+
+    # 2. invitation: 誘い・提案
+    if _INTENT_INVITATION.search(t):
+        return "invitation"
+
+    # 3. answer_required: 疑問符なしで回答・確認を求める連絡
+    if _INTENT_ANSWER_REQUIRED.search(t):
+        return "answer_required"
+
+    # 4. emotional_share: 感情・悩み・落ち込みの共有（「疲れた」単体は reaction 側で扱う）
+    if _INTENT_EMOTIONAL.search(t):
+        return "emotional_share"
+
+    # 5. reaction: 感情・リアクション表現
+    if _INTENT_REACTION.search(t):
+        return "reaction"
+
+    # 6. report: 上記いずれでもない情報共有（デフォルト）
+    return "report"
 
 
 def build_system_prompt(
@@ -466,6 +565,9 @@ def build_system_prompt(
         asked_list = conversation_ledger.get("already_asked_questions") or []
         unresolved = conversation_ledger.get("unresolved_question")
         last_c_msg = conversation_ledger.get("last_contact_message") or ""
+        intent = (conversation_ledger.get("counterpart_intent") or "report").strip() or "report"
+        if intent not in _INTENT_POLICIES:
+            intent = "report"
         ledger_lines = [
             "【CONVERSATION STATE & CONTEXT CONTINUATION】（会話状態・文脈継続）",
         ]
@@ -474,6 +576,8 @@ def build_system_prompt(
         else:
             if last_c_msg:
                 ledger_lines.append(f"★（最優先返答対象）相手（{contact_name}さん）の直前の最新メッセージ:\n「{last_c_msg}」\n※まずこのメッセージ内容に対する反応・共感から返信を始めること。")
+            ledger_lines.append(f"【COUNTERPART INTENT】\n{intent}\n（相手発言の意図分類。返信方針を決めるための強い参考情報であり、Hard Rule ではない。最終判断は会話履歴・本人実例・条件を総合して行うこと）")
+            ledger_lines.append(f"- Intent別方針（{intent}）: {_INTENT_POLICIES[intent]}")
             if unresolved:
                 ledger_lines.append(f"- 相手からの直近質問（要回答）: {unresolved}")
         if asked_list:

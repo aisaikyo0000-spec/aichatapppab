@@ -13,7 +13,7 @@ import time
 from fastapi import APIRouter, HTTPException
 
 from .. import config, database, learning
-from ..ai import factory, prompt
+from ..ai import factory, naturalness, prompt
 from ..ai.base import AIError
 from ..ai.config import get_ai_config, get_contact_ai_config
 from ..schemas import GenerateRequest
@@ -1372,6 +1372,20 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     }
 
 
+def _load_recent_self_replies(contact_id: int, limit: int = 5) -> list[str]:
+    """直近の自分の送信文を取得する（Repetition 検出用）。"""
+    conn = database.get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT content FROM messages WHERE contact_id = ? AND sender = 'self'"
+            " ORDER BY id DESC LIMIT ?",
+            (contact_id, limit),
+        ).fetchall()
+        return [(r["content"] or "").strip() for r in rows if (r["content"] or "").strip()]
+    finally:
+        conn.close()
+
+
 def _create_or_update_batch(
     *,
     contact_id: int,
@@ -1517,6 +1531,9 @@ def get_learning_diagnostics():
         "style_profile_tier": hierarchical_profile["hierarchy_tier"],
         "active_profile": hierarchical_profile["active_profile"],
         "contrast_examples_count": len(contrast_examples),
+        "naturalness_enabled": True,
+        "naturalness_weight": naturalness.NATURALNESS_WEIGHT,
+        "style_weight": naturalness.STYLE_WEIGHT,
         "batches": {
             "total_batches": total_batches,
             "outcomes": batch_outcomes,
@@ -1714,22 +1731,44 @@ def generate(body: GenerateRequest):
     # 4. 括弧の除去と1文1行改行の保証
     replies = [prompt.format_one_sentence_per_line(prompt.strip_brackets(r)) for r in parsed_replies]
 
-    # 5. Soft Style Scoring と並べ替え
+    # 5. Soft Style Scoring ＋ Naturalness Scoring と並べ替え（Step 4）
+    # score_candidate_style() は維持し、その後に evaluate_candidate_naturalness() を
+    # 適用して combine_candidate_scores() で結合・ソートする。
     user_style_profile_data = ctx["pieces"].get("style_profile", {}).get("active_profile", {})
+    ledger = ctx["pieces"].get("conversation_ledger", {}) or {}
+    recent_self_replies = _load_recent_self_replies(body.contact_id, limit=5)
+    style_median = getattr(user_style_profile_data, "char_median", None)
+    counterpart_msg = ctx.get("last_contact_msg", "") or ""
     scored_items = []
     for r in replies:
         s_val, s_details = score_candidate_style(r, user_style_profile_data.__dict__ if hasattr(user_style_profile_data, "__dict__") else user_style_profile_data)
-        scored_items.append({"reply": r, "score": s_val, "details": s_details})
+        nat = naturalness.evaluate_candidate_naturalness(
+            r,
+            counterpart_message=counterpart_msg,
+            conversation_ledger=ledger,
+            recent_replies=recent_self_replies,
+            style_char_median=style_median,
+        )
+        final = naturalness.combine_candidate_scores(s_val, nat["score"])
+        scored_items.append({
+            "reply": r, "score": s_val, "details": s_details,
+            "naturalness": nat["score"], "naturalness_detail": nat,
+            "final": final,
+        })
 
-    # 通常モードのみスコア降順ソート（followupモードは役割スロット固定のため順序を整列）
+    # 通常モードのみ最終スコア降順ソート（followupモードは役割スロット固定のため順序を整列）
     if body.mode == "followup":
         # 3つの役割を正確な順序（案1: 行動報告, 案2: 軽快ツッコミ, 案3: 写真なし体験共有）に分類・配置
         sorted_replies = _align_followup_replies([item["reply"] for item in scored_items])
         style_scores = [item["score"] for item in scored_items]
+        naturalness_scores = [item["naturalness"] for item in scored_items]
+        final_scores = [item["final"] for item in scored_items]
     else:
-        scored_items.sort(key=lambda x: x["score"], reverse=True)
+        scored_items.sort(key=lambda x: x["final"], reverse=True)
         sorted_replies = [item["reply"] for item in scored_items]
         style_scores = [item["score"] for item in scored_items]
+        naturalness_scores = [item["naturalness"] for item in scored_items]
+        final_scores = [item["final"] for item in scored_items]
 
     # 6. 履歴保存（ソート後の順序で各候補を個別に保存、batch_id を付与）
     history_ids = _record_history(
@@ -1754,6 +1793,8 @@ def generate(body: GenerateRequest):
         "replies": sorted_replies,
         "history_ids": history_ids,
         "style_scores": style_scores,
+        "naturalness_scores": naturalness_scores,
+        "final_scores": final_scores,
         "batch_id": batch_id,
         "build_version": config.APP_BUILD_VERSION,
         "prompt_version": config.PROMPT_VERSION,

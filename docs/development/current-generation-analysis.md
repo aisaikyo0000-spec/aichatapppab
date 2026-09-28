@@ -307,6 +307,38 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - 検証中に1件の誤判定を発見し修正: 「はじめまして！よろしくお願いします」が `answer_required` になっていた（`よろしく` が広すぎ）。パターンから `よろしく` を除外して解消。
 - 残課題: 皮肉・冗談・文脈依存の意図は取れない（決定論ルールの限界）。`ほんと？` のような疑問符つきリアクションは priority 通り `question` になる。Naturalness Judge・Emotion/Intent の LLM 化・Repetition Detection・Memory relevance は未実装（対象外）。実 LLM での効果測定は未実施。
 
+## Step 4 実装結果（Naturalness Score の導入）
+
+- 実施日: 2026-09-28 / コミット: `feat: add deterministic candidate naturalness scoring`
+- 方針: LLM Judge は導入しない（コスト・レイテンシ・揺らぎ・複雑化を回避）。決定論的評価器＋将来置換可能な I/F。
+
+### Naturalness Score
+
+- 新規 `backend/app/ai/naturalness.py`（`evaluate_candidate_naturalness(candidate, counterpart_message, conversation_ledger, recent_replies, style_char_median)`）。
+- 返り値: `{"score", "penalties": [{"key", "score", "detail"}], "signals", "intent", "weights"}`。
+- 評価項目: relevance（反応・キーワード一致＋相づち加点）/ question（質問過多。1問までは許容・質問自体は減点しない）/ repetition（完全一致・near-duplicate・同じ冒頭・同じ質問形式。短い一般語は緩和）/ echo（完全一致・大部分含有・語句並べ替え＋薄い付加）/ length（相手文量比。短文相手は4倍まで許容。Hard Limit なし）/ disclosure（エピソード系自己開示の根拠確認。事実空なら中立）/ answer（回答系 Intent の完全性。具体性・キーワード・質問返し検出）/ overreact（emotional_share の過剰反応）。
+- Intent 別重み（`_INTENT_WEIGHTS`。正規化使用）。例: report は relevance/question/echo 重視、question/answer_required は answer/relevance 重視、emotional_share は overreact を評価。
+- 最終スコア: `final = style*0.40 + naturalness*0.60`（`STYLE_WEIGHT/NATURALNESS_WEIGHT` 定数。`combine_candidate_scores()`）。
+
+### Score計算・Candidate ranking
+
+- `generate()`（`routers/generation.py`）: 既存 `score_candidate_style()` を維持し、その後に naturalness を算出・結合。normal は final 降順ソート、followup は従来通り役割スロット整列（スコアは算出のみ）。
+- 直近 self 5件を `_load_recent_self_replies()` で取得し repetition に使用。`known_self_facts`（ledger）・文量中央値（style profile）を length/disclosure に使用。
+- Hard Violation（架空開示・話者混同・Tone 等）は既存 validation が優先。スコアは選別に使わない。
+- 応答に `naturalness_scores/final_scores` を追加（UI 表示はしない。frontend 無変更）。`GET /api/learning/diagnostics` に `naturalness_enabled/naturalness_weight/style_weight` を追加。
+
+### テスト結果
+
+- 新規 `backend/tests/test_naturalness.py`（18件）: Test 1〜9（短文高評価・過剰質問・話題無視・Echo・長文・質問回答・質問無視・繰り返し・架空開示）＋最重要 Test 17（A短反応 > B質問過多 > C Echo寄り）＋質問カウント・Echo・結合式・E2E（final 降順＋先頭が自然な短反応）＋diagnostics。
+- `python -m pytest backend/tests -q` → **156 passed**（Step 3 時点 138 件＋新規 18 件）。
+
+### 調整と残課題
+
+- 統合時に既存 `test_soft_style_scoring_and_candidate_sorting` が1件失敗（final 順で style_scores が非降順＋本命案が2位に後退）。原因は repetition・length の過剰反応2点で、いずれも実装を修正（テストの期待は変えず）:
+  1. repetition の中一致帯（0.5〜0.8）は同じ冒頭・同じ質問形式を伴う場合のみ減点（同話題の語彙共有＝本人らしさと区別。`test_8c` で固定）。
+  2. 短文相手の長さ許容を4倍まで緩和（本人の通常文量を罰しない）。
+- 残課題: 皮肉・冗談・文脈依存の適合は未評価。重み（0.40/0.60）は暫定で実データによる調整が必要。実 LLM での効果測定は未実施。LLM Judge への置換 I/F（`evaluate_candidate_naturalness` の入出力）は確保済み。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

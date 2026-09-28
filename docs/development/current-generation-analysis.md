@@ -339,6 +339,46 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
   2. 短文相手の長さ許容を4倍まで緩和（本人の通常文量を罰しない）。
 - 残課題: 皮肉・冗談・文脈依存の適合は未評価。重み（0.40/0.60）は暫定で実データによる調整が必要。実 LLM での効果測定は未実施。LLM Judge への置換 I/F（`evaluate_candidate_naturalness` の入出力）は確保済み。
 
+## Step 5 実装結果（生成品質評価パイプライン）
+
+- 実施日: 2026-09-28 / コミット: `feat: add generation quality evaluation pipeline`
+- 方針: 生成ロジック・Prompt・Naturalness 重み・Conversation State は変更しない。測定基盤の構築のみ。
+
+### 評価DB
+
+- 新規 `generation_evaluations`（`backend/app/database.py` SCHEMA。`init_db` で自動作成。既存DBにも冪等作成）。
+- 列: `id / generation_batch_id / history_id(UNIQUE) / candidate_index（提示順0始まり）/ counterpart_intent / naturalness_score / style_score / final_score / human_rating（good|neutral|bad|NULL）/ human_feedback / feedback_tags（JSON配列）/ created_at / updated_at`。
+- 会話本文は重複保存しない（`history_id`→`generation_history`、`generation_batch_id`→`generation_batches`→`trigger_message_id`→`messages` で復元）。
+
+### 評価API
+
+- 新規 `backend/app/routers/evaluations.py`（`main.py` に登録。既存の `/api/history` 流の命名・Pydantic 規約に準拠）。
+- `POST /api/evaluations {history_id, rating?, feedback?, feedback_tags?}`: 人間評価の upsert（同一 history_id は後勝ちで行増殖なし）。**自動スコア列には一切触れない**（不一致は分析材料として保持）。rating は good/neutral/bad のみ（他は422）、tags は allowlist 外で422、存在しない history_id は404。自動行がない旧履歴への後付け時は batch/candidate_index/intent を補完して作成。
+- `GET /api/evaluations?batch_id?&rating=good|neutral|bad|unrated&limit`: 自動＋人間評価＋候補文・相手直前文を結合して新しい順に返却。
+- `schemas.py` に `EvaluationCreate/EvaluationOut` を追加。UI は API のみ（frontend 無変更。評価ボタンは残課題）。
+
+### 人間評価・自動評価
+
+- 人間評価の意味: good＝そのまま送れる / neutral＝少し修正すれば送れる / bad＝AIっぽい・意味がおかしい等。理由タグ（ai_like/irrelevant/too_long/too_short/too_many_questions/echo/repetition/awkward/wrong_tone/unsupported_self_disclosure/good/natural。任意）。
+- 自動評価は `POST /api/generate` 時に `_save_auto_evaluations()` で全候補分を保存（human 側は NULL）。学習への自動投入はしない（蓄積のみ。Gold 化は後のStepで安全な流れを検討）。
+
+### export・CLI
+
+- `scripts/export_evaluations.py [--format csv|json] [--out PATH] [--db PATH]`: batch_id/history_id/candidate_index/intent/相手文/候補文/3スコア/human 評価等を出力。関数 `export_evaluations()` としてテストからも利用可能。読み取り専用。
+- `scripts/evaluate_generation.py [--db PATH]`: Batches/Candidates/平均3スコア/Human Good-Neutral-Bad-Unrated＋不一致指標（human-bad/good の平均 naturalness）を表示。読み取り専用。
+- いずれも既存 `scripts/*.py` 規約（ROOT 解決・`__main__` ガード）に準拠。
+
+### テスト結果
+
+- 新規 `backend/tests/test_evaluations.py`（8件）: Test 1（自動行＋人間評価の保存・取得）/ 2（同一 history upsert）/ 3（NULL rating＋unrated 絞込）/ 4（不正 rating・tag・history の拒否）/ 5（batch/rating フィルタ）/ 6（CSV・JSON export の内容検証）/ 7（history との関連保全）/ 8（Naturalness の決定性＋既知順序の不変）。
+- `python -m pytest backend/tests -q` → **164 passed**（Step 4 時点 156 件＋新規 8 件）。CLI は DB 不在時の正常系メッセージと `--help` を手動確認。
+
+### 今後の分析課題
+
+- human-bad かつ naturalness 高の事例収集→評価器の弱点特定（`Avg Nat (human-bad)` 指標を用意済み）。
+- Good 蓄積後の Gold 候補化フロー（要 human 確認。自動投入はしない）。
+- 評価ボタン UI（`👍そのまま送れる / 😐修正が必要 / 👎不自然`）の追加は、既存画面構造の確認後に検討。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

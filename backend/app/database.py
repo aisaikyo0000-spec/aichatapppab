@@ -166,6 +166,24 @@ CREATE TABLE IF NOT EXISTS user_knowledge (
     answer TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS generation_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    generation_batch_id INTEGER REFERENCES generation_batches(id) ON DELETE SET NULL,
+    history_id INTEGER UNIQUE REFERENCES generation_history(id) ON DELETE CASCADE,
+    candidate_index INTEGER NOT NULL DEFAULT 0,
+    counterpart_intent TEXT NOT NULL DEFAULT '',
+    naturalness_score REAL,
+    style_score REAL,
+    final_score REAL,
+    human_rating TEXT CHECK (human_rating IN ('good', 'neutral', 'bad')),
+    human_feedback TEXT NOT NULL DEFAULT '',
+    feedback_tags TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evaluations_batch ON generation_evaluations(generation_batch_id);
+CREATE INDEX IF NOT EXISTS idx_evaluations_rating ON generation_evaluations(human_rating);
 """
 
 

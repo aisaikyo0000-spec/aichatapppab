@@ -1386,6 +1386,44 @@ def _load_recent_self_replies(contact_id: int, limit: int = 5) -> list[str]:
         conn.close()
 
 
+def _save_auto_evaluations(
+    *,
+    batch_id: int,
+    history_ids: list[int],
+    ordered_items: list[dict],
+    counterpart_intent: str,
+) -> None:
+    """生成時の自動評価（naturalness/style/final）を generation_evaluations へ保存する。
+
+    人間評価列には触れない。history_id 単位で upsert し、既存の人間評価を保持する。
+    """
+    conn = database.get_conn()
+    try:
+        now = database.now_iso()
+        for idx, (hid, item) in enumerate(zip(history_ids, ordered_items)):
+            conn.execute(
+                "INSERT INTO generation_evaluations"
+                " (generation_batch_id, history_id, candidate_index, counterpart_intent,"
+                "  naturalness_score, style_score, final_score, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(history_id) DO UPDATE SET"
+                " generation_batch_id = excluded.generation_batch_id,"
+                " candidate_index = excluded.candidate_index,"
+                " counterpart_intent = excluded.counterpart_intent,"
+                " naturalness_score = excluded.naturalness_score,"
+                " style_score = excluded.style_score,"
+                " final_score = excluded.final_score,"
+                " updated_at = excluded.updated_at",
+                (
+                    batch_id, hid, idx, counterpart_intent,
+                    item["naturalness"], item["score"], item["final"], now, now,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _create_or_update_batch(
     *,
     contact_id: int,
@@ -1760,11 +1798,14 @@ def generate(body: GenerateRequest):
     if body.mode == "followup":
         # 3つの役割を正確な順序（案1: 行動報告, 案2: 軽快ツッコミ, 案3: 写真なし体験共有）に分類・配置
         sorted_replies = _align_followup_replies([item["reply"] for item in scored_items])
-        style_scores = [item["score"] for item in scored_items]
-        naturalness_scores = [item["naturalness"] for item in scored_items]
-        final_scores = [item["final"] for item in scored_items]
+        by_reply = {item["reply"]: item for item in scored_items}
+        ordered_items = [by_reply.get(r, scored_items[i]) for i, r in enumerate(sorted_replies)]
+        style_scores = [item["score"] for item in ordered_items]
+        naturalness_scores = [item["naturalness"] for item in ordered_items]
+        final_scores = [item["final"] for item in ordered_items]
     else:
         scored_items.sort(key=lambda x: x["final"], reverse=True)
+        ordered_items = scored_items
         sorted_replies = [item["reply"] for item in scored_items]
         style_scores = [item["score"] for item in scored_items]
         naturalness_scores = [item["naturalness"] for item in scored_items]
@@ -1782,6 +1823,14 @@ def generate(body: GenerateRequest):
         tone=body.tone,
         counterpart_message=ctx.get("last_contact_msg", ""),
         batch_id=batch_id,
+    )
+
+    # 6.5 自動評価の保存（人間評価列は NULL のまま。後から POST /api/evaluations で付与）
+    _save_auto_evaluations(
+        batch_id=batch_id,
+        history_ids=history_ids,
+        ordered_items=ordered_items,
+        counterpart_intent=(ledger.get("counterpart_intent") or "report"),
     )
 
     effective_tone = body.tone or (

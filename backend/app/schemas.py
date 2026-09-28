@@ -219,3 +219,33 @@ class TrainingExampleCreate(BaseModel):
     user_feedback: str = Field(default="", max_length=2000)
     corrected_response: str = Field(default="", max_length=10000)
     rating: Optional[int] = Field(default=None, ge=1, le=5)
+
+
+class EvaluationCreate(BaseModel):
+    """人間評価の保存（upsert）。自動スコアは本APIでは変更しない。"""
+
+    history_id: int
+    rating: Optional[Literal["good", "neutral", "bad"]] = None
+    feedback: str = Field(default="", max_length=2000)
+    feedback_tags: list[str] = Field(default_factory=list)
+
+
+class EvaluationOut(BaseModel):
+    """自動評価＋人間評価の結合表示。"""
+
+    id: int
+    generation_batch_id: Optional[int] = None
+    history_id: int
+    candidate_index: int = 0
+    counterpart_intent: str = ""
+    naturalness_score: Optional[float] = None
+    style_score: Optional[float] = None
+    final_score: Optional[float] = None
+    generated_text: str = ""
+    counterpart_message: str = ""
+    contact_id: Optional[int] = None
+    human_rating: Optional[str] = None
+    human_feedback: str = ""
+    feedback_tags: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str

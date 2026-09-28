@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import config, database
-from .routers import backup, contacts, generation, history, images, knowledge, like_bot, messages, profile, settings, training
+from .routers import backup, contacts, evaluations, generation, history, images, knowledge, like_bot, messages, profile, settings, training
 
 APP_BUILD_VERSION = config.APP_BUILD_VERSION
 PROMPT_VERSION = config.PROMPT_VERSION
@@ -41,6 +41,7 @@ app.add_middleware(
 app.include_router(contacts.router)
 app.include_router(messages.router)
 app.include_router(generation.router)
+app.include_router(evaluations.router)
 app.include_router(settings.router)
 app.include_router(profile.router)
 app.include_router(knowledge.router)

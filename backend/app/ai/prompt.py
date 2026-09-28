@@ -309,6 +309,22 @@ def get_current_season_info(dt: datetime | None = None) -> tuple[str, str]:
     return season_name, restriction
 
 
+def classify_message_length(text: str) -> str:
+    """相手メッセージの長さ区分を返す（Step 2: 簡易的な長さ適応用）。
+
+    - short: 0〜20文字（短い相づち・報告には短い返信を優先）
+    - medium: 21〜80文字（2〜3行程度の自然な返信が基本）
+    - long: 81文字以上（内容に合わせた丁寧な返信をしてよい）
+    ※傾向の目安であり、Hard Limit ではない。
+    """
+    n = len((text or "").strip())
+    if n <= 20:
+        return "short"
+    if n <= 80:
+        return "medium"
+    return "long"
+
+
 def build_system_prompt(
     *,
     contact: dict[str, Any],
@@ -337,6 +353,8 @@ def build_system_prompt(
     counterpart_style: str = "",
     learned_preferences: str = "",
     same_contact_gold_block: str = "",
+    counterpart_length_tier: str = "",
+    counterpart_length_chars: int = 0,
 ) -> str:
     """8ブロック構成のシステムプロンプトを組み立てる（Conversation-Learned Reply System v3.8）。"""
     contact_name = contact.get("name") or "相手"
@@ -403,7 +421,7 @@ def build_system_prompt(
     flow_rule = (
         "11. 追いメッセージの構成: 直前の話題を続けず、各案指定のフック（行動報告 / 軽快ツッコミ / 写真なし体験共有）に基づいた軽快な文章（2〜3行）で作成すること。\n"
         if mode == "followup"
-        else "11. 自然な会話展開（3段構成）: 返信案は『①直前の相手メッセージへの反応・共感（1文） -> ②自分の短い関連一言や感想（1文） -> ③相手への自然な質問（1文）』の自然な流れ（2〜4行）で作成すること。\n"
+        else "11. 返信の長さ・構造の自由選択: 相手の発言と会話状況に応じて、以下から適切な形を選ぶこと。短いリアクション / 短い共感 / 回答だけ / リアクション＋一言 / リアクション＋質問 / 自己開示 / 自己開示＋質問 / 話題継続 / 話題終了 / 軽い冗談。毎回質問する必要はなく、毎回自己開示する必要もなく、毎回話題を広げる必要もない。相手の発言が短い場合、短い返信を優先してよい。\n"
     )
 
     b2_hard = (
@@ -416,7 +434,7 @@ def build_system_prompt(
         "6. MULTI-TOPIC RULE: 相手が複数の話題を出している場合はメインの話題に絞って自然に展開すること。\n"
         "7. 未知事項の逆質問: 相手からの質問で事実が不明な場合は、返信案を作らず [AI_QUESTION]質問内容[/AI_QUESTION] のみを出力すること。\n"
         "8. 1文1行改行の絶対遵守: 1文ごとに必ず改行を入れること。複数の文を改行なしで1行に続けてはならない（文章の改行は絶対ルール）。\n"
-        "9. 質問必須（絶対ルール）: 各返信案には必ず相手への質問（疑問文）を1つ以上含めること。会話のキャッチボールを維持するため、学習プロファイルの質問比率に関わらず全案で必ず質問を含めて終えること（※自由記述・条件に「質問しない」「質問不要」等の明示指定がある場合を除く）。既出質問の繰り返しは禁止。\n"
+        "9. 質問は任意: 質問を含めるかどうかは会話状況次第であり、質問なしの短い返信（例: 「それはきついな」「いいな」）も正式な正常系として扱うこと。相手が明確な質問をしている場合は必ず回答すること（例: 「明日何時にする？」→「14時くらいで大丈夫」）。既出質問の繰り返しは禁止。\n"
         "10. 会話継続・文脈参照: 以前の会話で相手が話した内容（趣味・予定・出来事・好み・気持ち等）を会話履歴から正確に参照し、直前の相手メッセージの話題から自然に関連付けて会話を継続すること。プロフィールの細かい単語を唐突に持ち出して直前メッセージを無視してはならない。\n"
         f"{flow_rule}"
         f"12. 本人のリアルな文体・口調の完全再現: 返信案は学習プロファイルおよび直近手入力実例の本人の文体・口調（語尾『〜ですよね！』『〜なんですよね笑笑』『〜ですかね？？』『〜ですか？？』、一人称『僕』、笑や記号の入れ方）を忠実に再現すること。\n"
@@ -486,13 +504,17 @@ def build_system_prompt(
     b4_policy = "\n\n".join(policy_parts)
 
     # Block 5: POSITIVE REPLY PAIRS / RETRIEVED USER REPLY PAIRS
+    _retrieval_note = (
+        "※検索実例はユーザーの文体・語尾・テンポの参考であり、同じ会話構造（質問・自己開示・話題展開の有無）を"
+        "毎回再現する指示ではない。実例に質問が含まれていても、今回必ず質問する必要はない。"
+    )
     if positive_pairs_block.strip():
-        b5_pairs = f"【POSITIVE REPLY PAIRS】\n【RETRIEVED USER REPLY PAIRS】\n{positive_pairs_block.strip()}"
+        b5_pairs = f"【POSITIVE REPLY PAIRS】\n【RETRIEVED USER REPLY PAIRS】\n{positive_pairs_block.strip()}\n{_retrieval_note}"
     elif retrieved_reply_pairs:
         pair_lines = []
         for idx, p in enumerate(retrieved_reply_pairs, start=1):
             pair_lines.append(f"[良例ペア {idx}]\n相手: {p.get('contact_text') or p.get('contact_turn')}\n自分: {p.get('self_text') or p.get('self_turn')}")
-        b5_pairs = "【POSITIVE REPLY PAIRS】\n【RETRIEVED USER REPLY PAIRS】\n" + "\n\n".join(pair_lines)
+        b5_pairs = "【POSITIVE REPLY PAIRS】\n【RETRIEVED USER REPLY PAIRS】\n" + "\n\n".join(pair_lines) + f"\n{_retrieval_note}"
     else:
         b5_pairs = "【POSITIVE REPLY PAIRS】\n【RETRIEVED USER REPLY PAIRS】\n(該当なし - LEARNED USER RESPONSE POLICY を基準に作成)"
 
@@ -500,6 +522,21 @@ def build_system_prompt(
     b6_contrast = contrast_block.strip()
 
     # Block 7: COUNTERPART STYLE ADAPTATION / COUNTERPART WRITING STYLE
+    # Step 2: 相手メッセージの長さ区分を傾向情報として付与（Hard Limit ではない）
+    length_lines = []
+    if counterpart_length_tier in ("short", "medium", "long"):
+        tier_label = {"short": "短文", "medium": "中文", "long": "長文"}[counterpart_length_tier]
+        length_lines.append(
+            f"【COUNTERPART MESSAGE LENGTH】相手の直近メッセージ: 約{counterpart_length_chars}文字（区分: {counterpart_length_tier}・{tier_label}）"
+        )
+        if counterpart_length_tier == "short":
+            length_lines.append("- 相手が短文のため、短いリアクション・共感・一言回答を優先し、長い文章や無理な話題拡張は避けること。")
+        elif counterpart_length_tier == "medium":
+            length_lines.append("- 2〜3行程度の自然な返信を基本とすること。")
+        else:
+            length_lines.append("- 相手の内容に合わせた丁寧な返信をしてよい。")
+        length_lines.append("※文字数のHard Limit ではない。回答に必要な長さは許容する。")
+    length_text = "\n".join(length_lines)
     cp_summary = counterpart_style_block.strip() or counterpart_style.strip()
     if cp_summary:
         b7_counterpart = (
@@ -513,6 +550,8 @@ def build_system_prompt(
             "- 自分のスタイルを土台にしつつ、相手の温度感・文量に20〜30%程度自然に適応させること。\n"
             "- 相手発言のオウム返し・コピー禁止。"
         )
+    if length_text:
+        b7_counterpart += f"\n{length_text}"
 
     # Block 8: OUTPUT CONTRACT / FINAL TASK (誤分割完全阻止契約)
     if mode == "followup":
@@ -540,13 +579,14 @@ def build_system_prompt(
         )
     else:
         b8_contract = (
-            "【OUTPUT CONTRACT】\n【FINAL TASK】出力契約（候補の多様性と独立性・誤分割禁止・1文1行改行・質問必須）\n"
+            "【OUTPUT CONTRACT】\n【FINAL TASK】出力契約（候補の多様性と独立性・誤分割禁止・1文1行改行・質問任意）\n"
             "1. 完全独立の3案（本人の文体再現・候補の多様性）: 3案それぞれが単独でそのまま送信できる完成品であること。本人の語尾や一人称、テンポを忠実に再現すること。\n"
             "   ※1つの返信文を「案1=反応、案2=自己開示、案3=質問」のように3分割して出力することは厳禁です。\n"
             "   各案がそれぞれ独立した異なる会話展開（本命、別展開、切り口違い）を持つこと（候補の多様性と独立性）。\n"
+            "   3案の構成を機械的に固定しないこと（例: 「案1=短いリアクション、案2=少し展開、案3=質問あり」のような固定パターンは禁止）。会話内容に応じて3案とも短くなることも許可する。\n"
             "2. 単なる語尾の差し替えではなく、それぞれ切り口や内容が異なること。\n"
             "3. 1文1行改行の絶対遵守: 各案は必ず1文ごとに改行を入れて出力すること。\n"
-            "4. 質問必須の絶対遵守: 3案すべてが相手への明確な質問を1つ以上含むこと（※条件に「質問しない」等の明示指定がある場合を除く）。『ほかにも』『ほかに』『他に』『〜以外』『〇〇もいいですけど』の話題逃げ・並列質問は完全禁止とし、相手が出した話題そのものを深掘りして広げること。質問を省いた案は不正とする。\n"
+            "4. 質問は任意: 質問を含めるかは会話状況次第とし、質問なしの案も正式な正常系として扱うこと。『ほかにも』『ほかに』『他に』『〜以外』『〇〇もいいですけど』の話題逃げ・並列質問は完全禁止とし、質問する場合も相手が出した話題そのものを深掘りして広げること。相手が明確な質問をしている場合は回答を含めること。\n"
             "5. 『〜とのこと』『〜と拝見』等の機械的AI表現の完全禁止: 『〇〇とのことですが』『〇〇とのこと』『〇〇と拝見しました』等の他人行儀なAI表現は完全禁止し、自然なチャット口語（『〇〇なんですね！』『〇〇いいですね！』）にすること。\n"
             "6. 自然な平仮名表記: 『何か』は漢字を使わず平仮名で『なにか』と表記すること。\n"
             '7. 出力は必ず JSON形式の {"replies": ["案1の独立返信文章", "案2の独立返信文章", "案3の独立返信文章"]} のみとし、説明や前置きは一切出力しないこと。'
@@ -584,7 +624,8 @@ def build_initial_generation_messages(
     else:
         user_instruction = (
             f"上記の会話履歴・相手の最新発言を踏まえ、【LEARNED USER RESPONSE POLICY】/【USER LEARNED STYLE PROFILE】および【SAME-CONTACT RECENT GOLD REPLIES】/【POSITIVE REPLY PAIRS】/【RETRIEVED USER REPLY PAIRS】の本人の文体・言葉遣い・語尾・記号（笑/！）を最優先で忠実に再現してください。\n"
-            "『〜とのこと』『〜と拝見』等の機械的AI表現や他人行儀な敬語、過度な季節の話題は完全禁止です。『ほかにも』『ほかに』『他に』『〜以外』『〇〇もいいですけど』等の話題切り替え・並列質問は禁止し、相手が出した話題そのものを共感＋深掘り質問で自然に話を広げてください。『何か』は漢字にせず平仮名『なにか』としてください。\n"
+            "『〜とのこと』『〜と拝見』等の機械的AI表現や他人行儀な敬語、過度な季節の話題は完全禁止です。『ほかにも』『ほかに』『他に』『〜以外』『〇〇もいいですけど』等の話題切り替え・並列質問は禁止し、質問する場合は相手が出した話題そのものを共感＋深掘りで自然に話を広げてください。『何か』は漢字にせず平仮名『なにか』としてください。\n"
+            "質問・自己開示・話題拡張は毎回必須ではありません。相手の発言が短い場合は短い返信（例: 「それはきついな」「いいな」）も正式な正常系として許可します。相手が明確な質問をしている場合は回答を含めてください。\n"
             "架空の自己開示・事実捏造の禁止を厳守し、1つの返信を分割せず各案が単独で送信できる独立した完成品として3案作成してください。\n"
             f'出力は必ず JSON形式の {{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}} （または逆質問時の [AI_QUESTION]...[/AI_QUESTION]）のみとし、説明・前置き・解説は一切出力しないでください。'
         )

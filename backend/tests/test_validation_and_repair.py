@@ -73,10 +73,10 @@ def test_hard_validator_detects_violations():
     v_dupe = [valid_replies[0], valid_replies[0], valid_replies[2]]
     assert any("重複しています" in e for e in generation.validate_candidate_replies(v_dupe, 3))
 
-    # 違反5: 質問なし
+    # Step 2: 質問なしは正常系（違反ではない）
     v_no_q = ["映画いいですね！", "映画館行ってきたんですね！", "いいなー！"]
-    assert any("質問が含まれていません" in e for e in generation.validate_candidate_replies(v_no_q, 3))
-    # 「質問しない」条件では質問なしが許容される
+    assert generation.validate_candidate_replies(v_no_q, 3) == []
+    # 「質問しない」条件でも質問なしが許容される（従来通り）
     assert generation.validate_candidate_replies(v_no_q, 3, condition="質問しない") == []
 
 

@@ -208,6 +208,68 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
   - 会話の噛み合い（意図・感情適合）の評価テストなし。
   - `score_candidate_style` は順序のみで、意味品質のテストなし。
 
+## Step 2 実装結果（質問任意化・3段構成固定の撤廃）
+
+- 実施日: 2026-09-28 / コミット: `feat: remove mandatory question and rigid reply structure`
+- 成功条件の達成: 「質問しない返信」は正式な正常系になった。「反応→自己開示→質問」の毎回強制はなくなった。
+
+### 変更したファイル
+
+- `backend/app/routers/generation.py`
+  - `ensure_has_question()`（旧293行付近）: 定型質問の自動付与を廃止し、無条件で原文を返す no-op 化。後方互換のため関数・シグネチャ・呼び出し箇所は残す。
+  - `validate_candidate_replies()`: 質問必須バリデーション（旧380〜386行）を削除し、docstring の Hard 項目からも除外。`condition` 引数は互換のため残す。
+  - `_build_context()`: 相手直近 Turn（fallback は直近メッセージ）の文字数から長さ区分を算出し、`prompt.build_system_prompt()` へ `counterpart_length_tier / counterpart_length_chars` として渡す。`pieces` にも同キーを追加。
+- `backend/app/ai/prompt.py`
+  - 新規 `classify_message_length(text)`: short 0〜20文字 / medium 21〜80文字 / long 81文字以上。
+  - `build_system_prompt()` に `counterpart_length_tier / counterpart_length_chars` 引数を追加。Block 7（COUNTERPART STYLE ADAPTATION）末尾に `【COUNTERPART MESSAGE LENGTH】` を描画（区分別の傾向指示つき。Hard Limit ではない旨を明記）。
+  - HARD INVARIANTS 9条: 「質問必須（絶対ルール）」→「質問は任意」（質問なし短文も正常系。相手の明確な質問には回答すること＋既出質問の繰り返し禁止は維持）。
+  - 11条（normal）: 「反応→自己開示→質問」の3段構成固定を撤廃し、短いリアクション/共感/回答だけ/リアクション＋一言/質問あり等からの自由選択に変更。短文には短い返信を優先。
+  - OUTPUT CONTRACT（normal）: 見出しを「質問任意」に変更し、4条を質問任意＋3案構成の機械的固定禁止（3案とも短いことも許可）に書き換え。
+  - `build_initial_generation_messages()`（normal）: 質問・自己開示・話題拡張は毎回必須ではない旨、短い返信例、相手質問への回答指示を追加。
+  - Block 5: 検索実例は文体・語尾・テンポの参考であり、同じ会話構造の再現指示ではない旨を追記（実例に質問があっても今回は質問不要）。
+  - followup 系（Block 1 指令・Block 8 役割固定・`_align_followup_replies`・催促禁止）は無変更。
+- `backend/app/learning/style.py`
+  - `to_learned_policy_prompt()`: 「直接共感＋直接深掘り質問で展開」の一律推奨を、「自然な反応を最優先し、必要な場合だけ質問・深掘り・自己開示。質問しない返信・短い返信も正常」に変更。文体統計の学習自体は維持。
+- `backend/app/learning/retrieval.py`: ランキングロジック無変更（仕様通り）。
+
+### 質問必須をどこで撤廃したか
+
+1. `generation.ensure_has_question()` → no-op 化（自動付与の廃止）。
+2. `generation.validate_candidate_replies()` → 質問有無の検査ブロック削除。
+3. `prompt.py` 9条・OUTPUT CONTRACT 4条・見出し・user 指示 → 質問任意に書き換え。
+4. `style.py` ポリシー文 → 深掘り質問の一律推奨を撤廃。
+
+### 3段構成固定をどこで撤廃したか
+
+1. `prompt.py` 11条（normal の `flow_rule`）→ 長さ・構造の自由選択に書き換え。
+2. OUTPUT CONTRACT 1条に 3案構成の機械的固定禁止を追記（3案とも短いことを許可）。
+3. `test` 側で `"3段構成" / "反応→自己開示→質問" / "質問を省いた案は不正"` がプロンプトに含まれないことを検証。
+
+### テスト変更
+
+- `backend/tests/test_mandatory_question_and_ledger.py`: 質問必須前提の3テストを質問任意仕様に書き換え（ファイル名は履歴継続のため維持）。E2E は質問なし短文が改変されず返ることを検証。
+- `backend/tests/test_validation_and_repair.py`: 「違反5: 質問なし」を「質問なしは正常系（違反ではない）」に変更。
+- `backend/tests/test_question_optional.py`（新規）: Test A（質問なし validation 通過）/ B（`ensure_has_question` 無改変）/ C（直接質問への回答は非ブロック＋プロンプトに要回答指示）/ D（短文向けに3段構成強制なし＋長さブロックあり）/ E（3案とも質問なしで通過）＋長さ区分の境界値テスト＋生成確認ケース1〜4（モック Provider による E2E）＋ `_build_context` 配線テスト。
+
+### pytest結果
+
+- `python -m pytest backend/tests -q` → **122 passed**（変更前 111 件＋新規 11 件。警告2件は従来通りの `on_event` 非推奨のみ）。
+- 仕様変更に伴う失敗は2件のみで、いずれもテスト側期待値の問題として修正（followup 由来の見出し残存「質問必須」1箇所を実装側で「質問任意」に修正、単文返信の改行前提を撤廃）。無関係テストの失敗なし。
+
+### 実際の生成確認結果（モック Provider・LLM 外部呼び出しなし）
+
+- ケース1（相手「眠い」）: 3案とも短文のまま返却。定型質問の付与なし。全案30文字以内。
+- ケース2（相手「今日バイト8時間だった」）: 「それはきついな」等の質問なし短文がそのまま成立。
+- ケース3（相手「明日何時にする？」）: 「14時くらいで大丈夫」等の回答のみ案が validation を通過。
+- ケース4（相手「今日ラーメン食べた」）: 質問なし案が通過し、「どこの？何ラーメン？」型の質問攻め強制がないことを確認。
+
+### 残っている問題（次Step以降）
+
+- Naturalness Judge / Emotion・Intent 分類 / Repetition Detection / Memory relevance は未実装（仕様通り対象外）。
+- `score_candidate_style` の質問終了項（15%）は残存しており、質問あり案が微加点されやすい。文体ソートのみで品質フィルタではないため実害は小さいが、将来的な見直し対象。
+- 長さ適応は傾向情報のみで、LLM が無視すれば膨張は起こり得る。実 LLM での効果測定は未実施（今回はモック確認のみ）。
+- 維持したもの: HARD INVARIANTS（話者分離・架空自己開示禁止・さん付け・オウム返し禁止等）、JSON・3案独立、Tone Hard Lock、Batch/History/Learning/Manual Replacement フロー、followup 構造・催促禁止。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

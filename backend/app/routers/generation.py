@@ -291,17 +291,12 @@ def sanitize_reply_text(
 
 
 def ensure_has_question(text: str, condition: str = "", contact_name: str = "") -> str:
-    """質問が含まれていない場合に自然な一言質問を自動補完する。"""
-    no_question_keywords = ["質問しない", "質問不要", "質問は入れない", "質問なし", "質問を入れない"]
-    if condition and any(k in condition for k in no_question_keywords):
-        return text
+    """質問なし返信を正式な正常系として扱うため、デフォルトでは何も変更しない。
 
-    if _has_question(text):
-        return text
-
-    target = f"{contact_name}さんは" if contact_name else "最近"
-    fallback_q = f"{target}どうですか？笑"
-    return f"{text.strip()}\n{fallback_q}"
+    Step 2 仕様変更: 旧仕様では質問がない案に定型質問を自動付与していたが、
+    「質問しない返信」を正常系とするため無効化した。後方互換のため関数自体は残す。
+    """
+    return text
 
 
 def validate_candidate_replies(
@@ -321,10 +316,12 @@ def validate_candidate_replies(
     - トーン指定との重大矛盾（tame時の敬語混入等）
     - 「〜とのこと」「〜と拝見」等の機械的AI表現の禁止
     - 「ほかにも」「ほかに」「〜以外」等の話題逃げ・並列質問の禁止
-    - 質問必須（conditionで「質問しない」等の指定がない限り、各案に質問が含まれていること）
     - 追いメッセージ時の催促表現禁止
     - 季節の矛盾（現在の月に合わない表現）
     - 候補案同士の過度な重複（類似度0.85以上）
+
+    Step 2 仕様変更: 質問なしは正常系のため、質問必須バリデーションは撤廃した。
+    相手の質問への回答は Prompt 側（CONVERSATION STATE の要回答質問）で担保する。
     """
     violations: list[str] = []
 
@@ -377,13 +374,8 @@ def validate_candidate_replies(
                 f"話題を横スライドさせず、相手が出した話題そのものを深掘りする質問に修正してください。"
             )
 
-    # 質問必須バリデーション（conditionに「質問しない」等の明示指定がない場合）
-    no_question_keywords = ["質問しない", "質問不要", "質問は入れない", "質問なし", "質問を入れない"]
-    is_no_question_requested = any(k in condition for k in no_question_keywords) if condition else False
-    if not is_no_question_requested:
-        for i, rep in enumerate(replies, start=1):
-            if not _has_question(rep):
-                violations.append(f"案{i}に相手への質問が含まれていません。会話を継続するため必ず質問を1つ以上含めてください。")
+    # Step 2 仕様変更: 質問なしは正常系。質問の有無はバリデーション対象外とする。
+    # （相手からの質問への回答は Prompt の CONVERSATION STATE で指示する）
 
     # 季節の矛盾（季節外れの嘘）チェック
     cur_month = (current_datetime or datetime.now()).month
@@ -1330,6 +1322,11 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     contact_messages_dicts = [dict(m) for m in messages]
     conversation_ledger = prompt.build_conversation_state_ledger(contact_messages_dicts, condition)
 
+    # 5.7 Step 2: 相手直近メッセージの長さ区分（傾向情報。Hard Limit ではない）
+    _length_source = (last_contact_turn or last_contact_msg or "").strip()
+    counterpart_length_tier = prompt.classify_message_length(_length_source)
+    counterpart_length_chars = len(_length_source)
+
     # 6. 8ブロック システムプロンプトの構築 (10,000文字以内)
     system_prompt = prompt.build_system_prompt(
         contact=contact_info,
@@ -1343,6 +1340,8 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         counterpart_style_block=counterpart_style_data["summary"],
         same_contact_gold_block=same_contact_gold_block,
         conversation_ledger=conversation_ledger,
+        counterpart_length_tier=counterpart_length_tier,
+        counterpart_length_chars=counterpart_length_chars,
         my_info=self_profile.get("my_info", ""),
         user_knowledge=database.get_user_knowledge_text(),
     )
@@ -1362,6 +1361,8 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
             "contrast_examples": contrast_examples,
             "counterpart_style": counterpart_style_data,
             "conversation_ledger": conversation_ledger,
+            "counterpart_length_tier": counterpart_length_tier,
+            "counterpart_length_chars": counterpart_length_chars,
             "self_profile": self_profile,
             "contact": contact_info,
             "chat_history": chat_text,

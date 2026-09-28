@@ -1,4 +1,4 @@
-"""毎回必ず質問する絶対ルール、Conversation State Ledger、会話履歴参照のユニットテスト。"""
+"""質問任意ルール（Step 2: 質問なし返信は正常系）、Conversation State Ledger、会話履歴参照のユニットテスト。"""
 import json
 import pytest
 from app.ai import prompt
@@ -6,8 +6,8 @@ from app.routers import generation
 from app import database
 
 
-def test_mandatory_question_prompt_rules():
-    """HARD INVARIANTS 第9条および OUTPUT CONTRACT 第4条に質問必須ルールが含まれること。"""
+def test_question_optional_prompt_rules():
+    """Step 2: HARD INVARIANTS 第9条が質問任意となり、3段構成固定が含まれないこと。"""
     contact = {"name": "さくら", "profile": "旅行とカフェが好き"}
     ledger = {
         "current_topic": "カフェ巡り",
@@ -21,15 +21,18 @@ def test_mandatory_question_prompt_rules():
         conversation_ledger=ledger,
     )
 
-    # 1. HARD INVARIANTS 第9条に質問必須
-    assert "9. 質問必須（絶対ルール）" in sysp
-    assert "会話のキャッチボールを維持するため" in sysp
+    # 1. HARD INVARIANTS 第9条は質問任意（質問なし返信は正常系）
+    assert "9. 質問は任意" in sysp
+    assert "質問必須（絶対ルール）" not in sysp
+    assert "3段構成" not in sysp
 
     # 2. HARD INVARIANTS 第10条に文脈参照
     assert "10. 会話継続・文脈参照" in sysp
 
-    # 3. OUTPUT CONTRACT 第4条に質問必須
-    assert "4. 質問必須の絶対遵守" in sysp
+    # 3. OUTPUT CONTRACT 第4条は質問任意（旧「質問必須の絶対遵守」は存在しない）
+    assert "4. 質問は任意" in sysp
+    assert "質問必須の絶対遵守" not in sysp
+    assert "質問を省いた案は不正" not in sysp
 
     # 4. CHAT HISTORY 内に Ledger と最優先返答対象
     assert "【CONVERSATION STATE & CONTEXT CONTINUATION】" in sysp
@@ -58,34 +61,31 @@ def test_build_conversation_state_ledger_extraction():
     assert "カフェ巡りしてます" in ledger["last_contact_message"]
 
 
-def test_validate_candidate_replies_mandatory_question():
-    """バリデータが質問のない候補を検知し、質問がある候補は通過すること。"""
-    valid_replies = [
+def test_validate_candidate_replies_question_optional():
+    """Step 2: 質問の有無に関わらずバリデータが通過すること（質問なしは正常系）。"""
+    replies_with_q = [
         "カフェ巡りいいですね！\n最近美味しいお店見つけました笑\nおすすめの場所ありますか？",
         "カフェ好きです！\nコーヒーよく飲まれますか？",
         "休日のカフェ落ち着きますよね。\n普段どのエリアに行かれますか？",
     ]
-    violations = generation.validate_candidate_replies(valid_replies, expected_candidates=3)
-    assert violations == []
+    assert generation.validate_candidate_replies(replies_with_q, expected_candidates=3) == []
 
-    invalid_replies = [
-        "カフェ巡りいいですね！\n最近美味しいお店見つけました笑\nおすすめの場所ありますか？",
+    replies_without_q = [
+        "カフェ巡りいいですね！\n最近美味しいお店見つけました笑",
         "カフェ好きです！\nコーヒーよく飲みます！",
-        "休日のカフェ落ち着きますよね。\n普段どのエリアに行かれますか？",
+        "休日のカフェ落ち着きますよね。",
     ]
-    violations = generation.validate_candidate_replies(invalid_replies, expected_candidates=3)
-    assert len(violations) == 1
-    assert "案2に相手への質問が含まれていません" in violations[0]
+    assert generation.validate_candidate_replies(replies_without_q, expected_candidates=3) == []
 
 
 def test_validate_candidate_replies_condition_no_question_exception():
-    """condition に「質問しない」等の指定がある場合、質問なしでもバリデーションを通過すること。"""
+    """condition の内容に関わらず、質問なしでもバリデーションを通過すること（Step 2: 常に正常系）。"""
     no_q_replies = [
         "カフェ巡りいいですね！\n最近美味しいお店見つけました笑",
         "カフェ好きです！\nコーヒーよく飲みます！",
         "休日のカフェ落ち着きますよね！",
     ]
-    assert len(generation.validate_candidate_replies(no_q_replies, expected_candidates=3)) == 3
+    assert generation.validate_candidate_replies(no_q_replies, expected_candidates=3) == []
     assert generation.validate_candidate_replies(no_q_replies, expected_candidates=3, condition="質問しない") == []
     assert generation.validate_candidate_replies(no_q_replies, expected_candidates=3, condition="質問不要で短く") == []
     assert generation.validate_candidate_replies(no_q_replies, expected_candidates=3, condition="共感のみで質問は入れない") == []
@@ -127,8 +127,8 @@ def test_smart_format_one_sentence_per_line():
         assert prompt.format_one_sentence_per_line(orig) == expected
 
 
-def test_e2e_generate_with_ledger_and_question_validation(client, monkeypatch):
-    """E2Eで _build_context に ledger が含まれ、生成APIが質問必須バリデーションを通して正常に返ること。"""
+def test_e2e_generate_with_ledger_and_question_optional(client, monkeypatch):
+    """Step 2 E2E: ledger が含まれ、質問なしの短い返信が改変されず正常に返ること。"""
     cid = client.post("/api/contacts", json={"name": "文脈テスト相手", "profile": "カフェ巡り"}).json()["id"]
     client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": "こんにちは！カフェ巡り好きです"})
     client.post(f"/api/contacts/{cid}/messages", json={"sender": "self", "content": "こんにちは！\n普段どのあたりに行かれますか？", "source": "manual"})
@@ -146,9 +146,9 @@ def test_e2e_generate_with_ledger_and_question_validation(client, monkeypatch):
 
             return json.dumps({
                 "replies": [
-                    "表参道いいですね！\n最近オープンしたカフェが気になってます笑\n一緒に行ってみませんか？",
-                    "渋谷のカフェ落ち着くところ多いですよね！\nよく行くお店とかありますか？",
-                    "表参道はおしゃれなお店多いですよね！\nコーヒーと紅茶どちらがお好きですか？",
+                    "表参道いいですね！\n最近オープンしたカフェが気になってます笑",
+                    "渋谷のカフェ落ち着くところ多いですよね！",
+                    "表参道はおしゃれなお店多いですよね！",
                 ]
             })
 
@@ -170,7 +170,8 @@ def test_e2e_generate_with_ledger_and_question_validation(client, monkeypatch):
     data = r.json()
     assert len(data["replies"]) == 3
     for rep in data["replies"]:
-        # 1文1行改行かつ質問が含まれていること
-        assert "\n" in rep
-        assert "？" in rep or "?" in rep
+        # 空文でなく、質問の有無を問わずそのまま返ること
+        assert rep.strip() != ""
+    # 質問なし返信が定型質問で改変されていないこと
+    assert all("どうですか？笑" not in rep for rep in data["replies"])
 

@@ -379,6 +379,37 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - Good 蓄積後の Gold 候補化フロー（要 human 確認。自動投入はしない）。
 - 評価ボタン UI（`👍そのまま送れる / 😐修正が必要 / 👎不自然`）の追加は、既存画面構造の確認後に検討。
 
+## Step 6 実装結果（失敗分析と改善ポイント抽出）
+
+- 実施日: 2026-09-29 / コミット: `feat: add generation quality analysis`
+- 方針: 生成ロジック（prompt/naturalness/retrieval/style/contrast）は一切変更しない。読み取り専用の分析基盤のみ。新ルール追加なし・「改善した」と結論づけない。
+
+### 分析項目
+
+- 新規 `backend/app/quality_analysis.py`: `load_evaluations()`（JOIN 復元。0件・DB不在でも空返却）/ `rating_summary()`（Good/Neutral/Bad 件数・平均3スコア・good/bad率・未評価数）/ `tag_analysis()`（タグ別件数・割合・平均・bad率。未知タグ自動集計）/ `intent_analysis()`（実データの Intent 別件数・good/bad率・平均・上位失敗タグ）/ `find_disagreements()`（Case A: nat高+bad / B: nat低+good / C: final高+bad。しきい値 HIGH 0.80/LOW 0.60）/ `tag_examples()`（タグ別具体例最大20件）/ `representative_cases()`（A高+Good/B高+Bad/C低+Good/D低+Bad 各最大10件）/ `improvement_candidates()`（タグ→観測パターン・潜在領域の静的マッピング。修正実施は決めない）。
+- `scripts/analyze_generation_quality.py [--db] [--out]`: コンソール要約（§6 形式）＋ `reports/generation_quality/` へ5 JSON（summary/tag_analysis/intent_analysis/disagreements/representative_cases.json）を出力。`reports/` は .gitignore に追加（会話文を含むためローカルのみ）。
+
+### Human Rating分析・Feedback Tag分析・Intent分析・不一致・代表ケース
+
+- 実データがまだないため、分析関数はテスト用シードデータで検証済み。不一致3ケース・代表4分類・タグ別20件例の抽出を確認。
+- AI自己評価のみで判断しない設計: 主軸は human_rating/feedback_tags。不一致ケース（特に final高+bad）はランキング誤りの検出材料。
+
+### テスト結果
+
+- 新規 `backend/tests/test_quality_analysis.py`（10件）: Test 1（Rating 集計）/ 2（Tag 集計）/ 3（Intent 集計）/ 4（High+Bad）/ 5（Low+Good）/ 6（代表4分類）/ 7（0件でも無エラー＋5ファイル出力）/ 8（NULL・不正JSONタグ）/ 9（未知タグ）/ 10（生成ロジック不変: Naturalness 決定値 0.925・Intent 分類・重み定数）。
+- `python -m pytest backend/tests -q` → **174 passed**（Step 5 時点 164 件＋新規 10 件）。CLI は空DBでの全出力（要約＋5 JSON）を手動確認。
+
+### 現時点で判明した失敗パターン・次Stepの改善候補
+
+- 実運用データなしのためパターンは未確定。分析基盤により判明可能になった想定パターンと潜在領域:
+  - too_many_questions → OUTPUT CONTRACT / FINAL TASK
+  - ai_like → LEARNED USER RESPONSE POLICY
+  - irrelevant → CONVERSATION STATE / COUNTERPART INTENT
+  - echo/repetition → 各検出器・HARD INVARIANTS
+  - wrong_tone → Tone Hard Lock / 相手適応
+  - unsupported_self_disclosure → 架空開示禁止 / Memory
+- 次Stepでは実データ蓄積後に本レポートで判断する（自動学習・Gold 自動昇格・human 推定は引き続き禁止）。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

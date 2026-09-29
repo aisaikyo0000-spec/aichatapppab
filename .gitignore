@@ -20,6 +20,9 @@ config/
 *.log
 logs/
 
+# Generated quality reports (contain conversation text; local only)
+reports/
+
 # OS
 .DS_Store
 Thumbs.db

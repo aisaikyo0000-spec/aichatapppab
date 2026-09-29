@@ -149,24 +149,23 @@ def _jaccard_similarity(s1: str, s2: str) -> float:
 
 
 def _is_fragmented_split(replies: list[str]) -> bool:
-    """3案が1つの返信を3分割（反応→自己開示→質問）した誤分割であるか判定する。"""
+    """3案が1つの返信を3分割（反応→自己開示→質問）した誤分割であるか判定する。
+
+    判定は構造シグネチャに基づく（全案が短い断片＋質問締め/自己開示始め）。
+    記号・絵文字のみの候補（例: 笑）は、それ自体では誤分割とみなさない。
+    Step 2 以降、短い独立候補は正式な正常系のため。
+    """
     if len(replies) != 3:
         return False
-    # 1. 記号・絵文字のみの候補
-    for r in replies:
-        if _EMOJI_OR_PUNCT_ONLY_LINE.fullmatch(r.strip()):
-            return True
 
-    # 2. 各案が極端に短く（平均20文字未満）、かつ順接構造（案2が自己開示、案3が質問）
     lengths = [len(r.strip()) for r in replies]
-    if all(l < 25 for l in lengths) and sum(lengths) < 70:
-        # 案3だけが質問、または案2が「自分も」「僕も」等で始まる場合
-        has_q3 = bool(re.search(r"(?:？|\?|ですか|ある？|行こ)$", replies[2].strip()))
-        has_self2 = bool(re.search(r"^(?:僕も|私も|俺も|自分も|最近|実は)", replies[1].strip()))
-        if has_q3 or has_self2:
-            return True
+    if not (all(length < 25 for length in lengths) and sum(lengths) < 70):
+        return False
 
-    return False
+    # 案3だけが質問、または案2が自己開示始めの場合に誤分割とみなす
+    has_q3 = bool(re.search(r"(?:？|\?|ですか|ある？|行こ)$", replies[2].strip()))
+    has_self2 = bool(re.search(r"^(?:僕も|私も|俺も|自分も|最近|実は)", replies[1].strip()))
+    return bool(has_q3 or has_self2)
 
 
 def validate_tone_strict(replies: list[str], tone: str) -> list[str]:

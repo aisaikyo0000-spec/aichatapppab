@@ -61,9 +61,17 @@ _REACTION_LEXICON = (
 )
 # 回答の具体性を示す手がかり（日時・決定・可否・場所）
 _CONCRETE_PATTERN = re.compile(
-    r"\d+\s*(?:時|分|日|月|曜)|大丈夫|OK|いいよ|だめ|無理|できる|できない|"
+    r"\d+\s*(?:時|分|日|月|曜)|大丈夫|OK|だめ|無理|できる|できない|"
     r"行ける|行けない|空いてる|予定|駅|店|お店|そこ|ここ"
 )
+# 短い肯定・応答（Step 7: 質問への短い回答を正当に評価。20文字以下でのみ有効）
+# ※「了解」は除外。単独では質問への回答にならず、Echo との重複加点になるため。
+_SHORT_ANSWER_PATTERN = re.compile(
+    r"好き|嫌い|うん|ううん|はい|いいえ|わかった|わかった|行く|行こう|行きたい|"
+    r"食べたい|いいよ|いいな|いいね|だめ|大丈夫|空いてる|無理|ある|知ってる|知らない|"
+    r"向かう|任せて|待ってる|待つ"
+)
+_SHORT_ANSWER_MAX_LEN = 20
 # 質問語尾（？なし行の検出用）
 _QUESTION_ENDING = re.compile(r"(?:ですか|ますか|でしょうか|だろうか|のかな|かな|かい|だっけ|っけ)\s*$")
 # 短いリアクション質問（情報取得質問とは別扱い）
@@ -75,16 +83,27 @@ _DISCLOSURE_EPISODIC = re.compile(
 )
 _DISCLOSURE_SELF_MARKER = re.compile(r"自分|僕|俺|私|うち")
 # Echo 判定で除去する薄い付加語尾
+# ※ bare な「んだ」は除外。「そうなんだ」等の自然な応答を誤検出するため。
 _ECHO_WRAPPERS = (
-    "だったんだよね", "だったんだね", "なんだよね", "なんだね",
+    "だったんだよね", "だったんだね", "なんだよね", "なんだね", "んだよね", "んだね",
     "だったよね", "だよね", "だね", "ですね", "ますね",
     "お疲れ様", "おつかれ",
 )
 
 
+# 自分の態度・感情を示す語彙（subset-echo の除外用。態度の付加は反復ではない）
+_STANCE_LEXICON = (
+    "いい", "好き", "嫌い", "行きたい", "食べたい", "楽しみ", "最高", "残念",
+    "わかる", "分かる", "なるほど", "確か", "すご", "無理", "だめ", "大丈夫",
+    "おつかれ", "お疲れ", "きつい", "大変", "そっか", "へー", "ほんと", "本当",
+    "よかった", "眠い", "疲れ",
+)
+
+
 def _normalize(text: str) -> str:
-    """比較用の正規化（空白・記号・笑いの除去）。"""
+    """比較用の正規化（空白・記号・笑い・口語ゆれの除去）。"""
     t = (text or "").strip()
+    t = t.replace("どっか", "どこか")
     t = re.sub(r"[\s　]+", "", t)
     t = re.sub(r"[！!？?。、．，・…〜～!?.]+", "", t)
     t = re.sub(r"(笑|ｗ|w|W)+", "", t)
@@ -186,9 +205,9 @@ def detect_echo(candidate: str, counterpart_message: str) -> tuple[float, dict |
     # 完全一致
     if cand_norm == cp_norm:
         return 0.0, {"type": "exact_echo"}
-    # 相手文の大部分を含む（候補が相手文の2.5倍未満の場合のみ）
+    # 相手文の大部分を含む（高確信の Echo）
     if cp_norm in cand_norm and len(cand_norm) < len(cp_norm) * 2.5:
-        return 0.35, {"type": "contains_counterpart"}
+        return 0.15, {"type": "contains_counterpart"}
     # 主要語句の並べ替え＋薄い付加のみ
     cp_kw = _extract_keywords(counterpart_message)
     cand_kw = _extract_keywords(candidate)
@@ -198,8 +217,15 @@ def detect_echo(candidate: str, counterpart_message: str) -> tuple[float, dict |
             if core.endswith(w):
                 core = core[: -len(w)]
                 break
-        if _jaccard2(core, cp_norm) >= 0.30 or core == cp_norm:
-            return 0.35, {"type": "paraphrase_echo"}
+        sim = _jaccard2(core, cp_norm)
+        if sim >= 0.50:
+            return 0.15, {"type": "paraphrase_echo", "similarity": round(sim, 2)}
+        if sim >= 0.25 or core == cp_norm:
+            return 0.25, {"type": "paraphrase_echo", "similarity": round(sim, 2)}
+    # Step 7: 部分反復（相手語句の真部分集合＋態度なし）。態度の付加は反復とみなさない。
+    if cp_kw and cand_kw and cand_kw < cp_kw:
+        if not any(w in candidate for w in _STANCE_LEXICON):
+            return 0.6, {"type": "subset_echo"}
     return 1.0, None
 
 
@@ -234,7 +260,9 @@ def evaluate_candidate_naturalness(
     overlap = len(cp_kw & cand_kw) / len(cp_kw) if cp_kw else 0.0
     signals["keyword_overlap"] = round(overlap, 2)
     has_reaction_word = any(w in cand for w in _REACTION_LEXICON)
-    has_concrete = bool(_CONCRETE_PATTERN.search(cand))
+    has_concrete = bool(_CONCRETE_PATTERN.search(cand)) or bool(
+        len(cand) <= _SHORT_ANSWER_MAX_LEN and _SHORT_ANSWER_PATTERN.search(cand)
+    )
     signals["has_concrete_answer"] = has_concrete
     q = count_meaningful_questions(cand)
     signals["informative_questions"] = q["informative"]
@@ -268,6 +296,17 @@ def evaluate_candidate_naturalness(
             q_score = max(0.4, 1.0 - 0.20 * (eff_q - 1))
         else:
             q_score = max(0.0, 1.0 - 0.35 * eff_q)
+    # Step 7: 直近の自分が質問終わりの場合、回答内容のない追加質問をやや抑制
+    # （相手の質問・確認必要時は除外。質問禁止ではなく優先度調整）
+    if (
+        ledger.get("prev_self_ended_with_question")
+        and q["informative"] >= 1
+        and intent in ("report", "reaction", "emotional_share")
+        and not has_concrete
+        and overlap == 0
+    ):
+        q_score = round(q_score * 0.85, 3)
+        signals["consecutive_question"] = True
     sub["question"] = q_score
 
     # C. Repetition
@@ -318,6 +357,9 @@ def evaluate_candidate_naturalness(
         ans = 0.3 + 0.35 * (1.0 if has_concrete else 0.0) + 0.35 * min(1.0, overlap * 2)
         if is_deflect:
             ans = min(ans, 0.3)
+        # Step 7: 質問攻め（情報取得3問以上）は回答として不完全扱い
+        if q["informative"] >= 3:
+            ans = min(ans, 0.5)
         ans_score = round(min(1.0, ans), 3)
     else:
         ans_score = 1.0
@@ -339,6 +381,20 @@ def evaluate_candidate_naturalness(
 
     weights = _INTENT_WEIGHTS[intent]
     total_w = sum(weights.values())
+
+    # Step 7: Echo が強い場合はキーワード一致の Relevance を割り引く（言い換え≠反応）。
+    # Step 7: 質問攻め（情報取得3問以上）は話題適合を割り引く。
+    # Step 7: Echo 由来の語句は回答内容として加点しない（オウム返し≠回答）。
+    if echo_score <= 0.15:
+        sub["relevance"] = min(sub["relevance"], 0.2)
+    elif echo_score <= 0.35:
+        sub["relevance"] = min(sub["relevance"], 0.5)
+    # Echo 由来の語句は回答内容として加点しない（オウム返し≠回答。全 Echo tier に適用）
+    if echo_score < 1.0:
+        sub["answer"] = min(sub["answer"], 0.4)
+    if q["informative"] >= 3:
+        sub["relevance"] = min(sub["relevance"], 0.6)
+
     score = sum(sub[k] * w for k, w in weights.items()) / total_w
 
     for key in sorted(weights):

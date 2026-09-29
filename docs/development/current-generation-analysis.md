@@ -410,6 +410,53 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
   - unsupported_self_disclosure → 架空開示禁止 / Memory
 - 次Stepでは実データ蓄積後に本レポートで判断する（自動学習・Gold 自動昇格・human 推定は引き続き禁止）。
 
+## Step 7 実装結果（実評価に基づく生成品質改善）
+
+- 実施日: 2026-09-29 / コミット: `feat: improve natural reply generation from human feedback`
+- 前提: 実評価データは 0 件（`scripts/analyze_generation_quality.py` で確認。Candidates: 0）。仕様 §3 に従い大幅改修は行わず、最小限の安全な改善＋比較基盤の構築に限定。Human Good Rate 等の定量比較は `insufficient data` とする。
+
+### Step 6で判明した問題（実データではなく代表30ケースの Before 計測で特定）
+
+- Before（`scripts/compare_before_after.py` 代表30ケース）: intent精度 0.867 / markers 1.0 / validation通過率 0.967 / 期待順位ヒット率 0.50。
+- 特定した失敗パターン（すべて決定論層で再現）:
+  1. 質問への短い回答（好きだよ／行きたいな／わかった等）が低評価（具体性検出の欠落）。
+  2. Echo 候補（言い換え・部分反復）がキーワード一致で高評価になり1位を奪う。
+  3. verbose な質問攻め（3Q）が話題適合で高止まりする。
+  4. 単独「笑」等の短い独立候補が fragmentation 誤検出される。
+  5. Intent 誤分類2種（挨拶→answer_required は Step 3 残件の継続／教えて系→report／おかえり系→report 以外）。
+
+### 今回変更したPrompt/Ranking（最小限・全文書化）
+
+- `prompt.py`: (a) `_INTENT_ANSWER_REQUIRED` に教えて系を追加、(b) `_INTENT_REACTION` におかえり系を追加、(c) Ledger に `prev_self_ended_with_question` を追加し Block 3 に連続質問の注意書き（参考情報。相手質問・確認必要時は除外）、(d) Block 7 に短文適応・言い換え回避の1行追加、(e) 11条に短文時の短候補1案以上＋多様性／意味的差別化のみの追記、(f) OUTPUT CONTRACT に同旨を1行追記。
+- `style.py`: 会話構造ポリシーに「説明長文より短い相槌優先」を1行追加（統計学習は不変）。
+- `naturalness.py`（重みは不変。旧式→新式の差分のみ）: (a) 短回答語彙（20文字以下で具体性扱い。了解は除外）、(b) Echo 階層化（containment/強言い換え 0.15・弱言い換え 0.25・態度なし部分反復 0.6 新設）＋ Echo 時の relevance/answer 割引、(c) 情報取得3問以上の relevance/answer 割引、(d) 連続質問の軽微抑制（ledger フラグ時・回答内容なしの場合のみ×0.85）、(e) 口語ゆれ正規化（どっか→どこか）・付加語尾（んだね系）追加。
+- `generation.py` `_is_fragmented_split()`: 構造シグネチャ方式に単純化（全短断片＋質問締め／自己開示始めのみ検出。笑等の短独立候補は正常）。
+- 禁止ルールの追加なし（質問禁止・長さ上限なし）。Hard Invariants 7項目・JSON・3案独立・Tone・Batch/History/Learning/Manual Replacement は不変。
+
+### Before/After（代表30ケース・決定論層）
+
+- After: intent精度 1.00 / markers 1.00 / validation通過率 1.00 / 期待順位ヒット率 1.00（30/30）。
+- 内訳: 短回答の正当評価（5件回復）/ Echo 降格（8件回復）/ 質問攻め降格（4件回復）/ fragmentation 誤検出解消（1件）/ Intent 修正（3件）。
+- 変更前後の差分は `scripts/compare_before_after.py` の出力 JSON（Step 7 作業時の一時ファイル。リポジトリには 30ケースJSON＋テストとして固定）で確認。
+
+### テスト結果
+
+- 新規 `backend/tests/test_step7_natural_conversation.py`（11件）: Test 1（質問なし成立）/ 2（短文候補）/ 3（連続質問の優先度調整＋非禁止）/ 4（Echo と態度付加の区別）/ 5（長文膨張の減点）/ 6（短文強制なし）/ 7（差別化強制なし）/ 8（必要時の質問候補）/ 9（Hard Invariants 7項目＋禁止語検証）/ 10（API 完全性＋自動評価行）＋代表30ケース全緑テスト（Intent/マーカー/バリデーション/期待順位）。
+- 新規 `backend/tests/step7_representative_cases.json`（30ケース×3候補。実在6 Intent のみ使用）＋読込ヘルパー＋ `scripts/compare_before_after.py`（Before/After 比較CLI）。
+- `python -m pytest backend/tests -q` → **185 passed**（Step 6 時点 174 件＋新規 11 件）。
+
+### 実LLM評価結果（§26・1ケースのみ・insufficient data）
+
+- 条件: Temp DB・履歴なし（Gold なし）・Gemini gemini-3.5-flash-lite・相手「今日バイト8時間だった」・condition なし。※既定 cerebras のキーは未設定のため Gemini で実施。キーは非表示・Temp DB のため本データ無汚染。
+- 生成3案（final 0.955/0.955/0.892）: (1) 立ちっぱなし推測＋「。。」＋丁寧語、(2) 丁寧＋笑＋絵文字混在、(3) 働いてきたんですね＋丁寧。いずれも丁寧な説明的2行文で、短い相槌型は0案。
+- 観察（断定なし）: Gold なし時は丁寧・説明寄りに振れる／架空推測（立ちっぱなし）が混入／Echo 的要素（8時間バイトは等）が残存／scores は高止まり（0.89以上）。Human Good/Bad 率の比較はデータ不足のため不可。
+
+### 改善した項目・悪化した項目・未解決問題
+
+- 改善（決定論層）: 短回答の評価、Echo 系の降格、質問攻めの降格、fragmentation 誤検出、Intent 3種の精度。代表30ケース 15/30 → 30/30。
+- 悪化: 確認された回帰なし（185 passed）。明確に verbose だが話題適合な候補と簡潔候補の順序はケース依存で残る（3案表示のためユーザ選択で吸収可能）。
+- 未解決: 実運用データなし（Good/Bad 率・AI-like 率の定量比較は不可）/ Gold なし時の丁寧寄り / 架空推測の混入 / scores 高止まり傾向の調整（重み変更は見送り）/ 評価ボタン UI 未着手 / good→review 候補状態の未導入。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

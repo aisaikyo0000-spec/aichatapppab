@@ -245,6 +245,7 @@ def build_conversation_state_ledger(messages: list[dict[str, Any]], condition: s
             "already_answered_topics": [],
             "current_topic": "会話開始",
             "counterpart_intent": "report",
+            "prev_self_ended_with_question": False,
             "unresolved_question": None,
             "last_contact_message": "",
             "latest_user_intent": condition.strip() or "自然な返信",
@@ -279,12 +280,24 @@ def build_conversation_state_ledger(messages: list[dict[str, Any]], condition: s
                     seen_qs.add(norm)
                     asked_qs.append(line_s)
 
+    # Step 7: 直近の自分の返信が質問で終わっているか（連続質問の抑制用参考情報）
+    prev_self_ended_with_question = False
+    if self_msgs:
+        last_lines = [ln.strip() for ln in self_msgs[-1].splitlines() if ln.strip()]
+        if last_lines:
+            last_line = last_lines[-1]
+            prev_self_ended_with_question = bool(
+                "？" in last_line or "?" in last_line
+                or re.search(r"(?:ですか|ますか|でしょうか|だろうか|のかな|かな|かい|だっけ|っけ)\s*$", last_line)
+            )
+
     return {
         "known_contact_facts": contact_msgs[-10:] if contact_msgs else [],
         "known_self_facts": self_msgs[-10:] if self_msgs else [],
         "already_asked_questions": asked_qs[-10:],
         "current_topic": current_topic,
         "counterpart_intent": classify_counterpart_intent(last_contact),
+        "prev_self_ended_with_question": prev_self_ended_with_question,
         "unresolved_question": unresolved_q,
         "last_contact_message": last_contact,
         "latest_user_intent": condition.strip() or "自然な返信",
@@ -342,7 +355,7 @@ _INTENT_INVITATION = re.compile(
 )
 _INTENT_ANSWER_REQUIRED = re.compile(
     r"集合|待ち合わせ|待ってる|待ってます|空いてる|空いてます|来れる|来られます"
-    r"|大丈夫そう|了解"
+    r"|大丈夫そう|了解|教えて|おしえて"
 )
 _INTENT_EMOTIONAL = re.compile(
     r"しんど|つら|辛い|悲し|嫌な|嫌だっ|落ち込|最悪|凹|へこ|悩|怒られ|泣"
@@ -350,6 +363,7 @@ _INTENT_EMOTIONAL = re.compile(
 )
 _INTENT_REACTION = re.compile(
     r"眠|疲れた|やば|楽しみ|嬉し|うれし|最高|笑|よかった|びっくり|すご|まじ|ウケる|草|おつかれ|お疲れ"
+    r"|おかえり|ただいま|いってらっしゃい"
 )
 
 
@@ -521,6 +535,7 @@ def build_system_prompt(
         "11. 追いメッセージの構成: 直前の話題を続けず、各案指定のフック（行動報告 / 軽快ツッコミ / 写真なし体験共有）に基づいた軽快な文章（2〜3行）で作成すること。\n"
         if mode == "followup"
         else "11. 返信の長さ・構造の自由選択: 相手の発言と会話状況に応じて、以下から適切な形を選ぶこと。短いリアクション / 短い共感 / 回答だけ / リアクション＋一言 / リアクション＋質問 / 自己開示 / 自己開示＋質問 / 話題継続 / 話題終了 / 軽い冗談。毎回質問する必要はなく、毎回自己開示する必要もなく、毎回話題を広げる必要もない。相手の発言が短い場合、短い返信を優先してよい。\n"
+        "（Step 7 追記）相手メッセージが短文（short区分）の場合、相槌・共感・一言程度の短い候補を必ず1案以上含めること。3案は可能な場合に異なる会話戦略（短反応 / 少し展開 / 質問あり）を持たせること。ただし意味のある違いがない場合は無理に違わせないこと（不自然な差別化は不正）。\n"
     )
 
     b2_hard = (
@@ -578,6 +593,9 @@ def build_system_prompt(
                 ledger_lines.append(f"★（最優先返答対象）相手（{contact_name}さん）の直前の最新メッセージ:\n「{last_c_msg}」\n※まずこのメッセージ内容に対する反応・共感から返信を始めること。")
             ledger_lines.append(f"【COUNTERPART INTENT】\n{intent}\n（相手発言の意図分類。返信方針を決めるための強い参考情報であり、Hard Rule ではない。最終判断は会話履歴・本人実例・条件を総合して行うこと）")
             ledger_lines.append(f"- Intent別方針（{intent}）: {_INTENT_POLICIES[intent]}")
+            # Step 7: 連続質問の抑制（参考情報。相手の質問・確認必要時・Gold質問中心は除外）
+            if conversation_ledger.get("prev_self_ended_with_question"):
+                ledger_lines.append("- 直近の自分の返信は質問で終わっている。今回は質問なしでも成立する候補を優先し、相手の明確な質問・確認が必要な場合を除き追加の質問は控えること。")
             if unresolved:
                 ledger_lines.append(f"- 相手からの直近質問（要回答）: {unresolved}")
         if asked_list:
@@ -646,13 +664,15 @@ def build_system_prompt(
         b7_counterpart = (
             f"【COUNTERPART STYLE ADAPTATION】\n【COUNTERPART WRITING STYLE】相手（{contact_name}さん）への適応\n"
             f"{cp_summary}\n"
-            "- 相手発言のオウム返し・コピー禁止。自分のスタイルを土台にしつつ適応させること。"
+            "- 相手発言のオウム返し・コピー禁止。自分のスタイルを土台にしつつ適応させること。\n"
+            "- 相手が短文中心の場合、説明的な長文にせず短く返すこと。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
         )
     else:
         b7_counterpart = (
             f"【COUNTERPART STYLE ADAPTATION】\n【COUNTERPART WRITING STYLE】相手（{contact_name}さん）への適応\n"
             "- 自分のスタイルを土台にしつつ、相手の温度感・文量に20〜30%程度自然に適応させること。\n"
-            "- 相手発言のオウム返し・コピー禁止。"
+            "- 相手発言のオウム返し・コピー禁止。\n"
+            "- 相手が短文中心の場合、説明的な長文にせず短く返すこと。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
         )
     if length_text:
         b7_counterpart += f"\n{length_text}"
@@ -688,6 +708,7 @@ def build_system_prompt(
             "   ※1つの返信文を「案1=反応、案2=自己開示、案3=質問」のように3分割して出力することは厳禁です。\n"
             "   各案がそれぞれ独立した異なる会話展開（本命、別展開、切り口違い）を持つこと（候補の多様性と独立性）。\n"
             "   3案の構成を機械的に固定しないこと（例: 「案1=短いリアクション、案2=少し展開、案3=質問あり」のような固定パターンは禁止）。会話内容に応じて3案とも短くなることも許可する。\n"
+            "   意味のある違いがある場合だけ違わせること。候補を無理に差別化して不自然な案を作ってはならない。\n"
             "2. 単なる語尾の差し替えではなく、それぞれ切り口や内容が異なること。\n"
             "3. 1文1行改行の絶対遵守: 各案は必ず1文ごとに改行を入れて出力すること。\n"
             "4. 質問は任意: 質問を含めるかは会話状況次第とし、質問なしの案も正式な正常系として扱うこと。『ほかにも』『ほかに』『他に』『〜以外』『〇〇もいいですけど』の話題逃げ・並列質問は完全禁止とし、質問する場合も相手が出した話題そのものを深掘りして広げること。相手が明確な質問をしている場合は回答を含めること。\n"

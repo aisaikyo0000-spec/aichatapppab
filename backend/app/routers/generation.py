@@ -162,10 +162,16 @@ def _is_fragmented_split(replies: list[str]) -> bool:
     if not (all(length < 25 for length in lengths) and sum(lengths) < 70):
         return False
 
-    # 案3だけが質問、または案2が自己開示始めの場合に誤分割とみなす
+    # 案3だけが質問、または案2が自己開示始めの場合に誤分割とみなす。
+    # ただし案1と案3が同内容のバリエーション（並列候補）の場合は分割ではない。
+    # Step 8: 短文化により並列短候補が増えるため、誤検出を抑止する。
     has_q3 = bool(re.search(r"(?:？|\?|ですか|ある？|行こ)$", replies[2].strip()))
     has_self2 = bool(re.search(r"^(?:僕も|私も|俺も|自分も|最近|実は)", replies[1].strip()))
-    return bool(has_q3 or has_self2)
+    if has_q3 or has_self2:
+        if _jaccard_similarity(replies[0], replies[2]) >= 0.4:
+            return False
+        return True
+    return False
 
 
 def validate_tone_strict(replies: list[str], tone: str) -> list[str]:

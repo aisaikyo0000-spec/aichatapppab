@@ -1,9 +1,9 @@
-"""Step 7: 自然な会話生成の改善テスト（Tests 1〜10＋代表30ケース）。
+"""Step 7: 自然な会話生成の改善テスト（Tests 1〜10＋代表50ケース）。
 
 方針（Step 7 仕様）:
 - 固定ルール（必ず短文・必ず質問なし等）は検証しない
 - 質問禁止・長さ上限のような Hard 制約がないことを確認する
-- 代表30ケース（step7_representative_cases.json）がすべて期待通りになること
+- 代表50ケース（step7_representative_cases.json）がすべて期待通りになること
 """
 from __future__ import annotations
 
@@ -186,9 +186,9 @@ def test_10_generation_api_intact(client, monkeypatch):
 
 
 def test_30_representative_cases_all_green():
-    """代表30ケース: Intent一致・Promptマーカー・バリデーション・期待順位のすべてが緑。"""
+    """代表50ケース: Intent一致・Promptマーカー・バリデーション・期待順位のすべてが緑。"""
     cases = load_step7_representative_cases()
-    assert len(cases) == 30
+    assert len(cases) == 50
     intents = {c["intent"] for c in cases}
     assert intents == {"report", "reaction", "question", "invitation", "emotional_share", "answer_required"}
 

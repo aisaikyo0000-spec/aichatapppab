@@ -57,7 +57,8 @@ _INTENT_WEIGHTS: dict[str, dict[str, float]] = {
 _REACTION_LEXICON = (
     "きつい", "大変", "いい", "そう", "なるほど", "確か", "わかる", "分かる",
     "おつかれ", "お疲れ", "そっか", "へー", "ほんと", "本当", "よかった",
-    "すご", "楽し", "残念", "了解", "OK", "よし", "眠い", "疲れ", "笑",
+    "すご", "楽し", "残念", "OK", "よし", "眠い", "疲れ", "笑",
+    "おはよう", "おやすみ", "こんにちは", "おかえり", "ただいま",
 )
 # 回答の具体性を示す手がかり（日時・決定・可否・場所）
 _CONCRETE_PATTERN = re.compile(
@@ -196,17 +197,25 @@ def detect_repetition(candidate: str, recent_replies: list[str]) -> tuple[float,
     return worst, detail
 
 
+# 儀礼応答（挨拶の返答は反復ではなく儀式として正常）
+_GREETING_EXACT = re.compile(
+    r"^(?:おはよう|おやすみ|こんにちは|こんばんは|はじめまして|お疲れ様|おつかれさま|ありがとう)(?:ございます)?$"
+)
+
+
 def detect_echo(candidate: str, counterpart_message: str) -> tuple[float, dict | None]:
     """相手発言の単純言い換え・大部分コピーを検出する。"""
     cand_norm = _normalize(candidate)
     cp_norm = _normalize(counterpart_message)
     if not cand_norm or not cp_norm:
         return 1.0, None
-    # 完全一致
+    # 完全一致（挨拶の返答は儀礼として正常）
     if cand_norm == cp_norm:
+        if _GREETING_EXACT.fullmatch(cand_norm):
+            return 1.0, None
         return 0.0, {"type": "exact_echo"}
-    # 相手文の大部分を含む（高確信の Echo）
-    if cp_norm in cand_norm and len(cand_norm) < len(cp_norm) * 2.5:
+    # 相手文の大部分を含む（高確信の Echo。ごく短い一致は対象外）
+    if len(cp_norm) >= 3 and cp_norm in cand_norm and len(cand_norm) < len(cp_norm) * 2.5:
         return 0.15, {"type": "contains_counterpart"}
     # 主要語句の並べ替え＋薄い付加のみ
     cp_kw = _extract_keywords(counterpart_message)

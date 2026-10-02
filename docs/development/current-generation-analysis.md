@@ -457,6 +457,63 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - 悪化: 確認された回帰なし（185 passed）。明確に verbose だが話題適合な候補と簡潔候補の順序はケース依存で残る（3案表示のためユーザ選択で吸収可能）。
 - 未解決: 実運用データなし（Good/Bad 率・AI-like 率の定量比較は不可）/ Gold なし時の丁寧寄り / 架空推測の混入 / scores 高止まり傾向の調整（重み変更は見送り）/ 評価ボタン UI 未着手 / good→review 候補状態の未導入。
 
+## Step 8 実LLM自然性改善
+
+- 実施日: 2026-09-29 / コミット: `feat: improve real llm conversational naturalness`
+- 方針: 情報量ではなく「本人が送りそうな文章」を目標に、最小限の Prompt 改善＋50ケース Before/After。モデル・プロバイダ・重み・Hard Invariants・DB 破壊変更なし。APIキー非 commit。
+
+### 問題だった生成例（Step 7 実LLM・Gold なし・今日バイト8時間だった）
+
+- 「8時間はずっと立ちっぱなしとかだとめちゃくちゃ疲れますよね。。」→ 架空の具体化（立ちっぱなし）＋「。。」。
+- 「8時間バイトは本当にお疲れ様です笑。」→ 丁寧＋笑混在の説明文体。
+- 「8時間も働いてきたんですね！」→ Echo 的言い換え。3案とも丁寧な説明的2行文で短い相槌型は0案。
+
+### 原因
+
+- 相手事実の推測混入を禁じる明示境界がなかった（COUNTERPART FACT INFERENCE）。
+- 要約・分析・説明型の返信を許容する余地があった。
+- 質問 necessity・NO QUESTION 戦略・共感テンプレ反復防止の明示が不足。
+- 決定論層の不足（短回答の具体性・Echo 階層・儀礼応答・どこも除外・fragmentation の並列候補誤検出）。
+
+### Prompt変更（最小限）
+
+- `prompt.py`: Block 2 に `【FACT BOUNDARY】` を追加（CHAT HISTORY 外の具体的事実の捏造禁止・状況の勝手な確定禁止・推測の事実化禁止・感情反応は許可・未知は質問で・自己事実は履歴/Gold 確認分のみ・要約説明の抑制）。11条に質問 necessity＋NO QUESTION 戦略＋共感テンプレ反復防止を追記。normal/followup 両 user 指示に6項目サイレント自己チェック（結果出力なし）を追加。compactness 上限は仕様必須見出し1件分のみ 25→26 に緩和（理由コメント付き）。
+- `style.py`・重み・ランキング式・Gold 階層・Gold 定義は不変。reply act の新機構は未導入（既存 Intent 優先の方針通り見送り）。
+
+### Before / After（50ケース）
+
+- 決定論層（`scripts/compare_before_after.py` 代表50ケース）: Before（intent 0.94 / markers 1.00 / validation 1.00 / 期待順位 0.92）→ After（1.00 / 1.00 / 1.00 / 1.00＝50/50）。
+- 実LLM（Gemini gemini-3.5-flash-lite・50ケース・各3案。Human 評価なし）:
+
+| 指標 | Before | After | 方向 |
+|---|---|---|---|
+| novel_keyword_rate（推測混入代理） | 0.68 | 0.521 | 改善 |
+| avg_novel_keywords | 1.00 | 0.722 | 改善 |
+| echo_rate | 0.082 | 0.111 | やや悪化 |
+| too_many_questions_rate | 0.129 | 0.056 | 改善 |
+| over_explanation_rate | 0.00 | 0.00 | 不変 |
+| ai_like_rate | 0.088 | 0.049 | 改善 |
+| parse_ok_rate | 0.98 | 0.96 | 1件悪化 |
+
+- 質的観察: After は短文回答が明確に増加（うん/眠い/おはよう等に1〜2行で返答）。一方、短文化により初回出力の fragmentation・近似重複・ robotic 表現の検出が増加（本番フローでは repair loop が処理する範囲）。echo の微増・parse 1件悪化はサンプル変動の範囲内と判断（断定なし）。
+
+### 実LLMテスト結果
+
+- 50/50 ケース成功（errors 0）。APIキー未表示・Temp DB 使用のため本データ無汚染。Human 評価は未実施のため Human Good/Bad 率の比較は不可（insufficient data）。
+- 決定論層の検証（`test_step7` 50ケーススイープ）は全緑を維持。
+
+### テスト結果
+
+- 新規 `backend/tests/test_step8_naturalness.py`（10件）: 1 FACT BOUNDARY / 2 推測混入方針＋サイレントチェック / 3 NO QUESTION / 4 短文6種 / 5 Echo と態度引用の区別 / 6 説明長文の減点 / 7 自己開示境界 / 8 相手事実境界（立ちっぱなし型）/ 9 Gold 階層維持 / 10 Invariants 回帰（JSON・fragmentation 並列候補・AI_QUESTION・FACT BOUNDARY 付き E2E）。
+- 代表ケースを 30→50 件に拡張（短雑談・食事・学校・趣味・休日・予定・仕事・長文・挨拶）。`scripts/compare_before_after.py` に issue 検出器＋ `--live` 実LLMモードを追加。
+- `python -m pytest backend/tests -q` → **195 passed**（Step 7 時点 185 件＋新規 10 件）。
+
+### 改善した指標・悪化した指標・未解決問題
+
+- 改善: novel keywords・質問過多・AIっぽさ・短文対応・決定論50/50・回帰なし。
+- 悪化: echo 微増（0.082→0.111）・parse 失敗1件増。いずれも小標本の変動範囲内と記録し、「改善した」と断定しない。
+- 未解決: Human 評価なし（Good/Bad 率の比較不可）/ Gold なし時の丁寧寄りの残存 / repair loop 依存の初回出力品質 / 重み調整の見送り / 評価ボタン UI・good→review 状態の未着手。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

@@ -206,7 +206,7 @@ def test_topic_retrieval_ranking_cafe_and_movie(client):
 
 
 def test_prompt_compactness_and_block_limits(client):
-    """プロンプト縮約: システムプロンプト文字数が 10,000 文字未満、ブロック数が 25 個未満であること。"""
+    """プロンプト縮約: システムプロンプト文字数が 10,000 文字未満、ブロック数が 26 個未満であること。"""
     cid = client.post("/api/contacts", json={"name": "縮約テスト相手", "profile": "読書好き"}).json()["id"]
     client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": "こんにちは！"})
     client.post(f"/api/contacts/{cid}/messages", json={"sender": "self", "content": "はじめまして！よろしくお願いします"})
@@ -216,8 +216,8 @@ def test_prompt_compactness_and_block_limits(client):
 
     # 文字数上限（10,000文字未満）
     assert len(sysp) < 10000
-    # ブロック数上限（【 の個数が 25個未満）
-    assert sysp.count("【") < 25
+    # ブロック数上限（【 の個数が 26個未満。Step 8 で仕様必須の【FACT BOUNDARY】1見出しを追加したため25→26）
+    assert sysp.count("【") < 26
 
     # 必須主要ブロックが存在すること
     assert "【REPLY DIRECTIVE】" in sysp

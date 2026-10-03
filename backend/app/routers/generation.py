@@ -1310,6 +1310,11 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     contrast_examples = learning.contrast.extract_contrast_examples(contact_id=contact_id, limit=2)
     contrast_block = learning.contrast.to_contrast_prompt_block(contrast_examples, max_items=2)
 
+    # 4.5 Step 9: 同一相手の修正傾向（HUMAN CORRECTION PATTERNS。上限付き、data扱い）
+    correction_block = learning.contrast.build_correction_patterns_block(contact_id)
+    if correction_block:
+        contrast_block = f"{contrast_block}\n{correction_block}" if contrast_block else correction_block
+
     # 5. 相手スタイル分析
     counterpart_style_data = analyze_counterpart_style(contact_id)
 
@@ -1793,10 +1798,14 @@ def generate(body: GenerateRequest):
             style_char_median=style_median,
         )
         final = naturalness.combine_candidate_scores(s_val, nat["score"])
+        # Step 9: 同一相手の修正プロファイルへの適合度を微調整として加算（±0.05）。
+        # 修正データがなければ human_fit=0.5 で影響なし。Hard/validation は不変。
+        human_fit = learning.contrast.correction_similarity(r, body.contact_id)
+        final = round(final + 0.1 * (human_fit - 0.5), 3)
         scored_items.append({
             "reply": r, "score": s_val, "details": s_details,
             "naturalness": nat["score"], "naturalness_detail": nat,
-            "final": final,
+            "human_fit": human_fit, "final": final,
         })
 
     # 通常モードのみ最終スコア降順ソート（followupモードは役割スロット固定のため順序を整列）
@@ -1807,6 +1816,7 @@ def generate(body: GenerateRequest):
         ordered_items = [by_reply.get(r, scored_items[i]) for i, r in enumerate(sorted_replies)]
         style_scores = [item["score"] for item in ordered_items]
         naturalness_scores = [item["naturalness"] for item in ordered_items]
+        human_fit_scores = [item["human_fit"] for item in ordered_items]
         final_scores = [item["final"] for item in ordered_items]
     else:
         scored_items.sort(key=lambda x: x["final"], reverse=True)
@@ -1814,6 +1824,7 @@ def generate(body: GenerateRequest):
         sorted_replies = [item["reply"] for item in scored_items]
         style_scores = [item["score"] for item in scored_items]
         naturalness_scores = [item["naturalness"] for item in scored_items]
+        human_fit_scores = [item["human_fit"] for item in scored_items]
         final_scores = [item["final"] for item in scored_items]
 
     # 6. 履歴保存（ソート後の順序で各候補を個別に保存、batch_id を付与）
@@ -1848,6 +1859,7 @@ def generate(body: GenerateRequest):
         "history_ids": history_ids,
         "style_scores": style_scores,
         "naturalness_scores": naturalness_scores,
+        "human_fit_scores": human_fit_scores,
         "final_scores": final_scores,
         "batch_id": batch_id,
         "build_version": config.APP_BUILD_VERSION,

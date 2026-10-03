@@ -514,6 +514,47 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - 悪化: echo 微増（0.082→0.111）・parse 失敗1件増。いずれも小標本の変動範囲内と記録し、「改善した」と断定しない。
 - 未解決: Human 評価なし（Good/Bad 率の比較不可）/ Gold なし時の丁寧寄りの残存 / repair loop 依存の初回出力品質 / 重み調整の見送り / 評価ボタン UI・good→review 状態の未着手。
 
+## Step 9 Human Feedback Loop
+
+- 実施日: 2026-09-29 / コミット: `feat: improve generation with human feedback loop`
+- 方針: ルール追加ではなく実例優先。AI proposal → Human correction ペアを最高品質の教師データとして構造化学習。自動 Gold 昇格なし・架空データなし・additive のみ（DB変更なし）・個人情報の fixture 化なし。
+
+### 使用したHuman feedback件数・manual replacement件数（実DB集計・内容非表示）
+
+- generation_batches: manual_replaced 443 / candidate_sent 116 / pending 412。Human correction rate ＝ 443/559 ＝ **0.792**（ベースライン課題）。
+- generation_history 4232件（good 11 / neutral 19 / bad 42）。self/manual 727件。contacts 99件。evaluations 0件。
+- 修正ペア分析（443件中相手文・採用文の両方あり417件）:
+  - 採用文が短い: 44%（長さ比中央値 1.06。**「短く直す」は少数派**のため固定短縮は行わない）
+  - 文数: AI平均2.89文 → 人間平均4.51文（同長でも短文分割・改行増）
+  - 質問: AI平均1.48 → 人間平均1.16（質問削除ペア36%。質問率 AI 94%→人間78%。禁止ではなく削減）
+  - Echo 的棄却案: 19%。長さ中央値 AI 68字 vs 人間67字（ほぼ同等）。
+
+### 抽出した修正パターン（機構）
+
+- `learning/contrast.py` に追加: `classify_reply_act()`（closing/question/self_disclosure/short_reaction/statement）/ `extract_correction_features()`（長さ・文数・質問・Echo・語彙・行為の差分）/ `correction_patterns_for_contact()`（同一相手に閉じた集計。2件未満は中立）/ `build_correction_patterns_block()`（800字上限・data/instruction 分離明記）/ `correction_similarity()`（文字列類似ではなく長さ・文数・質問の行動特徴比較。無データ時0.5）。
+- 既存 `_summarize_difference()` に文数・分割軸を追加（形状不変）。
+- Prompt 注入: `【HUMAN CORRECTION PATTERNS】` を contrast ブロックへ追記（修正ペア数・長さ比中央値・質問削除/追加率・採用文目安・行為変化・修正例最大2件）。データ不足時は何も出さない。
+- Ranking: `final ＝ style×0.40 ＋ naturalness×0.60 ＋ 0.1×(human_fit−0.5)`（±0.05の微調整。無データ時は0と等価。旧式→新式を記録）。Hard/validation 不変。
+
+### Before / After（Step 8 Baseline 対比）
+
+- 実ペア弁別率（417件。棄却AI案 vs 採用人間文で後者が高得点の割合）:
+  - naturalness のみ: **0.353**（AI案が高得点になりがち。表層特徴では分離不能という知見）
+  - human_fit 加算後: **0.523**（改善するがほぼコイン投げ域。平均ギャップは±0に近く、過大な主張はしない）
+- 実LLM 50ケース（Gemini・合成ケース。修正履歴なしのため Step 9 機構は不発。安定性確認）: novel 0.521→0.527 / echo 0.111→0.113 / 質問 0.056→0.080 / ai_like 0.049→0.080 / parse 0.96→1.00。いずれも小標本の変動範囲内で悪化の断定なし（§29: 原因記録。機構自体は全緑のため維持）。
+- Human correction rate の再測定は運用データ蓄積後に実施（現時点のベースライン0.792を記録）。
+
+### テスト結果
+
+- 新規 `backend/tests/test_human_feedback.py`（12件）: replacement抽出 / same-contact weighting（他相手・None は中立）/ パターン抽出 / ranking微加点 / short / long / no-question（＋短質問連続の検出維持）/ unsupported inference / echo / tone / hard invariants / 自動Gold昇格なし。
+- 新規 `scripts/evaluate_corrections.py`（弁別評価CLI。読取専用）。
+- `python -m pytest backend/tests -q` → **207 passed**（Step 8 時点 195 件＋新規 12 件）。
+
+### AI-like・unsupported inference・Echo・question overuse・未解決問題
+
+- 実ペア由来の知見を機構に反映（短縮の非強制・質問削減の傾向学習・Echo 棄却の言及・文数分割の要約軸）。禁止ルールの追加はなし。
+- 未解決: 弁別率0.523は低く、表層特徴の限界を示す（ deeper 適合信号が今後の課題）/ Human 評価データ0件のまま（Good/Bad 率比較不可）/ correction rate 0.792 の改善検証は運用データ待ち / 評価ボタン UI・good→review 状態の未着手。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

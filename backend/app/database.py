@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS generation_evaluations (
     human_rating TEXT CHECK (human_rating IN ('good', 'neutral', 'bad')),
     human_feedback TEXT NOT NULL DEFAULT '',
     feedback_tags TEXT NOT NULL DEFAULT '[]',
+    sendability TEXT CHECK (sendability IN ('sendable', 'minor_edit', 'major_edit', 'rejected')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -359,6 +360,12 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE generation_history ADD COLUMN {col_name} {col_type}")
             except sqlite3.OperationalError:
                 pass
+        # Step 11: generation_evaluations に sendability を追加（additive・既存行は NULL のまま）
+        # CHECK 制約は pydantic 側で担保し、マイグレーションは TEXT 追加のみ（旧SQLite互換）
+        try:
+            conn.execute("ALTER TABLE generation_evaluations ADD COLUMN sendability TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
     finally:
         conn.close()

@@ -146,6 +146,29 @@ export const api = {
     }>,
   ) => request<HistoryItem>(`/history/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
+  saveEvaluation: (
+    historyId: number,
+    patch: {
+      rating?: string | null
+      feedback?: string
+      feedback_tags?: string[]
+      sendability?: import('./types').Sendability | null
+    },
+  ) =>
+    request<import('./types').EvaluationItem>('/evaluations', {
+      method: 'POST',
+      body: JSON.stringify({ history_id: historyId, ...patch }),
+    }),
+
+  listEvaluations: (params?: { batch_id?: number; rating?: string; sendability?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.batch_id !== undefined) q.set('batch_id', String(params.batch_id))
+    if (params?.rating) q.set('rating', params.rating)
+    if (params?.sendability) q.set('sendability', params.sendability)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return request<import('./types').EvaluationItem[]>(`/evaluations${suffix}`)
+  },
+
 
   listHistory: (contactId: number) =>
     request<HistoryItem[]>(`/history?contact_id=${contactId}`),

@@ -608,7 +608,61 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 ### Regression・未解決問題
 
 - 6項目（unsupported inference・echo・question overuse・tone・JSON・hard invariants）は全緑。Prompt サイズは上限内。
-- 未解決: Human 評価0件（Sendable Rate 測定不可）/ 儀礼的鏡像と内容反復の区別 / personal_style_fit の実測には Gold 付き運用データが必要 / correction rate 改善の検証待ち / 評価ボタン UI 未着手。
+- 未解決: Human 評価0件（Sendable Rate 測定不可）/ 儀礼的鏡像と内容反復の区別 / personal_style_fit の実測には Gold 付き運用データが必要 / correction rate 改善の検証待ち / 評価ボタン UI 未着手（Step 11 で対応）。
+
+## Step 11 Human Evaluation and Sendable Rate
+
+- 実施日: 2026-09-30 / コミット: `feat: add human evaluation and sendable feedback`
+- 方針: 自動スコアではなく「そのまま送れる割合」を中心に据える。評価は任意・非強制。単件評価でルール生成しない。架空評価データなし。
+
+### Baseline（Step 10 固定値）
+
+- pytest 220 passed / benchmark 70件・210候補 / correction rate 0.792 / ai-like 0.124 / echo 0.152 / parse 1.00 / context_fit 0.605 / human_chat_fit 0.813 / conversation_fit 0.956。
+
+### 評価UI（最小変更）
+
+- 生成候補カードに送信可否4段階（そのまま送れる/少し修正/かなり修正/使えない）のトグル行を追加。評価なしでも通常利用可（会話操作を邪魔しない）。
+- `api.saveEvaluation`/`listEvaluations`・`EvaluationItem`/`Sendability` 型を追加。既存の👍/😐/👎評価・送信・再生成フローは不変。
+
+### DB変更（additive のみ）
+
+- `generation_evaluations.sendability`（sendable/minor_edit/major_edit/rejected/NULL）を SCHEMA＋ALTER マイグレーションで追加。既存行は NULL のまま。APIキー等の新規保存なし。
+- 候補追跡は既存の batch_id/history_id/candidate_index を維持。
+
+### 評価データ構造・送信との関連
+
+- そのまま送信（source=generated＋本文一致）→ history is_sent/is_adopted＋batch candidate_sent（Positive Signal。既存機構を維持）。
+- 編集送信（本文不一致の manual）→ 直近 batch を manual_replaced＋replacement_message_id（Negative/Contrast Signal。既存機構を維持）。
+- `POST /api/evaluations` は upsert（同一 history は後勝ちで行増殖なし）。rating/sendability の None は既存値保持（部分更新）。自動スコア列には触れない。
+- `GET /api/evaluations` に sendability フィルタを追加。unrated＝rating・sendability ともに NULL。
+
+### Human correction・Sendable Rate
+
+- 実DBの evaluations は0件のため Sendable Rate は測定不可（insufficient data。ベースライン correction rate 0.792 を維持記録）。非採用＝失敗としない。
+- 採用実例の Prompt 利用: 同一相手の送信済み生成文を最大5件 `【RECENT ACCEPTED】` として same-contact Gold ブロックへ追記（data 扱い明記。データなし時は何も出さない）。
+- 優先順位の記録: Hard validation ＞ invariants ＞ relevance ＞ Gold ＞ correction ＞ style ＞ naturalness。Human feedback は Hard Invariant より下位（validation が先に適用）。
+- Ranking: `final ＋= 0.06×(sent_sim−0.5)`（±0.03。送信実績3件未満は中立）。旧式→新式を記録。データ僅少時の強い反映はしない。
+
+### 学習への利用方法
+
+- manual replacement ペアは従来通り Contrast Learning へ（Step 9 機構）。sendability は集計・フィルタ用途（`acceptance_stats()`：スロット別採用数・sendability 分布）。50件目安の蓄積後に human_acceptance の本格反映を検討（今回は構造＋収集まで）。
+
+### Hard Invariantとの優先順位
+
+- Human 評価が高くても架空開示・捏造・話者混同・さん付け違反・JSON破壊・重大 Echo 反復は許可しない（validation が先）。自動評価と Human 評価の不一致時は Human 側を重視する設計（不一致は分析材料として保持）。
+
+### テスト結果
+
+- 新規 `backend/tests/test_human_evaluation.py`（11件）: sendability 保存・取得・検証・フィルタ／generated 送信フロー／編集送信フロー／accepted ブロック／acceptance_stats／ranking 中立・微加点／migration／7経路フロー。
+- `python -m pytest backend/tests -q` → **231 passed**（Step 10 時点 220 件＋新規 11 件）。
+- DB migration 結果: 新規・既存どちらの DB でも `init_db()` で sendability 列が存在し、既存行は NULL 維持（テストで検証）。
+- frontend build 結果: `npm run build`（tsc＋vite）成功。
+- 実LLM 使用なし（評価基盤の構築が主目的のため。生成件数等の実測は運用データ待ち）。
+
+### 未評価件数・未解決問題
+
+- 未評価: 実DB evaluations 0件（50件目安に遠く及ばず）。
+- 未解決: Sendable Rate 測定不可 / correction rate 改善の検証待ち / 評価 UI の実運用フィードバック待ち / good→review 状態の未導入。
 
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 

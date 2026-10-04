@@ -66,6 +66,28 @@ export interface GenerationResult {
   style_scores?: number[]
 }
 
+export type Sendability = 'sendable' | 'minor_edit' | 'major_edit' | 'rejected'
+
+export interface EvaluationItem {
+  id: number
+  generation_batch_id: number | null
+  history_id: number
+  candidate_index: number
+  counterpart_intent: string
+  naturalness_score: number | null
+  style_score: number | null
+  final_score: number | null
+  generated_text: string
+  counterpart_message: string
+  contact_id: number | null
+  human_rating: string | null
+  human_feedback: string
+  feedback_tags: string[]
+  sendability: Sendability | null
+  created_at: string
+  updated_at: string
+}
+
 export interface UserProfile {
   name: string
   gender: string

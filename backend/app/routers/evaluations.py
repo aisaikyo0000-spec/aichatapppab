@@ -44,6 +44,7 @@ def _parse_tags(raw: str) -> list[str]:
 
 
 def _to_out(row) -> dict:
+    keys = row.keys()
     return {
         "id": row["id"],
         "generation_batch_id": row["generation_batch_id"],
@@ -59,6 +60,7 @@ def _to_out(row) -> dict:
         "human_rating": row["human_rating"],
         "human_feedback": row["human_feedback"] or "",
         "feedback_tags": _parse_tags(row["feedback_tags"]),
+        "sendability": row["sendability"] if "sendability" in keys else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -111,24 +113,35 @@ def save_evaluation(body: EvaluationCreate):
             cur = conn.execute(
                 "INSERT INTO generation_evaluations"
                 " (generation_batch_id, history_id, candidate_index, counterpart_intent,"
-                "  human_rating, human_feedback, feedback_tags, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  human_rating, human_feedback, feedback_tags, sendability, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     batch_id, body.history_id, candidate_index, intent,
                     body.rating, body.feedback.strip(), json.dumps(body.feedback_tags, ensure_ascii=False),
-                    now, now,
+                    body.sendability, now, now,
                 ),
             )
             eval_id = cur.lastrowid
         else:
             # upsert: 人間評価列のみ更新し、自動スコア列は変更しない
+            # rating/sendability が None の場合は既存値を保持（部分更新のため）
+            prev = conn.execute(
+                "SELECT human_rating, sendability FROM generation_evaluations WHERE id = ?",
+                (existing["id"],),
+            ).fetchone()
+            new_rating = body.rating if body.rating is not None else prev["human_rating"]
+            new_sendability = (
+                body.sendability if body.sendability is not None else prev["sendability"]
+            )
             conn.execute(
                 "UPDATE generation_evaluations"
-                " SET human_rating = ?, human_feedback = ?, feedback_tags = ?, updated_at = ?"
+                " SET human_rating = ?, human_feedback = ?, feedback_tags = ?,"
+                "     sendability = ?, updated_at = ?"
                 " WHERE id = ?",
                 (
-                    body.rating, body.feedback.strip(),
-                    json.dumps(body.feedback_tags, ensure_ascii=False), now, existing["id"],
+                    new_rating, body.feedback.strip(),
+                    json.dumps(body.feedback_tags, ensure_ascii=False),
+                    new_sendability, now, existing["id"],
                 ),
             )
             eval_id = existing["id"]
@@ -142,6 +155,9 @@ def save_evaluation(body: EvaluationCreate):
 def list_evaluations(
     batch_id: int | None = Query(default=None),
     rating: str | None = Query(default=None, pattern="^(good|neutral|bad|unrated)$"),
+    sendability: str | None = Query(
+        default=None, pattern="^(sendable|minor_edit|major_edit|rejected)$"
+    ),
     limit: int = Query(default=100, ge=1, le=1000),
 ):
     """評価データを新しい順に取得する。rating=unrated で未評価のみに絞れる。"""
@@ -158,10 +174,13 @@ def list_evaluations(
             query += " AND e.generation_batch_id = ?"
             params.append(batch_id)
         if rating == "unrated":
-            query += " AND e.human_rating IS NULL"
+            query += " AND e.human_rating IS NULL AND e.sendability IS NULL"
         elif rating in ("good", "neutral", "bad"):
             query += " AND e.human_rating = ?"
             params.append(rating)
+        if sendability is not None:
+            query += " AND e.sendability = ?"
+            params.append(sendability)
         query += " ORDER BY e.id DESC LIMIT ?"
         params.append(limit)
         rows = conn.execute(query, params).fetchall()

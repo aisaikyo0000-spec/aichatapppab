@@ -12,7 +12,15 @@ interface ReplyCard {
   rating?: string | null
   ratingReason?: string | null
   showFeedback?: boolean
+  sendability?: string | null
 }
+
+const SENDABILITY_OPTIONS = [
+  { value: 'sendable', label: 'そのまま送れる', active: 'bg-emerald-500 text-white shadow-sm', title: '修正なしで送信できる' },
+  { value: 'minor_edit', label: '少し修正', active: 'bg-sky-500 text-white shadow-sm', title: '少し修正すれば送れる' },
+  { value: 'major_edit', label: 'かなり修正', active: 'bg-amber-500 text-white shadow-sm', title: '大幅な修正が必要' },
+  { value: 'rejected', label: '使えない', active: 'bg-rose-500 text-white shadow-sm', title: '使えない・送れない' },
+] as const
 
 interface Props {
   contactId: number
@@ -105,6 +113,7 @@ export default function GenerationPanel({ contactId, onSend, onMessage, tone }: 
           rating: null,
           ratingReason: null,
           showFeedback: false,
+          sendability: null,
         }))
         setCards(newCards)
       }
@@ -202,6 +211,19 @@ export default function GenerationPanel({ contactId, onSend, onMessage, tone }: 
       await api.updateHistory(card.historyId, { rating_reason: reason })
     } catch {
       // 無視
+    }
+  }
+
+  const rateSendability = async (card: ReplyCard, value: string) => {
+    const next = card.sendability === value ? null : value
+    setCards((cs) => cs.map((c) => (c === card ? { ...c, sendability: next } : c)))
+    try {
+      await api.saveEvaluation(card.historyId, {
+        sendability: next as 'sendable' | 'minor_edit' | 'major_edit' | 'rejected' | null,
+      })
+      if (next) onMessage('送信可否を保存しました', 'info')
+    } catch (e) {
+      onMessage('送信可否の保存に失敗しました', 'error')
     }
   }
 
@@ -414,8 +436,7 @@ export default function GenerationPanel({ contactId, onSend, onMessage, tone }: 
 
                   {/* 評価ボタン (👍 / 😐 / 👎) */}
                   <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-gray-400">評価:</span>
-                    <button
+                    <span className="text-[11px] text-gray-400">評価:</span>                    <button
                       onClick={() => rateReply(card, 'good')}
                       className={`rounded-lg px-2 py-1 text-xs font-bold transition-colors ${
                         card.rating === 'good'
@@ -449,6 +470,25 @@ export default function GenerationPanel({ contactId, onSend, onMessage, tone }: 
                       👎 微妙
                     </button>
                   </div>
+                </div>
+
+                {/* 送信可否（4段階・任意。会話操作を邪魔しない） */}
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-gray-400">送信可否:</span>
+                  {SENDABILITY_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => rateSendability(card, opt.value)}
+                      className={`rounded-lg px-2 py-1 text-[11px] font-bold transition-colors ${
+                        card.sendability === opt.value
+                          ? opt.active
+                          : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                      }`}
+                      title={opt.title}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
 
                 {/* 評価理由（任意入力タグ/自由記述） */}

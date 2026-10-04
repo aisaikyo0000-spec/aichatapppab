@@ -228,6 +228,7 @@ class EvaluationCreate(BaseModel):
     rating: Optional[Literal["good", "neutral", "bad"]] = None
     feedback: str = Field(default="", max_length=2000)
     feedback_tags: list[str] = Field(default_factory=list)
+    sendability: Optional[Literal["sendable", "minor_edit", "major_edit", "rejected"]] = None
 
 
 class EvaluationOut(BaseModel):
@@ -247,5 +248,6 @@ class EvaluationOut(BaseModel):
     human_rating: Optional[str] = None
     human_feedback: str = ""
     feedback_tags: list[str] = Field(default_factory=list)
+    sendability: Optional[str] = None
     created_at: str
     updated_at: str

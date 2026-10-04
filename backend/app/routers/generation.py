@@ -1321,6 +1321,13 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     # 5.5 same-contact manual Gold の原文実例ブロック
     same_contact_gold_block = learning.style.build_same_contact_gold_pairs_block(contact_id, limit=10)
 
+    # 5.55 Step 11: 最近そのまま送信された生成返信の実例（最大5件。なければ空）
+    accepted_block = learning.contrast.build_accepted_block(contact_id, limit=5)
+    if accepted_block:
+        same_contact_gold_block = (
+            f"{same_contact_gold_block}\n{accepted_block}" if same_contact_gold_block else accepted_block
+        )
+
     self_profile = database.get_user_profile()
     contact_info = {
         "name": contact["name"],
@@ -1373,6 +1380,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
             "conversation_ledger": conversation_ledger,
             "counterpart_length_tier": counterpart_length_tier,
             "counterpart_length_chars": counterpart_length_chars,
+            "accepted_block": accepted_block,
             "self_profile": self_profile,
             "contact": contact_info,
             "chat_history": chat_text,
@@ -1817,10 +1825,16 @@ def generate(body: GenerateRequest):
         # 修正データがなければ human_fit=0.5 で影響なし。Hard/validation は不変。
         human_fit = learning.contrast.correction_similarity(r, body.contact_id)
         final = round(final + 0.1 * (human_fit - 0.5), 3)
+        # Step 11: 送信実績プロファイルへの適合度をさらに微調整（±0.03）。
+        # 送信実績3件未満なら sent_sim=0.5 で影響なし。
+        # 優先順位: Hard validation > invariants > relevance > Gold > correction > style > naturalness。
+        # Human feedback は Hard Invariant より下位（validation が先に適用される）。
+        sent_sim = learning.contrast.sent_profile_similarity(r, body.contact_id)
+        final = round(final + 0.06 * (sent_sim - 0.5), 3)
         scored_items.append({
             "reply": r, "score": s_val, "details": s_details,
             "naturalness": nat["score"], "naturalness_detail": nat,
-            "human_fit": human_fit, "final": final,
+            "human_fit": human_fit, "sent_sim": sent_sim, "final": final,
         })
 
     # 通常モードのみ最終スコア降順ソート（followupモードは役割スロット固定のため順序を整列）
@@ -1832,6 +1846,7 @@ def generate(body: GenerateRequest):
         style_scores = [item["score"] for item in ordered_items]
         naturalness_scores = [item["naturalness"] for item in ordered_items]
         human_fit_scores = [item["human_fit"] for item in ordered_items]
+        sent_sim_scores = [item["sent_sim"] for item in ordered_items]
         final_scores = [item["final"] for item in ordered_items]
     else:
         scored_items.sort(key=lambda x: x["final"], reverse=True)
@@ -1840,6 +1855,7 @@ def generate(body: GenerateRequest):
         style_scores = [item["score"] for item in scored_items]
         naturalness_scores = [item["naturalness"] for item in scored_items]
         human_fit_scores = [item["human_fit"] for item in scored_items]
+        sent_sim_scores = [item["sent_sim"] for item in scored_items]
         final_scores = [item["final"] for item in scored_items]
 
     # 6. 履歴保存（ソート後の順序で各候補を個別に保存、batch_id を付与）
@@ -1875,6 +1891,7 @@ def generate(body: GenerateRequest):
         "style_scores": style_scores,
         "naturalness_scores": naturalness_scores,
         "human_fit_scores": human_fit_scores,
+        "sent_sim_scores": sent_sim_scores,
         "final_scores": final_scores,
         "batch_id": batch_id,
         "build_version": config.APP_BUILD_VERSION,

@@ -1,4 +1,4 @@
-"""Step 9: Human Feedback Loop のテスト。
+"""Step 9: Human Feedback Loop のテスト。"
 
 方針:
 - 実ユーザーの個人情報は fixture にしない（全て合成データ）

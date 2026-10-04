@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -30,8 +31,73 @@ from app.ai.naturalness import (  # noqa: E402
     detect_echo,
     evaluate_candidate_naturalness,
 )
+from app import reply_policy  # noqa: E402
 from app.routers.generation import _parse_replies_strict, validate_candidate_replies  # noqa: E402
 from step7_representative_cases import load_step7_representative_cases  # noqa: E402
+
+# Step 10: AI-like 失敗パターン分類（ベンチマーク測定用。製品の禁止ルールではない）
+FORMULAIC_EMPATHY = ("そうなんですね", "わかります", "確かに", "なるほど")
+EXCESS_POLITE = re.compile(r"(?:です|ます)")
+OVER_EMOTION = re.compile(r"超|めっちゃ|最高")
+UNNEEDED_SUMMARY = ("つまり", "要するに", "まとめると", "ということは")
+UNNEEDED_CHEER = ("頑張って", "応援して", "無理しないでください")
+
+
+def _key_score(nat_result: dict, key: str) -> float:
+    """Naturalness 結果から項目スコアを取り出す（減点なしは 1.0）。"""
+    for p in nat_result.get("penalties", []):
+        if p.get("key") == key:
+            return float(p.get("score", 1.0))
+    return 1.0
+
+
+def four_axis_scores(nat_result: dict) -> dict:
+    """Step 10 §2: 自然さの4軸スコア（決定論的マッピング）。"""
+    return {
+        "context_fit": _key_score(nat_result, "relevance"),
+        "human_chat_fit": min(
+            _key_score(nat_result, "question"),
+            _key_score(nat_result, "echo"),
+            _key_score(nat_result, "length"),
+            _key_score(nat_result, "overreact"),
+        ),
+        "personal_style_fit": None,  # synthetic live には Gold がないため測定不可
+        "conversation_fit": min(
+            _key_score(nat_result, "repetition"),
+            _key_score(nat_result, "length"),
+        ),
+    }
+
+
+def classify_ai_like(candidate: str, contact: str, counterpart_intent: str = "report") -> list[str]:
+    """Step 10 §3: AIっぽさの失敗パターン分類（測定用）。"""
+    t = (candidate or "").strip()
+    found: list[str] = []
+    if t.startswith(FORMULAIC_EMPATHY) and ("！" in t[:12] or "!" in t[:12]):
+        found.append("formulaic_empathy")
+    if len(t) > 80 or any(m in t for m in EXPLAIN_MARKERS):
+        found.append("over_explanation")
+    if count_meaningful_questions(t)["informative"] >= 2:
+        found.append("too_many_questions")
+    novel = _extract_keywords(t) - _extract_keywords(contact)
+    if len(novel) >= 3:
+        found.append("topic_drift")
+    if len(EXCESS_POLITE.findall(t)) >= 4 and len(contact) <= 30:
+        found.append("over_polite")
+    if len(re.findall(r"[！!]", t)) >= 3 or len(OVER_EMOTION.findall(t)) >= 2:
+        found.append("over_emotion")
+    echo_score, _ = detect_echo(t, contact)
+    if echo_score < 1.0:
+        found.append("paraphrase")
+    if any(m in t for m in UNNEEDED_SUMMARY):
+        found.append("unneeded_summary")
+    if any(m in t for m in UNNEEDED_CHEER):
+        found.append("unneeded_cheer")
+    # 不自然な自己開示・会話延命は signals 経由の簡易判定
+    if reply_policy.question_necessity(contact, counterpart_intent) == "unnecessary":
+        if count_meaningful_questions(t)["informative"] >= 1:
+            found.append("forced_continuation")
+    return found
 
 # Step 8: issue 検出用の定型マーカー（比較測定用。製品コードの禁止ルールではない）
 AI_LIKE_MARKERS = [
@@ -167,12 +233,21 @@ def run_live(cases: list[dict], provider_name: str, model: str) -> list[dict]:
             entry["violations"] = validate_candidate_replies(parsed, 3) if parsed else ["parse_failed"]
             scored = []
             issues = []
+            axes_list = []
+            ai_like_list = []
             for c in parsed:
                 res = evaluate_candidate_naturalness(c, contact, ledger, [])
                 scored.append(res["score"])
                 issues.append(detect_issues(c, contact))
+                axes_list.append(four_axis_scores(res))
+                ai_like_list.append(classify_ai_like(
+                    c, contact,
+                    (ledger.get("counterpart_intent") or "report"),
+                ))
             entry["naturalness_scores"] = scored
             entry["issues"] = issues
+            entry["four_axis"] = axes_list
+            entry["ai_like_patterns"] = ai_like_list
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
         results.append(entry)
@@ -197,6 +272,15 @@ def main() -> int:
     if args.live:
         results = run_live(cases, args.provider, args.model)
         all_issues = [iss for r in results for iss in r.get("issues", [])]
+        all_patterns = [p for r in results for c in r.get("ai_like_patterns", []) for p in c]
+        pattern_counts: dict[str, int] = {}
+        for p in all_patterns:
+            pattern_counts[p] = pattern_counts.get(p, 0) + 1
+        axis_keys = ("context_fit", "human_chat_fit", "conversation_fit")
+        axis_avg = {}
+        for key in axis_keys:
+            vals = [c[key] for r in results for c in r.get("four_axis", []) if c.get(key) is not None]
+            axis_avg[key] = round(sum(vals) / len(vals), 3) if vals else None
         summary = {
             "total": len(results),
             "errors": sum(1 for r in results if "error" in r),
@@ -204,6 +288,8 @@ def main() -> int:
                 sum(1 for r in results if r.get("parse_ok")) / (len(results) or 1), 3
             ),
             "issues": summarize_issues(all_issues),
+            "four_axis_avg": axis_avg,
+            "ai_like_patterns": pattern_counts,
         }
         payload = {
             "summary": summary, "provider": args.provider, "model": args.model, "cases": results,

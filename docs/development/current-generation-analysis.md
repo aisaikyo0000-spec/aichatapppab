@@ -555,6 +555,61 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - 実ペア由来の知見を機構に反映（短縮の非強制・質問削減の傾向学習・Echo 棄却の言及・文数分割の要約軸）。禁止ルールの追加はなし。
 - 未解決: 弁別率0.523は低く、表層特徴の限界を示す（ deeper 適合信号が今後の課題）/ Human 評価データ0件のまま（Good/Bad 率比較不可）/ correction rate 0.792 の改善検証は運用データ待ち / 評価ボタン UI・good→review 状態の未着手。
 
+## Step 10 Real Conversation Benchmark
+
+- 実施日: 2026-09-29 / コミット: `feat: add real conversation quality benchmark`
+- 方針: 個別ルール追加ではなくベンチマーク中心。Sendable Rate の proxy 測定＋回帰ガード。改善基準（§25B）で判定し、悪化があれば採用しない。
+
+### Baseline（Step 10 開始時点・main 固定）
+
+- build learned-reply-v4.0 / prompt v4.0 / pytest 207 passed。
+- 実LLM 50ケース（Step 8 After）: novel 0.521 / echo 0.111 / 質問 0.056 / overexp 0.00 / ai_like 0.049 / parse 0.96。
+- Human correction rate 0.792（Step 9 実DB）。
+- 実DB反復率: 同一冒頭 2.0% / 同一語尾 14.7%（敬語様式が主体）/ 同一質問型 1.6%。
+- Prompt サイズ（最小構成）: 5447文字・【21個（上限10000文字・26個）。
+
+### ベンチマーク（70件・正解捏造なし）
+
+- 新規 `backend/tests/step10_benchmark_inputs.json`（入力のみ。casual/short/emotional/topic/question/statement/long/ambiguous/closing/no-question-needed×7）。
+- 新規 `backend/app/reply_policy.py`: 応答行為の複数ラベル推定（11種＋mixed）/ question_necessity（needed/optional/unnecessary。Gold質問率で一段階補正）/ response_length_target（4段階。Gold中央値で上限補正）。生成プロンプトへは注入しない（§22: 意図別方針・長さ区分と重複するため。ベンチマーク測定に使用）。
+- 比較CLIに4軸（context/human_chat/personal_style/conversation）＋AI-like 12パターン分類を追加。personal_style は synthetic live に Gold がないため測定不可（null）と明記。
+
+### Before / After（実LLM・Gemini・70ケース・各3案＝210候補）
+
+| 指標 | Step 8 baseline(50) | Step 10(70) | 方向 |
+|---|---|---|---|
+| novel_keyword_rate | 0.521 | 0.486 | 改善 |
+| echo_rate | 0.111 | 0.152 | 悪化 |
+| too_many_questions_rate | 0.056 | 0.057 | 横ばい |
+| over_explanation_rate | 0.00 | 0.00 | 不変 |
+| ai_like_rate | 0.049 | 0.124 | 悪化 |
+| parse_ok_rate | 0.96 | 1.00 | 改善 |
+| 4軸 context_fit | —（初測 0.605） | — | — |
+| 4軸 human_chat_fit | —（初測 0.813） | — | — |
+| 4軸 conversation_fit | —（初測 0.956） | — | — |
+
+- AI-like 内訳（210候補中）: paraphrase 32 / topic_drift 13 / too_many_questions 12 / formulaic_empathy 9 / forced_continuation 1 / unneeded_cheer 1。
+- echo・ai_like の増加は、追加20件が短小・あいまい入力中心（うん/まあね/だよね/OK等で鏡像応答が interactionally 正常）というケース mix 差が主因と判断。検出器が儀礼的鏡像と内容反復を区別しない測定限界を記録（断定なし）。
+- Sendable Rate: Human 評価データ0件のため測定不可（insufficient data）。proxy として correction rate 0.792（ベースライン維持）を記録。非採用＝失敗としない（§20）。
+
+### Production 変更（最小限・§23 基準で判定）
+
+1. Echo paraphrase の助詞非依存化（仕事が終わった/仕事終わったの同一視）のみ採用。根拠: 複数ケースで再現＋Gold 逆傾向なし＋例外少＋既存テスト全緑。
+2. fragmentation の並列短候補の誤検出抑止（Step 8 作業分。実LLM短文化で顕在化）を維持。
+3. **見送り**: 生成履歴の repetition 参照拡張はいったん revert。理由: 既存 tie-order を壊す＋実DB反復率が低く様式的＋棄却回避は correction_similarity が担当。判断過程を `generation._load_recent_self_replies` の docstring に記録。
+4. 語尾反復の penalty 化は見送り（14.7%は敬語様式。§23 未達）。
+5. question_necessity / length_target のプロンプト注入は見送り（§22: 重複のため）。
+
+### テスト結果
+
+- 新規 `backend/tests/test_step10_benchmark.py`（13件）: reply intent / length target / question necessity / repetition penalty / echo classification / candidate ranking / three-candidate quality / closing / short / long / ambiguous / benchmark件数・無正解 / regression guard（6項目）。
+- `python -m pytest backend/tests -q` → **220 passed**（Step 9 時点 207 件＋新規 13 件）。
+
+### Regression・未解決問題
+
+- 6項目（unsupported inference・echo・question overuse・tone・JSON・hard invariants）は全緑。Prompt サイズは上限内。
+- 未解決: Human 評価0件（Sendable Rate 測定不可）/ 儀礼的鏡像と内容反復の区別 / personal_style_fit の実測には Gold 付き運用データが必要 / correction rate 改善の検証待ち / 評価ボタン UI 未着手。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

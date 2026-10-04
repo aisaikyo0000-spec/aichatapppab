@@ -101,6 +101,10 @@ _STANCE_LEXICON = (
 )
 
 
+# 助詞（キーワード比較時の正規化用。detect_echo の paraphrase 判定のみで使用）
+_PARTICLES = re.compile(r"(?:から|まで|より|[のがをはへとでに])")
+
+
 def _normalize(text: str) -> str:
     """比較用の正規化（空白・記号・笑い・口語ゆれの除去）。"""
     t = (text or "").strip()
@@ -218,9 +222,19 @@ def detect_echo(candidate: str, counterpart_message: str) -> tuple[float, dict |
     if len(cp_norm) >= 3 and cp_norm in cand_norm and len(cand_norm) < len(cp_norm) * 2.5:
         return 0.15, {"type": "contains_counterpart"}
     # 主要語句の並べ替え＋薄い付加のみ
+    # Step 10: 助詞の有無で漢字runが分断される場合（仕事が終わった/仕事終わった）を同一視する
     cp_kw = _extract_keywords(counterpart_message)
     cand_kw = _extract_keywords(candidate)
-    if cp_kw and cp_kw <= cand_kw and len(cand_kw - cp_kw) <= 1:
+    cp_plain = _PARTICLES.sub("", counterpart_message or "")
+    cand_plain = _PARTICLES.sub("", candidate or "")
+    cp_kw_plain = _extract_keywords(cp_plain)
+    cand_kw_plain = _extract_keywords(cand_plain)
+    kw_ok = (cp_kw and cp_kw <= cand_kw and len(cand_kw - cp_kw) <= 1) or (
+        cp_kw_plain
+        and cp_kw_plain <= cand_kw_plain
+        and len(cand_kw_plain - cp_kw_plain) <= 1
+    )
+    if kw_ok:
         core = cand_norm
         for w in sorted(_ECHO_WRAPPERS, key=len, reverse=True):
             if core.endswith(w):

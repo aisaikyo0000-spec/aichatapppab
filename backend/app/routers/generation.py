@@ -1383,7 +1383,14 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
 
 
 def _load_recent_self_replies(contact_id: int, limit: int = 5) -> list[str]:
-    """直近の自分の送信文を取得する（Repetition 検出用）。"""
+    """直近の自分の送信文を取得する（Repetition 検出用）。
+
+    Step 10 検討記録: 生成履歴（採用・不採用問わず）の参照も試したが、
+    同一トリガーの再生成で tie-order を壊し、実DBでも turn 間反復が低率
+    （同一冒頭2.0%・同一質問型1.6%。語尾14.7%は敬語様式）だったため、
+    messages のみに留める。棄却案の回避は correction_similarity が担う。
+    重複は除去する。
+    """
     conn = database.get_conn()
     try:
         rows = conn.execute(
@@ -1391,7 +1398,15 @@ def _load_recent_self_replies(contact_id: int, limit: int = 5) -> list[str]:
             " ORDER BY id DESC LIMIT ?",
             (contact_id, limit),
         ).fetchall()
-        return [(r["content"] or "").strip() for r in rows if (r["content"] or "").strip()]
+        seen: set[str] = set()
+        out: list[str] = []
+        for r in rows:
+            text = (r["content"] or "").strip()
+            norm = " ".join(text.split())
+            if text and norm not in seen:
+                seen.add(norm)
+                out.append(text)
+        return out
     finally:
         conn.close()
 

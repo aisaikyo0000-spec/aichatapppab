@@ -483,3 +483,69 @@ def sent_profile_similarity(candidate: str, contact_id: int | None) -> float:
     cand_q = 1 if count_meaningful_questions(cand)["informative"] > 0 else 0
     q_sim = 1.0 - abs(cand_q - q_rate)
     return round(max(0.0, min(1.0, (len_sim + sent_sim + q_sim) / 3.0)), 3)
+
+
+# --- Step 12: データ不足時の観測統計（ランキング変更なし） ---
+
+# Step 12 §2 のしきい値
+MIN_EVALUATIONS_FOR_RANKING = 30
+MIN_SENDABILITY_FOR_RANKING = 30
+MIN_SAME_CONTACT_FOR_STRONG_LEARNING = 5
+
+# Step 12 §9: sendability シグナル値（固定ではなく検証用。ランキング未配線）
+SENDABILITY_SIGNALS = {
+    "sendable": 1.0,
+    "minor_edit": 0.5,
+    "major_edit": -0.5,
+    "rejected": -1.0,
+}
+
+
+def sendability_signal(sendability: str | None) -> float:
+    """sendability を数値シグナルに変換する（Step 12 §9）。None は 0.0。"""
+    return SENDABILITY_SIGNALS.get(sendability or "", 0.0)
+
+
+def smooth_rate(positive: int, total: int, prior: float = 0.5, prior_n: int = 10) -> float:
+    """Bayesian 平滑化率（Step 12 §10）。件数少数の 100%/0% を防ぐ。"""
+    return round((positive + prior * prior_n) / (max(total, 0) + prior_n), 3)
+
+
+def feedback_volume() -> dict[str, Any]:
+    """評価データ量と不足判定を返す（Step 12 §1-§2）。"""
+    conn = database.get_conn()
+    try:
+        total = conn.execute("SELECT COUNT(*) AS n FROM generation_evaluations").fetchone()["n"]
+        by_sendability = {
+            r["sendability"] or "unrated": r["n"]
+            for r in conn.execute(
+                "SELECT sendability, COUNT(*) AS n FROM generation_evaluations GROUP BY sendability"
+            ).fetchall()
+        }
+        by_rating = {
+            r["human_rating"] or "unrated": r["n"]
+            for r in conn.execute(
+                "SELECT human_rating, COUNT(*) AS n FROM generation_evaluations GROUP BY human_rating"
+            ).fetchall()
+        }
+        batch_outcomes = {
+            r["outcome"]: r["n"]
+            for r in conn.execute(
+                "SELECT outcome, COUNT(*) AS n FROM generation_batches GROUP BY outcome"
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+    sendability_total = sum(n for k, n in by_sendability.items() if k != "unrated")
+    sufficient = total >= MIN_EVALUATIONS_FOR_RANKING and sendability_total >= MIN_SENDABILITY_FOR_RANKING
+    replaced = batch_outcomes.get("manual_replaced", 0)
+    sent = batch_outcomes.get("candidate_sent", 0)
+    return {
+        "evaluations_total": total,
+        "sendability_total": sendability_total,
+        "by_sendability": by_sendability,
+        "by_rating": by_rating,
+        "batches": batch_outcomes,
+        "correction_rate": round(replaced / (replaced + sent), 3) if (replaced + sent) else None,
+        "sufficient_for_ranking": sufficient,
+    }

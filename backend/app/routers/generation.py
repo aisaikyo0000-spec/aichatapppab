@@ -1597,6 +1597,12 @@ def get_learning_diagnostics():
     finally:
         conn.close()
 
+    feedback = learning.contrast.feedback_volume()
+    acceptance = learning.contrast.acceptance_stats()
+    sendable_n = feedback["by_sendability"].get("sendable", 0)
+    rated_n = sum(
+        n for k, n in feedback["by_sendability"].items() if k != "unrated"
+    )
     return {
         "corpus": corpus_stats,
         "style_profile_tier": hierarchical_profile["hierarchy_tier"],
@@ -1605,6 +1611,9 @@ def get_learning_diagnostics():
         "naturalness_enabled": True,
         "naturalness_weight": naturalness.NATURALNESS_WEIGHT,
         "style_weight": naturalness.STYLE_WEIGHT,
+        "feedback": feedback,
+        "acceptance": acceptance,
+        "smoothed_sendable_rate": learning.contrast.smooth_rate(sendable_n, rated_n),
         "batches": {
             "total_batches": total_batches,
             "outcomes": batch_outcomes,

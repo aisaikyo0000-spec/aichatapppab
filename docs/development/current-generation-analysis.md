@@ -662,7 +662,39 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 ### 未評価件数・未解決問題
 
 - 未評価: 実DB evaluations 0件（50件目安に遠く及ばず）。
-- 未解決: Sendable Rate 測定不可 / correction rate 改善の検証待ち / 評価 UI の実運用フィードバック待ち / good→review 状態の未導入。
+- 未解決: Sendable Rate 測定不可 / correction rate 改善の検証待ち / 評価 UI の実運用フィードバック待ち / good→review 状態の未導入（Step 12 で一部対応）。
+
+## Step 12 Production Human Feedback Ranking
+
+- 実施日: 2026-09-30 / コミット: `feat: optimize ranking with production human feedback`
+- 方針: データ件数を先に確認し、不足のためランキング変更は行わない（§2・§30）。観測機能の追加＋フォールバック検証＋全緑維持で完了とする。架空データ・推測学習なし。
+
+### 評価件数・データ分布・不足判定
+
+- 実DB: evaluations 0件（sendability 0件・good/neutral/bad 0件）。batches: candidate_sent 116 / manual_replaced 443 / pending 412。history ratings: good 11 / neutral 19 / bad 42。
+- 判定: evaluations 0 ＜ 30、sendability 0 ＜ 30 → **データ不足。本格的な Human Ranking 変更は禁止**（Step 11 機構を維持し収集継続）。
+
+### 実装した変更（観測のみ・ランキング不変）
+
+- `learning/contrast.py`: `SENDABILITY_SIGNALS`（sendable +1/minor +0.5/major −0.5/rejected −1。検証用。未配線）/ `smooth_rate()`（Bayesian 平滑化。少数件数の100%/0%防止）/ `feedback_volume()`（件数・分布・correction_rate・不足判定）/ しきい値定数（30/30/同一相手5件）。
+- `GET /api/learning/diagnostics` に `feedback`（件数・分布・correction_rate・不足判定）/ `acceptance`（スロット別採用・sendability分布）/ `smoothed_sendable_rate`（データなし時は事前分布0.5）を追加。既存キー不変・新エンドポイントなし（重複回避）。
+- recency 減衰・global 混合・sendability 強反映は未配線（データ充足後の課題として記録）。
+
+### A/B結果・Sendable Rate・Regression
+
+- A/B なし（比較対象の変更なしのため Before＝After）。実LLM 70ケースの再実行なし（Step 10 計測が有効なまま）。
+- Sendable Rate: 測定不可（evaluations 0件）。correction rate 0.792（ベースライン維持）。
+- Regression: なし（241 passed）。Hard Invariants・JSON・Tone・Echo・質問・推測の振る舞い維持をテストで確認。
+
+### テスト結果
+
+- 新規 `backend/tests/test_production_feedback.py`（10件）: insufficient fallback / same-contact・global 集計 / smoothing / sendability scoring / manual Gold separation（採用生成文の source 維持）/ upper bound（±0.05/±0.03）/ AI-like 両立 / repetition / hard invariants / diagnostics 指標。
+- `python -m pytest backend/tests -q` → **241 passed**（Step 11 時点 231 件＋新規 10 件）。
+
+### 未解決問題
+
+- Human 評価0件（50件目安）。Sendable Rate・A/B・重み調整はデータ充足待ち。
+- good→review 状態・評価ボタン実運用フィードバックは未着手。
 
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 

@@ -694,7 +694,55 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 ### 未解決問題
 
 - Human 評価0件（50件目安）。Sendable Rate・A/B・重み調整はデータ充足待ち。
-- good→review 状態・評価ボタン実運用フィードバックは未着手。
+- good→review 状態・評価ボタン実運用フィードバックは未着手（Step 13 で対応）。
+
+## Step 13 Production Feedback Collection
+
+- 実施日: 2026-09-30 / コミット: `feat: complete production feedback collection flow`
+- 方針: 新アルゴリズム追加ではなく、生成→送信→評価→DB→diagnostics のループ完成。評価データ水増しなし。Human Ranking 変更なし（Step 12 の不足判定を維持）。
+
+### UI（最小・非強制）
+
+- Step 11 追加の送信可否4段階トグルは候補カード内の小さな行に配置済み（会話操作を優先）。評価なしでも生成・選択・編集・送信・破棄は通常通り。評価の後から変更はトグル再押下で可能（最新値で取得）。
+
+### DB（変更なし・既存設計の再利用）
+
+- 新テーブルなし。`generation_evaluations`（sendability/rating/feedback/tags/時刻）＋`generation_history`（is_sent等）＋`generation_batches`（outcome/selected/replacement）＋`messages`（source/history_id）で全 requirements を充足。APIキー等の新規保存なし。実チャットの fixture 化なし。
+
+### implicit / explicit の分離
+
+- explicit: evaluations.sendability または human_rating の設定値（明示評価が最優先）。
+- implicit_sendable: history is_sent=1 かつ sendability 未設定から導出（新規列なし。「送信＝完全満足」とは断定しない）。
+- 優先順位: explicit evaluation ＞ explicit manual replacement ＞ implicit send。不一致時は explicit を重視し、自動スコアは保持する。
+- Duplicate 防止: history_id UNIQUE＋upsert（再評価は後勝ちで行増殖なし）。
+
+### evaluation flow（E2E 確認済み）
+
+- contact→generate 3候補→選択→送信→評価→diagnostics、generate→編集→送信→manual_replaced→評価の両経路を API テストで確認。
+- 来歴追跡: history_id/batch_id/contact_id/candidate_index/時刻を evaluations＋history 結合で復元（本文の重複保存なし）。
+- 編集差分は `classify_edit_magnitude()`（minor/major/rewrite の目安）で測定。自動で sendability を書き換えない。
+
+### diagnostics（§16・§17）
+
+- `GET /api/learning/diagnostics` に `evaluation_flow`（explicit_total/implicit_sent_total/sendability分布）と `evaluation_integrity`（unlinked/missing/duplicate＝すべて0件のはず）を追加。
+- 実DB読取確認（書換なし）: evaluations 0件・integrity 全0・implicit_sent 197件（送信済み生成候補の追跡可能数）。
+
+### 実評価件数・データ品質
+
+- evaluations 0件・sendability 0件（50件目安に未達。30件ゲートも未達のためランキング変更なし）。
+- diagnostics の `sufficient_for_ranking` は false のまま。Human Ranking 改善・Sendable Rate 改善は主張しない（正確に infrastructure completed / data pending と記録）。
+
+### テスト結果
+
+- 新規 `backend/tests/test_feedback_collection.py`（11件）: implicit send / explicit / override / manual replacement / provenance / duplicate prevention / update / diagnostics / unlinked / E2E×2。
+- `python -m pytest backend/tests -q` → **252 passed**（Step 12 時点 241 件＋新規 11 件）。
+- `npm run build`（tsc＋vite）成功・エラー0件。
+- 実LLM 使用なし（基盤確認が目的。少数ケースE2Eはモックで実施）。
+
+### 未解決問題
+
+- 実評価0件（30/50件ゲート未達）。Sendable Rate・A/B・重み調整は運用データ待ち。
+- good→review 状態の未導入。
 
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 

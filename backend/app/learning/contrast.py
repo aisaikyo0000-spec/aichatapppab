@@ -506,6 +506,90 @@ def sendability_signal(sendability: str | None) -> float:
     return SENDABILITY_SIGNALS.get(sendability or "", 0.0)
 
 
+# --- Step 13: Feedback 収集フロー（明示/暗黙の分離と整合性） ---
+# 優先順位: explicit evaluation > explicit manual replacement > implicit send。
+# implicit は新規列を作らず、is_sent=1 かつ sendability 未設定から導出する。
+# 「送信した＝完全に満足」とは断定しない（§6）。
+
+
+def classify_edit_magnitude(rejected: str, chosen: str) -> str:
+    """編集量を minor / major / rewrite に分類する（Step 13 §5・表示用）。
+
+    自動で sendability を書き換えない。編集量の断定は避け、目安として使う。
+    """
+    from ..ai.naturalness import _jaccard2, _normalize
+
+    r, c = _normalize(rejected), _normalize(chosen)
+    if not r or not c:
+        return "rewrite"
+    if r == c:
+        return "minor"
+    sim = _jaccard2(r, c)
+    if sim >= 0.6:
+        return "minor"
+    if sim >= 0.3:
+        return "major"
+    return "rewrite"
+
+
+def evaluation_integrity() -> dict[str, Any]:
+    """評価データの整合性を返す（Step 13 §17）。"""
+    conn = database.get_conn()
+    try:
+        unlinked = conn.execute(
+            "SELECT COUNT(*) AS n FROM generation_evaluations WHERE history_id IS NULL"
+        ).fetchone()["n"]
+        missing_history = conn.execute(
+            "SELECT COUNT(*) AS n FROM generation_evaluations e"
+            " LEFT JOIN generation_history h ON e.history_id = h.id"
+            " WHERE e.history_id IS NOT NULL AND h.id IS NULL"
+        ).fetchone()["n"]
+        dupes = conn.execute(
+            "SELECT COUNT(*) AS n FROM ("
+            " SELECT history_id FROM generation_evaluations"
+            " WHERE history_id IS NOT NULL GROUP BY history_id HAVING COUNT(*) > 1)"
+        ).fetchone()["n"]
+    finally:
+        conn.close()
+    return {
+        "unlinked_evaluations": unlinked,
+        "missing_history": missing_history,
+        "duplicate_evaluations": dupes,
+    }
+
+
+def evaluation_flow_counts() -> dict[str, Any]:
+    """明示評価と暗黙送信の件数（Step 13 §16）。
+
+    explicit: sendability または human_rating が設定済み。
+    implicit: history is_sent=1 かつ sendability 未設定（満足の断定はしない）。
+    """
+    conn = database.get_conn()
+    try:
+        explicit = conn.execute(
+            "SELECT COUNT(*) AS n FROM generation_evaluations"
+            " WHERE sendability IS NOT NULL OR human_rating IS NOT NULL"
+        ).fetchone()["n"]
+        implicit = conn.execute(
+            "SELECT COUNT(*) AS n FROM generation_history h"
+            " LEFT JOIN generation_evaluations e ON e.history_id = h.id"
+            " WHERE h.is_sent = 1 AND (e.id IS NULL OR e.sendability IS NULL)"
+        ).fetchone()["n"]
+        by_sendability = {
+            r["sendability"] or "unrated": r["n"]
+            for r in conn.execute(
+                "SELECT sendability, COUNT(*) AS n FROM generation_evaluations GROUP BY sendability"
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+    return {
+        "explicit_total": explicit,
+        "implicit_sent_total": implicit,
+        "by_sendability": by_sendability,
+    }
+
+
 def smooth_rate(positive: int, total: int, prior: float = 0.5, prior_n: int = 10) -> float:
     """Bayesian 平滑化率（Step 12 §10）。件数少数の 100%/0% を防ぐ。"""
     return round((positive + prior * prior_n) / (max(total, 0) + prior_n), 3)

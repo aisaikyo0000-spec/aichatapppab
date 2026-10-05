@@ -1603,6 +1603,8 @@ def get_learning_diagnostics():
     rated_n = sum(
         n for k, n in feedback["by_sendability"].items() if k != "unrated"
     )
+    flow = learning.contrast.evaluation_flow_counts()
+    integrity = learning.contrast.evaluation_integrity()
     return {
         "corpus": corpus_stats,
         "style_profile_tier": hierarchical_profile["hierarchy_tier"],
@@ -1614,6 +1616,8 @@ def get_learning_diagnostics():
         "feedback": feedback,
         "acceptance": acceptance,
         "smoothed_sendable_rate": learning.contrast.smooth_rate(sendable_n, rated_n),
+        "evaluation_flow": flow,
+        "evaluation_integrity": integrity,
         "batches": {
             "total_batches": total_batches,
             "outcomes": batch_outcomes,

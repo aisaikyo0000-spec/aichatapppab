@@ -806,6 +806,59 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - AI-like は横ばい（0.106）。短小入力での鏡像応答と内容反復の区別が引き続き課題。
 - Human 評価0件（Sendable Rate 測定不可）。返信不要 API・重み調整は見送り継続。
 
+## Step 14-R Natural Conversation Generation Rework
+
+- 実施日: 2026-09-30 / コミット: `fix: improve natural conversation generation`
+- 判定: Step 14 不合格（AI-like 横ばい・Echo/質問/HumanChat 微悪化）のため、生成部分（Prompt→LLM→validation）を中心に再実施。評価条件は固定（70ケース・同一コード・同一指標。ケース削除・基準変更なし）。
+
+### Step 14失敗理由
+
+- 変更が ranking 側（necessity 配線・diversity nudge）に偏り、Gemini が最初に生成する文章自体に系統的影響を与えなかった。live 差分はノイズ範囲内。
+
+### 現在のBaseline（§19 固定値）
+
+- AI-like 0.106 / Echo 0.135 / Questions 0.068 / Context Fit 0.586 / Human Fit 0.827 / Conversation 0.955（実LLM 70ケース・207候補）。
+
+### 変更内容（生成側・少量）
+
+- OUTPUT CONTRACT: A/B/C 役割の目安を追加（案1＝最も自然で短い反応／案2＝少し展開／案3＝必要なら質問。固定パターン化は禁止のまま。質問が不自然なら案3も質問なし可）。
+- OUTPUT CONTRACT: 質問必要性の明示（会話上必要な場合だけ。継続目的の追加はしない）／言い換え返信の回避（相手文のほぼ同義反復は情報量ゼロとして避ける）／無関係な新話題の開始禁止（広げる場合は直接つなげる）。
+- flow_rule 11: 会話終了・受領時（おやすみ・またね・了解・ありがとう等）は短い返答で終える旨を追加。
+- user 指示: 「説明文ではなく実際に送るメッセージとして作成」の1行を追加。
+- 禁止ワードの大量追加なし。Hard Invariants・JSON・Tone・Gold 階層は不変。
+
+### Before / After（実LLM・Gemini・70ケース・同一条件）
+
+| 指標 | Before | After | 方向 |
+|---|---|---|---|
+| ai_like_rate | 0.106 | 0.098 | 改善 |
+| echo_rate | 0.135 | 0.132 | 改善 |
+| too_many_questions_rate | 0.068 | 0.059 | 改善 |
+| over_explanation_rate | 0.01 | 0.00 | 改善 |
+| parse_ok_rate | 0.986 | 0.971 | 1件悪化 |
+| context_fit | 0.586 | 0.605 | 改善 |
+| human_chat_fit | 0.827 | 0.843 | 改善 |
+| conversation_fit | 0.955 | 0.963 | 改善 |
+| novel_keyword_rate | 0.507 | 0.436 | 改善 |
+
+- AI-like 内訳: 質問 14→12／言い換え 28→27／話題逸脱 14→4／説明 2→0／定型共感 7→6／励まし 3→3。重点対象の言い換え・話題逸脱が減少。
+- 決定論層: 50ケース sweep 全緑維持、pytest 全緑維持。
+
+### AI-like内訳・Echo・Questions・Context Fit・Human Chat Fit・Conversation Fit
+
+- 上表の通り、全合否基準を満たす（AI-like↓・Echo悪化なし・HumanChat悪化なし・Context悪化なし）。
+- parse 1件悪化は単発の JSON 不正（repair loop が本番処理する範囲）。
+
+### 採用/不採用
+
+- 採用: 上記の Prompt 変更一式（suite＋sweep 全緑＋live 全基準クリアのため）。
+- 不採用: なし（悪化による revert 不要）。
+
+### 未解決問題
+
+- 改善幅は小さい（サンプリング変動を含む）。Human 評価0件のため Sendable Rate での裏付けは不可。
+- 短小入力での鏡像応答と内容反復の区別は継続課題。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

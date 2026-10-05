@@ -1457,6 +1457,23 @@ def _save_auto_evaluations(
         conn.close()
 
 
+def _apply_diversity_nudge(scored_items: list[dict]) -> None:
+    """Step 14 §21: 候補間の冒頭重複を微減点する（-0.02）。
+
+    3案が同一冒頭（定型共感の反復等）の場合に、異なる切り口をわずかに優遇する。
+    減点のみで並べ替えは呼び出し側。無理な差別化はしない（全同一でも送信可能）。
+    """
+    heads = []
+    for item in scored_items:
+        norm = re.sub(r"[\s　！!？?。、…〜～笑wW]+", "", item["reply"].strip())
+        heads.append(norm[:6])
+    for i, item in enumerate(scored_items):
+        if len(heads[i]) >= 3 and any(
+            heads[i] == other for j, other in enumerate(heads) if j != i
+        ):
+            item["final"] = round(item["final"] - 0.02, 3)
+
+
 def _create_or_update_batch(
     *,
     contact_id: int,
@@ -1862,6 +1879,7 @@ def generate(body: GenerateRequest):
         sent_sim_scores = [item["sent_sim"] for item in ordered_items]
         final_scores = [item["final"] for item in ordered_items]
     else:
+        _apply_diversity_nudge(scored_items)
         scored_items.sort(key=lambda x: x["final"], reverse=True)
         ordered_items = scored_items
         sorted_replies = [item["reply"] for item in scored_items]

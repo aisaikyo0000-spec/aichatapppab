@@ -744,6 +744,68 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - 実評価0件（30/50件ゲート未達）。Sendable Rate・A/B・重み調整は運用データ待ち。
 - good→review 状態の未導入。
 
+## Step 14 Natural Conversation Generation
+
+- 実施日: 2026-09-30 / コミット: `feat: improve natural conversation generation`
+- 方針: ルール追加ではなく測定駆動。Baseline→小変更→Benchmark→悪化revert。変更は ranking 側のみ（Prompt 本文の変更なし）。
+
+### Baseline（Step 14 開始時点・現行コード）
+
+- 実LLM 70ケース・207候補（Gemini）: novel 0.507 / echo 0.135 / 質問 0.068 / overexp 0.01 / ai_like 0.106 / parse 0.986。4軸: context 0.586 / human_chat 0.827 / conversation 0.955。AI-like 内訳: 質問14・言い換え28・話題逸脱14・説明2・定型共感7・励まし3。
+- 生成フロー監査: prompt 8ブロック＋ledger＋intent＋length区分＋correction＋accepted は役割重複なしと判断。削減可能な重複はなし（各追記はテストで存在を保証）。
+
+### Prompt変更
+
+- 本文変更なし（監査の結果、安全に削除できる重複なし）。最小構成 5447文字・【21個で上限内を維持。
+
+### Intent（§6 対応）
+
+- 新規分類器は作らない。Step 10 の11ラベルが要求セットを包含することを確認（ACKNOWLEDGE=acknowledgement／EMPATHIZE=empathy／ANSWER=answer／ASK=question／CONTINUE=topic_continuation／REACT=reaction／CLOSE=closing／PLAYFUL=joke。NEUTRAL 単独は分類不能時に相当する empty→acknowledgement フォールバックで代替）。
+
+### Question policy（§8・§9）
+
+- `reply_policy.question_necessity` を naturalness の質問評価に配線。UNNECESSARY（終了・挨拶・短反応で足りる）時のみ単発質問を 0.85→0.70 に抑制（禁止ではなく優先度調整）。NEEDED/OPTIONAL は従来通り。
+
+### AI-like対策・Echo対策・Candidate diversity（§15・§19・§21・§22）
+
+- 候補セット内の冒頭重複に −0.02 の微調整（`_apply_diversity_nudge`。normal のみ。無理な差別化なし・全同一でも送信可）。
+- Echo は助詞非依存 paraphrase＋態度・儀礼の除外で維持（正常な「そうなんですね」型は排除しない）。
+- 3案すべて質問・すべて共感の固定禁止は作らない（validation の構造検査と ranking が担当）。
+
+### Benchmark（70ケース Before / After）
+
+| 指標 | Before | After | 方向 |
+|---|---|---|---|
+| novel_keyword_rate | 0.507 | 0.488 | 改善 |
+| echo_rate | 0.135 | 0.155 | やや悪化 |
+| too_many_questions_rate | 0.068 | 0.072 | 横ばい |
+| over_explanation_rate | 0.01 | 0.00 | 改善 |
+| ai_like_rate | 0.106 | 0.106 | 不変 |
+| parse_ok_rate | 0.986 | 0.986 | 不変 |
+| context_fit | 0.586 | 0.592 | 微増 |
+| human_chat_fit | 0.827 | 0.821 | 微減 |
+| conversation_fit | 0.955 | 0.968 | 微増 |
+
+- 変更はランキング側のみのため生成文自体への系統的影響は想定外で、差分は LLM サンプリングのノイズ範囲内と判断。§39 最低条件（AI-like↓）未達のため「改善した」とは主張しない。
+- 決定論層: 50ケース sweep 30/30→30/30 維持、pytest 全緑維持。
+
+### 採用した変更・採用しなかった変更
+
+- 採用: necessity 配線・diversity nudge（いずれも suite＋sweep 全緑）。
+- 不採用(revert なし・最初から見送り): Prompt 本文削除（安全な重複なし）/ 新規 Intent 分類器（既存で包含）/ 返信不要 API（短い close response で代替）/ 語尾反復 penalty（Step 10 で §23 未達）/ 生成履歴の repetition 参照（Step 10 で revert 済み）。
+- 悪化による revert: なし（悪化はノイズ範囲内で、決定論テストは全緑）。
+
+### テスト結果
+
+- 新規 `backend/tests/test_step14_golden.py`（2件・15ケース固定）: バリデーション・期待順位・最低スコアの固定＋質問候補の非禁止。
+- `python -m pytest backend/tests -q` → **254 passed**（Step 13 時点 252 件＋新規 2 件）。
+- `npm run build` 成功。
+
+### 未解決問題
+
+- AI-like は横ばい（0.106）。短小入力での鏡像応答と内容反復の区別が引き続き課題。
+- Human 評価0件（Sendable Rate 測定不可）。返信不要 API・重み調整は見送り継続。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

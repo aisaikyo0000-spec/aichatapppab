@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..reply_policy import question_necessity
+
 # 最終スコアの重み（将来の評価結果で変更可能にするため定数化）
 STYLE_WEIGHT = 0.40
 NATURALNESS_WEIGHT = 0.60
@@ -291,6 +293,15 @@ def evaluate_candidate_naturalness(
     signals["informative_questions"] = q["informative"]
     signals["reaction_questions"] = q["reaction"]
 
+    # Step 14: 質問必要性の推定（NEEDED/OPTIONAL/UNNECESSARY）。
+    # Gold質問率は ledger にないため未指定（既存の意図別方針と重複させない）。
+    necessity = question_necessity(
+        cp,
+        intent,
+        has_unresolved_question=bool(ledger.get("unresolved_question")),
+    )
+    signals["question_necessity"] = necessity
+
     # A. Relevance
     if intent in ("question", "answer_required", "invitation"):
         # 回答系: キーワード一致 or 具体的回答を評価（相づちだけでは不十分）
@@ -302,12 +313,15 @@ def evaluate_candidate_naturalness(
     sub["relevance"] = rel
 
     # B. Question Overuse（質問があるだけでは減点しない）
+    # Step 14: necessity が UNNECESSARY（終了・挨拶・短反応で足りる）の場合、
+    # 単発質問もやや抑制する（0.85→0.70）。禁止ではなく優先度調整。
     eff_q = q["informative"] + 0.5 * q["reaction"]
+    single_q_score = 0.70 if necessity == "unnecessary" else 0.85
     if intent in ("report", "reaction", "emotional_share"):
         if eff_q <= 0:
             q_score = 1.0
         elif eff_q <= 1:
-            q_score = 0.85
+            q_score = single_q_score
         else:
             q_score = max(0.0, 0.85 - 0.30 * (eff_q - 1))
     else:

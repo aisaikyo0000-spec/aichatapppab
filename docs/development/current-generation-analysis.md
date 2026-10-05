@@ -859,6 +859,54 @@ _summarize_difference（長さ/質問/笑/句点の4軸）＋採用文全文を 
 - 改善幅は小さい（サンプリング変動を含む）。Human 評価0件のため Sendable Rate での裏付けは不可。
 - 短小入力での鏡像応答と内容反復の区別は継続課題。
 
+## Step 15 Candidate Ranking
+
+- 実施日: 2026-09-30 / コミット: `test: add top-1 ranking measurement (no ranking change)`
+- 方針: 生成Prompt・モデル・API・DB・UIは不変。ranking 式の文書化→offline sweep→Top-1測定→採用/不採用判定。改善が確認できない変更は残さない（§36）。
+
+### 現行ranking（文書化・コード確認済み）
+
+```text
+style = score_candidate_style(reply, active_profile)   # 文体類似。実績0件時は 1.0
+nat   = evaluate_candidate_naturalness(...)            # Intent重み付き6項目＋answer/overreact
+final = round(0.40*style + 0.60*nat, 3)
+final += round(0.10*(human_fit-0.5), 3)                # ±0.05。修正データなし時は中立
+final += round(0.06*(sent_sim-0.5), 3)                 # ±0.03。送信実績3件未満は中立
+diversity: 冒頭重複に −0.02（normal のみ）
+sort: final 降順（normal）／役割整列（followup）
+```
+
+- 長文優遇なし（文体は IQR 適合・長さは相手適合を見るのみ）。短文罰・質問必須なし（質問は過剰時のみ減点）。
+- 優先順位: Hard validation ＞ Context ＞ HumanChat ＞ Personal Style ＞ Conversation ＞ Diversity（式の構造と一致）。
+
+### score・weights・weight sweep
+
+- sweep 条件（Temp 実験・本番無変更）: style/nat 重み 4パターン × diversity 3段階。記録 live 70ケースの再ランキング＋fixture 50件ヒット率。
+- 結果: Gold なし条件では全パターン同一順位（style が定数のため数学的に自明）。Top-1 issue も全同一（echo 0.059／質問 0.029／ai_like 0.132）。
+- Gold seed 条件下では nat 重み上げが有利（0.2/0.8 で 0.90）が、seed 依存のため不採用（§20 過学習禁止）。
+
+### Top-1・Top-3
+
+- Top-1 issue（記録 live）: echo 0.059／質問 0.029（全体平均 0.132／0.059 より低い＝現行 ranking は Top-1 を改善方向に選別）。
+- fixture 50件ヒット率 1.00 を全パターンで維持。
+
+### Before / After
+
+- Before＝After（本番変更なし）。Step 14-R live 値をそのまま Baseline として維持。
+- 採用した weight: なし（現行 0.40/0.60 維持）。
+- 不採用 weight: 0.3/0.7・0.5/0.5・0.2/0.8（有意差なしか seed 依存）・diversity 強化（Top-1 不変）。
+
+### Regression
+
+- Golden 15件・決定論50件・pytest 全緑維持。新規 `test_step15_ranking.py`（9件）で式・無バイアス・優先順位・Top-1 測定を固定。
+- `python -m pytest backend/tests -q` → **263 passed**（Step 14-R 時点 254 件＋新規 9 件）。
+- `npm run build` 成功。Human 評価0件のため Human score 系の変更なし。実データ水増しなし。
+
+### 未解決問題
+
+- Top-1 改善の余地は naturalness 内部（Gold 付き条件での重み最適化は将来データ待ち）。
+- Sendable Rate 測定不可は継続。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

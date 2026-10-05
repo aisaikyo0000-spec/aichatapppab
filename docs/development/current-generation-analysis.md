@@ -1034,6 +1034,69 @@ sort: final 降順（normal）／役割整列（followup）
 - `npm run build` 成功。
 - 残課題: Human 評価0件（Sendable 裏付け不可）/ 短小鏡像と内容反復の区別 / 感情モデルの本格化。
 
+## Step 17 Human-Like Reply Quality
+
+- 実施日: 2026-10-05 / コミット: なし（§42 の3指標未達のため §49 により commit せず。ユーザー判定待ち）
+- 方針: 「生成された3案を見たとき、人間が修正せずそのまま送れるか」を最重要視。調査（コード変更禁止）→ repair 計測 → 最小修正 → 再測定。
+
+### 現状分析（§1-3 生成フロー A-E）
+
+```text
+相手メッセージ → context → learning → prompt → Gemini → validation → repair
+→ naturalness scoring → ranking → 3候補
+```
+
+- A（Prompt 作りすぎ）: 追いメッセージ系（3段構成・写真案）を除き、normal パスに強制構成なし。質問必須は撤廃済み（Step 2）。`ensure_has_question` は no-op（`generation.py:298`）。
+- B（Validation の修正しすぎ）: `validate_candidate_replies` は Hard のみ（JSON・案数・fragmentation・トーン矛盾・機械表現・季節・重複0.85）。質問必須なし、自然さ強制なし（§7 充足）。無違反なら即合格（repair に入らない）。
+- C（Repair のAIっぽさ）: §4-5 の計測結果は下記。旧 repair 指示は「独立した完成品として3案を作成」で全体書き直しを誘発する恐れがあった → §6 対策を実施。
+- D（Ranking の説明的文章高評価）: 現行式は長文優遇なし・文体は IQR 適合のみ。Step 15 で既に文書化済み。説明的文章への構造的な加点は確認されず。
+- E（不自然な多様性）: diversity は冒頭重複 −0.02 のみ。3案同構造（質問有無×長さバケット）は 29/68 セットで発生（§32-33 の反復）。表面 paraphrase が最多パターン（21/201）。
+
+### Repair 分析（§4-5）
+
+- `scripts/run_pipeline_benchmark.py` に LLM 呼出カウンタ（repair 発生 = 2回以上）と repair 前/後 raw 記録を追加。
+- 本番パス70ケースの repair 発生: **6/70 = 8.6%**（llm_calls 内訳: 1回=64、2回=3、3回=1、4回=1、6回=1）。直接パスでは parse 失敗3件が repair 回復（parse_ok_rate 0.957）。
+- repair 理由（raw キャプチャ4件）: すべて JSON 書式破損（キー typo `ピング:`、quote 欠落、「」括弧、`=` 混入）。文章内容の violation はゼロ。
+- repair 前/後（Step 17 の最小変更指示適用後）: **b03・b53・b67 は候補文が完全一致（byte identical）** — 書式のみ修正され文章は書き直されず。b33 は quote 欠落が3回修復でも持続し最終空返答（repair 失敗率 1.4% = 1/70）。
+- §5 の「最低20件以上の repair 例」: repair 発生率 8.6% のため70ケースからは最大6-9例しか確保できない。確保できた全例で AI っぽい書き直しは発生せず（短文が長文化した例はゼロ）。サンプル不足は repair 発生が少ないこと自体が良いことを示す補足として記録。
+
+### 変更内容（§6・§47）
+
+- `backend/app/routers/generation.py: _build_repair_messages` に一文追加のみ: 「※Step 17: 壊れている部分だけ直すこと。問題ない部分はそのまま残し、文章全体を書き直さないこと（書き直すとAIっぽい説明文になりやすい）。」
+- Validation・Ranking・Prompt（normal パス）・学習系は無変更（§48 の禁止項目すべて遵守）。
+
+### Sendable 補助指標（§37-39・人間評価ではない）
+
+- ルールベース（echo/質問過多/ai_like/over_explanation なし＋非空）を Top-1 に適用: **64/68 = 0.941**。
+- 全候補適用: 149/204 = 0.730。
+
+### Before / After 20ケース（§40-41・実例確認）
+
+- Before = Step 16 直接パス、After = Step 17 直接パス（同一70ケース・Top-1）。
+- 明確な改善 3件: b15「日曜日はどうですかね？？」（質問で逃げる）→「土曜日がいいです！」（§34 の answer）。b45「断然犬派ですね！相手さんはどっち派ですか？？」→「僕は犬派ですね！」（§17-18 の質問なし優先）。b56「ボーナスお疲れ様です！」（不自然）→「お疲れ様です！ボーナス出たの嬉しいですね笑」（§19 の自然な喜び反応）。
+- 軽微な改善 5件: b04（報告への関心反応）・b09（自然な終了）・b13（共感の温度感）・b14（報告への承認追加＝§9 の短い＝良い回避）・b27（安堵への不自然な「笑」除去）。
+- 同等 10件 / 軽微な後退 1件: b57（長文報告への反応が3行→2行に簡略化。§10 の観点では Before がやや丁寧）。
+- AI っぽい修正が増えた例: **ゼロ**（§43 の実例条件は満たす方向）。
+
+### 既存指標（§35-36・70ケース直接パス）
+
+- Step 17: AI-like 0.119 / Echo 0.104 / Questions 0.025 / Context 0.589 / Human 0.880 / Conversation 0.969 / Novel 0.473（エラー1件・201候補）。
+- §42 との照合（Step 14-R baseline）: Echo 0.104≤0.132 ✓ / Questions 0.025≤0.059 ✓（大幅改善）/ Human 0.880≥0.843 ✓ / Conversation 0.969≥0.963 ✓ / **AI-like 0.119>0.098 ✗ / Context 0.589<0.605 ✗ / Novel 0.473>0.436 ✗**。
+- 未達3指標の分析: AI-like はパターン総数が同水準（Step 16: 48 → Step 17: 46）で内訳が変動（too_many_questions 13→5 は質問規律の改善、topic_drift 3→7 は引き直し変動）。Context・Novel は本番パス比較（repair 指示の前後）で 0.583→0.588・ほぼ同一であり、変更の影響ではなく引き直しノイズ（16-R で確定したフロア: novel 0.42-0.59 / echo 0.108-0.152）。
+- 本番パス（repair 指示の影響分離）: 変更前 ai_like 0.074 / echo 0.131 / 質問 0.063 / novel 0.583 → 変更後 0.093 / 0.118 / 0.064 / 0.588。Top-1 issue は echo 0.015 / 質問 0.000 / ai_like 0.029（16-R の 0.029/0.015/0.088 より改善）。
+
+### Regression・判定（§42・§44-45・§49）
+
+- `python -m pytest backend/tests -q` → **281 passed**。`npm run build` 成功。
+- 判定: **§42 の7指標のうち4達成・3未達（AI-like/Context/Novel）**。3未達はノイズフロア内と分析したが、単一サンプルでは証明できないため §49 の合格条件を満たしたとは断定できない。よって `feat: improve human-like reply quality` での commit は行わず、working tree に変更を残してユーザー判定を待つ（§50 により Step 18 には進まない）。
+
+### 残課題
+
+- 引き直しノイズと指標変動の分離（同一 seed 複数回測定か、より大きなケース数）。
+- b33 型の repair 失敗（JSON 欠けが3回持続）への対処（書式エラーの構造化リトライ等）。
+- 相手さんの表示名混入（ベンチマーク側の artifact。実運用では実名）。
+- 3案同構造 29/68（§32-33 の反復抑制は Gold 実績確立後）。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

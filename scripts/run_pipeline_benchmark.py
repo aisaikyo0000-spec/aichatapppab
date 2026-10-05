@@ -68,9 +68,34 @@ def main() -> int:
     cases = json.loads(Path(args.cases).read_text(encoding="utf-8"))
     subset = cases[args.start : args.end if args.end >= 0 else len(cases)]
     client = TestClient(app)
+
+    # Step 17 §4: LLM呼出回数を数える（1回より多ければ repair 経路が発動）
+    from app.ai import factory as _factory
+
+    _real_get_provider = _factory.get_provider
+    call_counter = {"n": 0}
+    raw_capture = {"raws": []}
+
+    def _counting_get_provider(name, api_key):
+        provider = _real_get_provider(name, api_key)
+        orig_generate = provider.generate
+
+        def _counting_generate(**kwargs):
+            call_counter["n"] += 1
+            out = orig_generate(**kwargs)
+            raw_capture["raws"].append(out)
+            return out
+
+        provider.generate = _counting_generate
+        return provider
+
+    _factory.get_provider = _counting_get_provider
+    generation.factory.get_provider = _counting_get_provider
+
     results = []
     for case in subset:
         entry: dict = {"id": case["id"], "contact": case["contact"]}
+        calls_before = call_counter["n"]
         try:
             # 直接生成との比較可能性のため表示名は「相手」に統一する
             # （プロンプトの「さん付け」指示により名前が文面に混入するため）
@@ -89,12 +114,18 @@ def main() -> int:
                 entry["issues"] = [detect_issues(c, case["contact"]) for c in data["replies"]]
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}"
+        entry["llm_calls"] = call_counter["n"] - calls_before
+        if entry["llm_calls"] > 1:
+            # Step 17 §4-5: repair 前（1回目 raw）と repair 後（2回目以降 raw）を記録
+            entry["repair_raws"] = raw_capture["raws"][calls_before:]
         results.append(entry)
         time.sleep(1)
     all_issues = [iss for e in results for iss in e.get("issues", [])]
+    repaired = sum(1 for e in results if e.get("llm_calls", 1) > 1)
     summary = {
         "total": len(results),
         "errors": sum(1 for e in results if "error" in e),
+        "repaired_cases": repaired,
         "issues": summarize_issues(all_issues),
     }
     Path(args.out).write_text(

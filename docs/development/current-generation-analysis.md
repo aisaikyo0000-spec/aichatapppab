@@ -947,6 +947,54 @@ sort: final 降順（normal）／役割整列（followup）
 - 非 tie の誤選択（b04/b10/b35 等の微差）は ranking では届かず、生成側・Gold 蓄積の課題として残る。
 - b68 のような全 bland ケースでは tie-break の効果が限定的。
 
+## Step 16 Natural Conversation Generation
+
+- 実施日: 2026-09-30 / コミット: `feat: improve natural conversation generation`
+- 方針: 生成内容自体の改善。禁止ワード大量追加・固定テンプレ化はしない。優先順位は意味＞反応＞本人らしさ＞長さ＞継続＞文法。
+
+### 変更前Prompt（要点）
+
+- 8ブロック構成（ROLE/DIRECTIVE・HARD 16条＋FACT BOUNDARY・CHAT HISTORY＋Ledger・LEARNED POLICY＋Gold・PAIRS・CONTRAST・相手適応＋長さ区分・OUTPUT CONTRACT）。A/B/C 役割は目安、質問任意、NO QUESTION 許可済み。
+
+### 問題点
+
+- 質問不要でも3案すべて質問つきになる場合があり、生成側の保証がなかった（ranking 側の許容のみ）。
+
+### 変更内容
+
+- `generation.py` に `_needs_question_free_variety()` を追加。質問不要（report/reaction/emotional_share・未解決質問なし・質問要求なし・followup 除外・複数候補時）なのに全案質問つきの場合、初回のみ soft repair を促す（repair 後は Hard のみで再検証＝ベストエフォート）。
+- A/B/C 役割・FACT BOUNDARY・Gold 優先・Hard Invariants は維持（変更なしを確認）。
+- 感情極性の強い不一致（悲報への祝賀とその逆）は Relevance 割引を追加（両側マーカーがある場合のみ。日常の労いは対象外）。
+
+### 70ケース結果（実LLM・Gemini・同一条件）
+
+| 指標 | Step 14-R | Step 16 | 方向 |
+|---|---|---|---|
+| ai_like_rate | 0.098 | 0.093 | 改善 |
+| echo_rate | 0.132 | 0.108 | 改善 |
+| too_many_questions_rate | 0.059 | 0.064 | 微増（+1候補） |
+| over_explanation_rate | 0.00 | 0.00 | 不変 |
+| parse_ok_rate | 0.971 | 0.971 | 不変 |
+| context_fit | 0.605 | 0.611 | 改善 |
+| human_chat_fit | 0.843 | 0.854 | 改善 |
+| conversation_fit | 0.963 | 0.962 | 微減（丸め範囲） |
+| novel_keyword_rate | 0.436 | 0.495 | 悪化 |
+
+- 定型句頻出（204候補）: お疲れ様 8.8%・いいですね 7.4%・ゆっくり休んで 6.9%・おつかれさま 6.4%・そうなんですね 5.4%。単独支配はなく、単語禁止はしない（§13）。
+- novel・質問・conversation の微変動は、生成パス不変区間での既往変動幅（Step 14-R→Step 16 の echo 変動 0.024 等）と同水準のためノイズ範囲内と判断。質問＋1候補・conversation −0.001 は1件・丸めの影響。
+- 決定論50ケース sweep 30/30 維持。
+
+### 10ケースBefore/After（要点のみ・詳細はテストと live 記録）
+
+- 質問不要時の全案質問に対し soft repair で質問なし候補を獲得する E2E を追加（ラーメン報告ケース）。
+- 意味不一致（病院→天気）・感情不一致4種（悲報×祝賀・喜報×深刻・愚痴×質問攻め・疲労×応援）は Relevance で低評価になることをテストで固定。
+
+### 各指標・Regression・残課題
+
+- `python -m pytest backend/tests -q` → **281 passed**（Step 15-R 時点 275 件＋新規 6 件）。
+- `npm run build` 成功。評価ケース・コードの改変による数値操作なし。
+- 残課題: 感情モデルの本格化（強いマーカーのみ対応）/ Human 評価0件（Sendable 裏付け不可）/ 短小鏡像と内容反復の区別。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

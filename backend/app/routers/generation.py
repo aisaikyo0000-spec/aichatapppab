@@ -1474,6 +1474,37 @@ def _apply_diversity_nudge(scored_items: list[dict]) -> None:
             item["final"] = round(item["final"] - 0.02, 3)
 
 
+def _needs_question_free_variety(
+    *,
+    replies: list[str],
+    candidates: int,
+    intent: str,
+    has_unresolved_question: bool,
+    condition: str,
+    mode: str,
+) -> bool:
+    """Step 16 §22: 質問不要なのに全案質問つきの場合のみ True（soft repair 用）。
+
+    - candidates > 1（単一候補の質問は正当）の場合のみ
+    - intent が report/reaction/emotional_share で未解決質問なしが条件
+    - condition で質問を求める場合・followup（役割固定）は対象外
+    - 質問禁止ではなく、少なくとも1案の質問なし化を促す
+    """
+    if candidates <= 1 or mode == "followup":
+        return False
+    if intent not in ("report", "reaction", "emotional_share"):
+        return False
+    if has_unresolved_question:
+        return False
+    if any(k in (condition or "") for k in ("質問して", "質問あり", "質問入り", "質問を入れて")):
+        return False
+    if not replies:
+        return False
+    return all(
+        naturalness.count_meaningful_questions(r)["informative"] >= 1 for r in replies
+    )
+
+
 def _create_or_update_batch(
     *,
     contact_id: int,
@@ -1763,6 +1794,29 @@ def generate(body: GenerateRequest):
             mode=body.mode,
             current_datetime=datetime.now(),
         )
+
+        # Step 16 §22: 初回のみ、質問不要なのに全案質問つきなら soft repair を促す。
+        # repair 後の再検証は Hard のみ（質問なし化はベストエフォート）。
+        if (
+            attempt == 1
+            and not violations
+            and parsed_replies
+            and len(parsed_replies) == body.candidates
+        ):
+            _ledger = ctx["pieces"].get("conversation_ledger", {}) or {}
+            if _needs_question_free_variety(
+                replies=parsed_replies,
+                candidates=body.candidates,
+                intent=(_ledger.get("counterpart_intent") or "report"),
+                has_unresolved_question=bool(_ledger.get("unresolved_question")),
+                condition=body.condition,
+                mode=body.mode,
+            ):
+                violations = [
+                    "3案すべてに相手への質問が含まれています。今回の会話では質問が不要なため、"
+                    "少なくとも1案は質問なしの自然な返信（相槌・共感・一言・労い）にしてください。"
+                    "（質問すること自体は禁止しません）"
+                ]
 
         # 違反がなければ即合格
         if not violations and parsed_replies and len(parsed_replies) == body.candidates:

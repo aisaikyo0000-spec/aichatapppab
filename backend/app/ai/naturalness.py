@@ -106,6 +106,13 @@ _STANCE_LEXICON = (
 # 助詞（キーワード比較時の正規化用。detect_echo の paraphrase 判定のみで使用）
 _PARTICLES = re.compile(r"(?:から|まで|より|[のがをはへとでに])")
 
+# Step 16: 強い感情極性の不一致（悲報への祝賀等）。両側に強いマーカーがある場合のみ。
+_NEGATIVE_AFFECT = ("悲しい", "辛い", "最悪", "泣", "葬式")
+_POSITIVE_CHEER = ("最高", "おめでとう")
+# Step 16: 逆方向（喜報への深刻・ distress 返し）
+_POSITIVE_JOY = ("嬉しい", "うれしい", "楽しい", "最高", "やった")
+_NEGATIVE_DISTRESS = ("深刻", "大変", "辛い", "悲しい", "最悪")
+
 # 話題性を持たない汎用時間語（relevance の話題一致から除外。Step 15-R）
 _GENERIC_TIME_WORDS = frozenset({
     "今日", "明日", "昨日", "明後日", "来週", "今週", "先週", "今年",
@@ -361,6 +368,12 @@ def evaluate_candidate_naturalness(
         if not cp_kw and not has_reaction_word:
             rel = 0.6  # 判断材料なし。罰しない
     sub["relevance"] = rel
+    # Step 16: 強い感情極性の不一致（悲報への祝賀等）は Relevance を割り引く。
+    # 両側に強いマーカーがある場合のみ。日常の労い（おつかれ等）は対象外。
+    if any(w in cp for w in _NEGATIVE_AFFECT) and any(w in cand for w in _POSITIVE_CHEER):
+        sub["relevance"] = min(sub["relevance"], 0.4)
+    if any(w in cp for w in _POSITIVE_JOY) and any(w in cand for w in _NEGATIVE_DISTRESS):
+        sub["relevance"] = min(sub["relevance"], 0.4)
 
     # B. Question Overuse（質問があるだけでは減点しない）
     # Step 14: necessity が UNNECESSARY（終了・挨拶・短反応で足りる）の場合、

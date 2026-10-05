@@ -106,6 +106,52 @@ _STANCE_LEXICON = (
 # 助詞（キーワード比較時の正規化用。detect_echo の paraphrase 判定のみで使用）
 _PARTICLES = re.compile(r"(?:から|まで|より|[のがをはへとでに])")
 
+# 話題性を持たない汎用時間語（relevance の話題一致から除外。Step 15-R）
+_GENERIC_TIME_WORDS = frozenset({
+    "今日", "明日", "昨日", "明後日", "来週", "今週", "先週", "今年",
+    "毎日", "いつも", "たまに", "最近",
+})
+
+# Step 15-R: 軽微 issue 検出（タイブレーク専用。スコア減点には使わない）
+# ベンチマーク測定と同一ロジックを共有する。単語禁止ではなく頻度・文脈の問題として扱う。
+MILD_AI_LIKE_MARKERS = (
+    "そうなんですね",
+    "大変でしたね",
+    "なるほど",
+    "確かに",
+    "ちなみに",
+)
+MILD_OVER_EMOTION = re.compile(r"超|めっちゃ|最高")
+MILD_UNNEEDED_SUMMARY = ("つまり", "要するに", "まとめると", "ということは")
+
+
+def count_mild_issues(candidate: str, counterpart_message: str = "") -> int:
+    """候補の軽微 issue 数を数える（Step 15-R タイブレーク専用）。
+
+    同点候補の中から issue の少ない方を選ぶためのみに使う。
+    スコア自体は変更しない。ベンチマーク測定用とは別実装であり、
+    測定コード（scripts 側）は凍結のまま変更しない（§20）。
+    """
+    t = (candidate or "").strip()
+    if not t:
+        return 0
+    count = 0
+    # 定型共感（文頭15文字以内の出現。 tie-break 用の弱いシグナルのみ）
+    if any(m in t[:15] for m in MILD_AI_LIKE_MARKERS):
+        count += 1
+    q = count_meaningful_questions(t)
+    if q["informative"] >= 2:
+        count += 1
+    if len(re.findall(r"[！!]", t)) >= 3 or len(MILD_OVER_EMOTION.findall(t)) >= 2:
+        count += 1
+    if any(m in t for m in MILD_UNNEEDED_SUMMARY):
+        count += 1
+    if counterpart_message:
+        echo_score, _ = detect_echo(t, counterpart_message)
+        if echo_score < 1.0:
+            count += 1
+    return count
+
 
 def _normalize(text: str) -> str:
     """比較用の正規化（空白・記号・笑い・口語ゆれの除去）。"""
@@ -282,7 +328,11 @@ def evaluate_candidate_naturalness(
 
     cp_kw = _extract_keywords(cp)
     cand_kw = _extract_keywords(cand)
-    overlap = len(cp_kw & cand_kw) / len(cp_kw) if cp_kw else 0.0
+    # Step 15-R: 汎用時間語は話題一致に使わない（「今日」だけの共有で満点にしない）。
+    # 除外後に相手側が空になる場合は話題なしとして扱う（0.0）。
+    cp_topic = cp_kw - _GENERIC_TIME_WORDS
+    overlap_base = cp_topic if cp_topic else set()
+    overlap = len(overlap_base & cand_kw) / len(overlap_base) if overlap_base else 0.0
     signals["keyword_overlap"] = round(overlap, 2)
     has_reaction_word = any(w in cand for w in _REACTION_LEXICON)
     has_concrete = bool(_CONCRETE_PATTERN.search(cand)) or bool(

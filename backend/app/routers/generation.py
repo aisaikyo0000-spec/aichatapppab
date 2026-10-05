@@ -1880,7 +1880,11 @@ def generate(body: GenerateRequest):
         final_scores = [item["final"] for item in ordered_items]
     else:
         _apply_diversity_nudge(scored_items)
-        scored_items.sort(key=lambda x: x["final"], reverse=True)
+        # Step 15-R: 同点時は軽微 issue の少ない方を上位にする（スコア自体は不変）。
+        # followup は役割スロット固定のため対象外。
+        for item in scored_items:
+            item["mild_issues"] = naturalness.count_mild_issues(item["reply"], counterpart_msg)
+        scored_items.sort(key=lambda x: (x["final"], -x["mild_issues"]), reverse=True)
         ordered_items = scored_items
         sorted_replies = [item["reply"] for item in scored_items]
         style_scores = [item["score"] for item in scored_items]

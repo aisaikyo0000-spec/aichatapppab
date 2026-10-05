@@ -907,6 +907,46 @@ sort: final 降順（normal）／役割整列（followup）
 - Top-1 改善の余地は naturalness 内部（Gold 付き条件での重み最適化は将来データ待ち）。
 - Sendable Rate 測定不可は継続。
 
+## Step 15-R Top-1 Error Analysis
+
+- 実施日: 2026-09-30 / コミット: `fix: improve top-1 natural reply ranking`
+- 判定: Step 15 不合格（本番変更なし）のため、実例分析→原因修正→検証の順で再実施。評価条件固定（70ケース・同一コード・同一指標）。
+
+### 誤選択ケース（記録 live 70ケース中16件が Top-1 に issue あり）
+
+- 支配的パターンは bland な3候補の同点 tie（定型共感が LLM 出力順で1位になる）。非 tie の誤選択は少数。
+- コードレベルの原因分類:
+  - 同点 tie での安定ソート依存（定型共感が1位に残る）→ タイブレークで対応
+  - 汎用時間語（今日等）のみの共有で relevance 満点（説明長文が短反応を上回る）→ 話題一致から除外
+  - 上記以外（STYLE_OVERFIT 等）は該当なし。style は Gold なし条件で定数のため順位不変（Step 15 で確認済み）
+
+### 原因分類・修正内容（1〜2項目ずつ・各検証）
+
+1. 同点タイブレーク（`count_mild_issues`＋ソートキー拡張。normal のみ）: 定型共感・複数質問・過剰感情・不要まとめ・Echo の数を数え、同点時のみ少ない方を上位に。スコア不変・排除ではない。→ suite 全緑
+2. 汎用時間語の除外（`_GENERIC_TIME_WORDS`。relevance の話題一致から除外）: 「今日」だけの共有で満点にしない。→ suite 全緑
+3. 不採用: weight 変更（有意差なし）/ 新規禁止ルール（なし）/ 生成履歴参照の復活（Step 10 で revert 済み）
+
+### Before/After（5ケース以上・§26）
+
+| 相手 | Before Top-1 | After Top-1 | 変更理由 |
+|---|---|---|---|
+| なんか今日ついてない | それは大変でしたね。/ゆっくり休んでくださいね。 | なんかそういう日ってありますよね。/嫌なことは早く忘れちゃいましょ笑。 | 定型共感＋励ましの tie を打破 |
+| そういうことね | なるほどです笑 | そういうことなんですね！ | 定型の tie を打破 |
+| 将来のこと考えちゃう | そうなんですね。/色々考えちゃいますよね。 | 分かります。/たまにそういう時ありますよね。 | 定型の tie を打破 |
+| そっか | そうなんですね | ですね笑 | 定型の tie を打破（両 bland のため効果は限定的） |
+| いい感じ | そうなんですね！ | それはよかったです笑 | 定型の tie を打破 |
+
+### 指標・Regression
+
+- 決定論50ケース sweep 30/30→30/30 維持。pytest 275 passed（263＋新規12）。
+- 生成文自体は不変のため live テキスト指標は同一分布（Before＝After）。Top-1 のみ上記5件が改善方向へ変化。
+- `npm run build` 成功。評価条件・ケース・コードの改変による数値操作なし。
+
+### 未解決問題
+
+- 非 tie の誤選択（b04/b10/b35 等の微差）は ranking では届かず、生成側・Gold 蓄積の課題として残る。
+- b68 のような全 bland ケースでは tie-break の効果が限定的。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

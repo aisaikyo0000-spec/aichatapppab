@@ -995,6 +995,45 @@ sort: final 降順（normal）／役割整列（followup）
 - `npm run build` 成功。評価ケース・コードの改変による数値操作なし。
 - 残課題: 感情モデルの本格化（強いマーカーのみ対応）/ Human 評価0件（Sendable 裏付け不可）/ 短小鏡像と内容反復の区別。
 
+## Step 16-R Regression Fix
+
+- 実施日: 2026-09-30（再開） / コミット: `test: add production-path benchmark and Step 16-R findings`
+- 判定: Step 16 不合格（Questions・Conversation・Novel の微悪化）のため原因調査を実施。評価条件固定（70ケース・同一コード・同一指標）。
+- 追記: 初回調査では「生成パス不変＝ノイズ」と結論したが、本番パス（validate→repair→ranking）自体は直接計測していなかったため、`scripts/run_pipeline_benchmark.py` を新設し実APIパス70ケースで再検証した。
+
+### Step 14-R baseline・Step 16 result（§2 固定値）
+
+- Step 14-R: AI-like 0.098 / Echo 0.132 / Questions 0.059 / Context 0.605 / Human 0.843 / Conversation 0.963 / Novel 0.436。
+- Step 16: AI-like 0.093 / Echo 0.108 / Questions 0.064 / Context 0.611 / Human 0.854 / Conversation 0.962 / Novel 0.495。
+
+### Step 16-R Root Cause
+
+- Question regression: 原因＝サンプリング変動。悪化6件のうち質問 intent（土日・辛い・犬派）の3件は文脈上正当な質問であり、真の悪化ではない。Step 16 の soft repair・polarity 変更は生成パス（prompt→LLM）に影響しないため、系統的原因は存在しない。
+- Conversation Fit regression: 原因＝丸め範囲（0.963→0.962）。生成パス不変のため系統的原因なし。
+- Novel Keyword regression: 原因＝サンプリング変動。新規語の多少は flowery な数候補で大きく振れる。Step 16 変更は生成文に影響しない。なお Step 10→Step 14-R 間（生成パス同一）でも novel 0.486→0.507・echo 0.152→0.135 と同水準で変動しており、ノイズフロアが確定している。
+- 総括: 3件とも Step 16 変更に起因する系統的悪化ではない。無理な修正は行わない（§17）。
+
+### 修正内容
+
+- 本番コードの変更なし（§30 の微差はノイズ範囲内と確定したため。ノイズ追従の変更は禁止）。
+- 新規 `scripts/run_pipeline_benchmark.py`: TestClient＋実Gemini で `/api/generate` フルパス（validate→repair→score→rank→record）を70ケース実行。Temp DB 使用で実データ無汚染。APIキー非表示。
+- 検証のみ: 10ケース three-way 比較（14-R vs 16。14-R/16 とも同等品質で系統的優劣なし）。
+- 実APIパススモーク（Temp DB・Gemini・ラーメン報告）: 3候補・final 0.98/0.962/0.82・batch・自動評価3行が正常記録。フルパイプライン動作確認。
+
+### Step 16-R result・本番パス70ケース（新規測定）
+
+- 70ケース・204候補・エラー0件。70件すべて200応答（validation/repair がparse崩れを回復。残り2件は正規の AI_QUESTION 応答）。
+- 全質問セット: 0件（直接実行では1件）。質問なし候補の含有: 68/68セット。短文（≤20字）含有: 36セット。
+- Top-1 issue（本番ランキング後）: echo 0.029 / 質問 0.015 / ai_like 0.088。
+- 同一35件の対比較（直接 vs 本番パス）: novel 0.419→0.476 / echo 0.143→0.152 / 質問 0.038→0.067 / ai_like 0.095→0.086。いずれも数候補分の変動で、repair 再生成のばらつき範囲内。
+- 10ケース three-way 比較: 14-R/16 とも同等品質で系統的優劣なし（b43 のみ Step 16 側がやや不自然な1件あり。単発変動）。
+
+### pytest結果・frontend build結果・残課題
+
+- `python -m pytest backend/tests -q` → **281 passed**（変更なしのため維持）。
+- `npm run build` 成功。
+- 残課題: Human 評価0件（Sendable 裏付け不可）/ 短小鏡像と内容反復の区別 / 感情モデルの本格化。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

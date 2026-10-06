@@ -3,14 +3,14 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / 対応コミット:（記録予定 `wip: step 18 contact adaptation`）
+最終更新: 2026-10-08 / 対応コミット: `4506b1d`（`wip: step 18 contact adaptation`・状態記録）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `1168b8d` (`docs: update liaison commit refs`)
+- 最新コミット: `4506b1d` (`wip: step 18 contact adaptation`)
 - Working tree: style.py＋contrast.py＋generation.py＋tests＋scripts＋docs（未コミット・記録予定）
 - 進行中ステップ: **Step 18**（接触別ベンチ＋70回帰完成・5/6・ChatGPT 判断待ち）
 

@@ -3,14 +3,14 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-07 / 対応コミット:（記録予定 `wip: step 17-r4 results`）
+最終更新: 2026-10-07 / 対応コミット: `8998717`（`wip: step 17-r4 results`・状態記録）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `0cdd67c` (`docs: update liaison status`)
+- 最新コミット: `8998717` (`wip: step 17-r4 results`)
 - Working tree: prompt.py 1箇所＋docs（未コミット・記録予定）
 - 進行中ステップ: **Step 17-R4**（70ケース完成・最終判定済み・不合格）
 

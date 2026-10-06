@@ -1325,6 +1325,56 @@ sort: final 降順（normal）／役割整列（followup）
 - 狭い文脈での類似許容は方向として正しいが、質問の逃げ道を塞ぐ具体策が必要。
 - Novel artifact（笑笑・汎用語）の測定仕様は未解決のまま。
 
+## Step 17-R6
+
+- 実施日: 2026-10-07〜08 / コミット: `feat: reduce forced questions and preserve context`（§8・§10-11 により合格のため feat で commit・push）
+- 目的: Questions 爆発の抑制（R4 0.138・R5 0.157）。Context 改善は維持。Novel は raw 値対象外。
+- 方針: 自律ループ（実装→pytest→70評価→判定→修正→再評価）。合格まで完了報告しない（§9）。全10 iteration を実施。
+
+### 変更内容
+
+1. **R5 の悪い例 revert**（§1）: 17-R5 追記の具体例列挙（なにかあったんですか？？等）を撤廃し行動レベルのみ残す。
+2. **Intent policy 引締め**（§2）: question（回答後の逆質問・確認質問を付け足さない）・emotional_share（質問は明確な助言・意見要求時に限定）。
+3. **FORCED demotion**（§3）: `generation.py` ranking に NECESSARY/OPTIONAL/FORCED 分類を追加。`reply_policy.question_necessity` が unnecessary かつ informative 質問あり→ final −0.02（軽い降格。質問そのものは禁止しない）。
+4. **話題語・差別化の調整**（§4-5）: R4 の Context anchor 維持、R5 の緩和維持。
+5. **？？二重カウント対策**（loop）: 根本原因＝測定が ？ を1つずつ数えるため単発？？が必ず flag 化（R6g で 29/30 が単発？？と確定）。対策＝single-? ガイダンス→文体例での厳守注記→**？？の例示除去**（『〜ですかね？？』『〜ですか？？』を文体例から外す。Gold データ自体は不変）。？？使用 30→24→19→**0**（完全消滅）。
+6. **深掘りの質問化抑制・brevity**（loop）: 話題深掘りは感想・共感優先／ごく短い相づちには1行返信優先。
+7. **Step 7 戦略例の修正**（loop）: 「質問あり」を戦略例から外す（「少し詳しい反応」に）。
+
+### 自律ループの記録（全て 70×3.1 統一）
+
+| # | 変更 | Q | Conv | 判定 |
+|---|---|---|---|---|
+| R6 | 例 revert＋policy 引締め＋FORCED | 0.119 | 0.960 | 4/6 |
+| R6b | 強いデフォルト追加 | 0.190 | 0.947 | backfire→revert |
+| R6c | R6b revert＋深掘り文優先 | 0.133 | 0.954 | 4/6 |
+| R6d | single-? ガイダンス | 0.105 | 0.941 | 4/6 |
+| R6e | brevity（1行優先） | 0.138 | 0.947 | 4/6 |
+| R6f | 1返信1疑問符 | 0.124 | 0.961 | 5/6 |
+| R6g | Step 7 例修正 | 0.143 | 0.967 | 5/6 |
+| R6h | 文体例に厳守注記 | 0.114 | 0.963 | 5/6 |
+| R6i | 厳守強化 | 0.090 | 0.959 | 4/6 |
+| R6j | **？？例示除去** | **0.000** | **0.969** | **6/6 合格** |
+
+### 最終70ケース（§7・§8）
+
+| 指標 | 17-R6 | §8 基準 | 判定 |
+|---|---|---|---|---|
+| AI-like | 0.081 | ≤0.098 | ✓ |
+| Context Fit | 0.618 | ≥0.605 | ✓ |
+| Human | 0.900 | ≥0.843 | ✓ |
+| Conversation | 0.969 | ≥0.963 | ✓ |
+| Questions | 0.000 | ≤0.059 | ✓ |
+| Echo | 0.067 | ≤0.132 | ✓ |
+
+- 70ケース・210候補・エラー0・parse_ok 1.0。？？使用 0件。
+- Novel（参考）: 0.619。artifact（笑笑・汎用語）込みのため対象外。実質は自然な連想が大半。
+- **最終判定: 合格（6/6）**。
+
+### Regression（§10）
+
+- `python -m pytest backend/tests -q` → **281 passed**。`npm run build` 成功。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

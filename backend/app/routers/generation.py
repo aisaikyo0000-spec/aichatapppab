@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException
 
 from .. import config, database, learning
 from ..ai import factory, naturalness, prompt
+from ..reply_policy import question_necessity
 from ..ai.base import AIError
 from ..ai.config import get_ai_config, get_contact_ai_config
 from ..schemas import GenerateRequest
@@ -1896,6 +1897,13 @@ def generate(body: GenerateRequest):
     recent_self_replies = _load_recent_self_replies(body.contact_id, limit=5)
     style_median = getattr(user_style_profile_data, "char_median", None)
     counterpart_msg = ctx.get("last_contact_msg", "") or ""
+    # Step 17-R6 §3: 質問必要性（NECESSARY/OPTIONAL/FORCED）を事前判定。FORCED は軽く順位を下げる。
+    _r6_intent = (ledger.get("counterpart_intent") or "report").strip() or "report"
+    _r6_necessity = question_necessity(
+        counterpart_msg,
+        _r6_intent,
+        has_unresolved_question=bool(ledger.get("unresolved_question")),
+    )
     scored_items = []
     for r in replies:
         s_val, s_details = score_candidate_style(r, user_style_profile_data.__dict__ if hasattr(user_style_profile_data, "__dict__") else user_style_profile_data)
@@ -1917,10 +1925,16 @@ def generate(body: GenerateRequest):
         # Human feedback は Hard Invariant より下位（validation が先に適用される）。
         sent_sim = learning.contrast.sent_profile_similarity(r, body.contact_id)
         final = round(final + 0.06 * (sent_sim - 0.5), 3)
+        # Step 17-R6 §3: FORCED（不要な文脈での質問）は軽く順位を下げる。質問そのものは禁止しない。
+        _r6_q = naturalness.count_meaningful_questions(r)
+        _r6_forced = _r6_necessity == "unnecessary" and _r6_q["informative"] >= 1
+        if _r6_forced:
+            final = round(final - 0.02, 3)
         scored_items.append({
             "reply": r, "score": s_val, "details": s_details,
             "naturalness": nat["score"], "naturalness_detail": nat,
             "human_fit": human_fit, "sent_sim": sent_sim, "final": final,
+            "question_forced": _r6_forced,
         })
 
     # 通常モードのみ最終スコア降順ソート（followupモードは役割スロット固定のため順序を整列）

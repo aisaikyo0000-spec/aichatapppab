@@ -3,14 +3,14 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / 対応コミット:（記録予定 `feat: reduce forced questions and preserve context`）
+最終更新: 2026-10-08 / 対応コミット: `1b1e82c`（`feat: reduce forced questions and preserve context`・合格）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `e28f3b3` (`docs: update liaison commit refs`)
+- 最新コミット: `1b1e82c` (`feat: reduce forced questions and preserve context`)
 - Working tree: prompt.py＋generation.py＋docs（未コミット・記録予定）
 - 進行中ステップ: **Step 17-R6**（70ケース完成・最終判定済み・**合格**）
 

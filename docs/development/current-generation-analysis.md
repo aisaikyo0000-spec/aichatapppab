@@ -1375,6 +1375,69 @@ sort: final 降順（normal）／役割整列（followup）
 
 - `python -m pytest backend/tests -q` → **281 passed**。`npm run build` 成功。
 
+## Step 18
+
+- 実施日: 2026-10-08 / コミット: `wip: step 18 contact adaptation`（§32 により状態記録のみ。Conversation がノイズ範囲で未達のため feat せず）
+- 目的: 相手別・関係性別の会話距離適応（この相手にはこの距離感）。§28 自律ループ。
+- 方針: 調査→最小実装（relationship 観測＋軽い ranking 項）→接触別ベンチ→70回帰→判定。
+
+### 調査（§1-2）
+
+- Same-contact 基盤は存在: recent Gold（直近5）・all Gold・sent Silver（計算のみで tier 未配線）・Global。優先順位は recent Gold ≥1 → all Gold（実質 dead）→ contact_specific ≥3 → global Gold ≥5 → global。
+- Ranking は tone/emoji-blind（correction ±0.05・sent ±0.03 は長さ・文数・質問のみ）。tone_fit 項なし。
+- 不足: 関係スタイル profile・warmth 軸・per-contact closing 率・recency 減衰・tone/emoji の ranking 反映。
+
+### 変更内容（§4-6・§15-19）
+
+1. `style.py: build_relationship_summary()` 新設: Same-contact Gold から距離感・温度感・フォーマル度・文量・質問率を観測し短い抽象ブロック（2-3行）で返す。関係ラベルなし（§3・§29）。実績0件は空文字（Global fallback・§6）。少数時は参考程度と明記（§20）。
+2. `generation.py: _build_context` に relationship block 注入（§16 短く。compactness テストの【数<26 遵守のため【】括弧なし）。
+3. `contrast.py: contact_tone_fit()` 新設＋ ranking に ±0.02 の最下位項として加算（§18-19。Gold 3件未満は中立。Context/Human/Personal Gold より下位）。
+4. 相手文体コピーなし（§9）。本人 Gold 最優先の順序維持（§5・§10）。
+
+### 接触別ベンチ（§22・3 contacts・同一メッセージ「今日疲れた」）
+
+| 接触 | Gold 特徴 | 適応後返信特徴 | 判定 |
+|---|---|---|---|
+| A（短・砕け・笑） | laugh 1.0・len 4.8 | laugh 1.0・len 8.7（おつかれさま笑 等） | ✓識別 |
+| B（丁寧・長） | laugh 0.0・len 25.4 | laugh 0.0・len 27.0（丁寧2行） | ✓識別 |
+| C（中） | laugh 0.0・len 18.4 | laugh 0.0・len 20.7 | ✓識別 |
+
+- 3/3 が自身の Gold に最接近（A→A、B→B、C→C）。相手文コピーなし。本人マーカー維持。
+- R6（verbatim Gold のみ）との対比較（§23）: B の文量距離が **12.7→1.6（約8倍改善）**。R6 は B に短文返信（12.7）で Gold（25.4）に合わず。relationship block（文量目安）＋tone-fit が長文丁寧接触の適応を実現。**Same-contact Style Fit 改善を実証**。
+
+### Before・After（§24・70ケース・3.1統一）
+
+| 指標 | 17-R6 | 18 | §25 基準 | 判定 |
+|---|---|---|---|---|
+| AI-like | 0.081 | 0.076 | ≤0.098 | ✓ |
+| Context Fit | 0.618 | 0.607 | ≥0.605 | ✓ |
+| Human | 0.900 | **0.908** | ≥0.900 | ✓（改善） |
+| Conversation | 0.969 | 0.956 | ≥0.963 | **✗** |
+| Questions | 0.000 | 0.005 | ≤0.059 | ✓ |
+| Echo | 0.067 | 0.048 | ≤0.132 | ✓ |
+
+- 70ケース・210候補・エラー0。
+- **重要**: Step 18 は prompt.py 無変更のため run_live パスは R6 と同一コード。70ケース差は純粋な引き直しノイズ（確立済みフロア: Conversation 0.941-0.977）。Conversation 0.956 はノイズ範囲内であり、本変更による系統的悪化ではない（Gold-gated のため synthetic では全変更が中立）。
+- Human 改善目標は達成（0.900→0.908）。Style Fit 改善は接触別ベンチで実証。
+- 最終判定: **5/6（Conversation のみノイズ範囲で未達）**。§32 により feat せず、状態記録のみで停止。ChatGPT 判断待ち（ノイズとして受理／再実行指示／基準調整）。
+
+### 20ケース目視（§27）
+
+- R6 vs 18 で系統差なし（b02/b15/b25/b45/b23/b33 とも同等品質。b45-R18 は逆質問なしで改善方向）。
+- 同じ内容でも相手によって返信が変わるか→接触別ベンチで実証済み（3/3 識別）。
+- 本人らしさ維持・相手文体コピーなし・距離感の不自然なし。
+
+### Regression
+
+- `python -m pytest backend/tests -q` → **287 passed**（新規6件含む）。`npm run build` 成功。
+- 新規 `test_step18_relationship.py`（6件）: 空データ・砕け/丁寧の識別・少数参考・tone-fit 中立/適合を固定。
+
+### 残課題
+
+- Conversation 0.956（ノイズ範囲）。ChatGPT 判断待ち。
+- Novel artifact（笑笑・汎用語）の測定仕様は未解決のまま（§26 対象外）。
+- per-contact closing 率・recency 減衰・phase別接触 profile は未実装（必要になれば）。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

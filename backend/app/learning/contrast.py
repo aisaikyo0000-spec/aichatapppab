@@ -485,6 +485,46 @@ def sent_profile_similarity(candidate: str, contact_id: int | None) -> float:
     return round(max(0.0, min(1.0, (len_sim + sent_sim + q_sim) / 3.0)), 3)
 
 
+def contact_tone_fit(candidate: str, contact_id: int | None) -> float:
+    """同一相手Goldのトーン・笑・絵文字への適合度（Step 18 §18）。
+
+    ranking の最下位項（Same-contact adaptation）。Gold 3件未満なら 0.5（中立）。
+    相手の文体コピーではなく、本人がその相手へ返すときの特徴への適合を見る。
+    """
+    if not contact_id:
+        return 0.5
+    from . import style as style_mod
+
+    gold_pairs = style_mod.corpus.extract_same_contact_manual_gold_pairs(contact_id, limit=10)
+    texts = [p.self_turn.text for p in gold_pairs if not p.excluded]
+    if len(texts) < 3:
+        return 0.5
+    prof = style_mod.compute_style_metrics(texts)
+    cand = (candidate or "").strip()
+    # トーン一致（keigo/hybrid/tame の最多区分と比較）
+    import re as _re
+
+    has_desu = bool(_re.search(r"(?:です|ます|でした|ました|ですね|ですか)(?:[！!？?\s]|$)", cand))
+    has_casual = bool(_re.search(r"(?:笑|w|ー|〜|っ|だね|だよ|よね|じゃん|かも|かな)(?:[！!？?\s]|$)", cand))
+    if has_desu and has_casual:
+        cand_tone = "hybrid"
+    elif has_desu:
+        cand_tone = "keigo"
+    elif has_casual:
+        cand_tone = "tame"
+    else:
+        cand_tone = "hybrid"
+    tone_rates = {"keigo": prof.keigo_ratio, "hybrid": prof.hybrid_ratio, "tame": prof.tame_ratio}
+    tone_sim = tone_rates.get(cand_tone, 0.0)
+    # 笑・絵文字の有無一致
+    cand_laugh = 1 if ("笑" in cand or "w" in cand) else 0
+    laugh_sim = 1.0 - abs(cand_laugh - prof.laugh_ratio)
+    cand_emoji = 1 if style_mod.EMOJI_PATTERN.search(cand) else 0
+    emoji_rate = min(prof.emoji_avg_count, 1.0)
+    emoji_sim = 1.0 - abs(cand_emoji - emoji_rate)
+    return round(max(0.0, min(1.0, (tone_sim + laugh_sim + emoji_sim) / 3.0)), 3)
+
+
 # --- Step 12: データ不足時の観測統計（ランキング変更なし） ---
 
 # Step 12 §2 のしきい値

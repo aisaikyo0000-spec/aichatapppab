@@ -1,0 +1,83 @@
+"""Step 18: 相手別・関係性別の会話距離適応。
+
+- build_relationship_summary: 観測特徴のみ（関係ラベルなし）、実績0件時は空文字
+- contact_tone_fit: Gold 3件未満は中立 0.5、tame/keigo の適合を判定
+- ranking への影響は軽微（±0.02）かつ無データ時は中立
+"""
+from __future__ import annotations
+
+from app.learning import contrast, style
+
+
+def _seed_gold(client, name: str, pairs: list[tuple[str, str]]) -> int:
+    cid = client.post("/api/contacts", json={"name": name, "profile": ""}).json()["id"]
+    for contact_msg, self_msg in pairs:
+        r = client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": contact_msg})
+        assert r.status_code == 201
+        r = client.post(f"/api/contacts/{cid}/messages", json={"sender": "self", "content": self_msg})
+        assert r.status_code == 201
+    return cid
+
+
+TAME_PAIRS = [
+    ("今日暇だった", "おつかれ笑"),
+    ("眠い", "わかる笑"),
+    ("雨降ってきた", "ほんとそれ笑"),
+    ("おつ", "おつおつ笑"),
+    ("まじ", "まじか笑"),
+]
+
+KEIGO_PAIRS = [
+    ("今日はありがとうございました", "こちらこそありがとうございました！とても楽しかったです！"),
+    ("明日はよろしくお願いします", "こちらこそよろしくお願いいたします！準備を進めておきます！"),
+    ("資料を送付しました", "資料を確認いたしました！ありがとうございます！"),
+    ("会議は来週です", "承知いたしました！来週よろしくお願いいたします！"),
+    ("お疲れ様でした", "お疲れ様でした！本日はありがとうございました！"),
+]
+
+
+def test_relationship_summary_empty_without_data(client):
+    assert style.build_relationship_summary(None) == ""
+    assert style.build_relationship_summary(999999) == ""
+
+
+def test_relationship_summary_tame_contact(client):
+    cid = _seed_gold(client, "Aさん", TAME_PAIRS)
+    block = style.build_relationship_summary(cid)
+    assert "この相手への返信距離感" in block
+    assert "砕けた" in block
+    assert "5件" in block
+    # 関係ラベルを付けない（§3・§29）
+    for label in ("恋人", "友達", "上司", "同僚", "先輩", "後輩"):
+        assert label not in block
+
+
+def test_relationship_summary_keigo_contact(client):
+    cid = _seed_gold(client, "Bさん", KEIGO_PAIRS)
+    block = style.build_relationship_summary(cid)
+    assert "丁寧" in block
+    assert "5件" in block
+
+
+def test_relationship_summary_few_samples_is_reference(client):
+    cid = _seed_gold(client, "Cさん", TAME_PAIRS[:2])
+    block = style.build_relationship_summary(cid)
+    assert "参考程度" in block
+
+
+def test_contact_tone_fit_neutral_without_data(client):
+    assert contrast.contact_tone_fit("おつかれ笑", None) == 0.5
+    assert contrast.contact_tone_fit("おつかれ笑", 999999) == 0.5
+
+
+def test_contact_tone_fit_prefers_matching_tone(client):
+    cid_tame = _seed_gold(client, "Aさん", TAME_PAIRS)
+    cid_keigo = _seed_gold(client, "Bさん", KEIGO_PAIRS)
+    tame_cand = "おつかれ笑"
+    keigo_cand = "お疲れ様でした。ありがとうございます。"
+    # tame相手にはtame候補が高適合、keigo相手にはkeigo候補が高適合
+    assert contrast.contact_tone_fit(tame_cand, cid_tame) >= contrast.contact_tone_fit(keigo_cand, cid_tame)
+    assert contrast.contact_tone_fit(keigo_cand, cid_keigo) >= contrast.contact_tone_fit(tame_cand, cid_keigo)
+    # 3件未満は中立
+    cid_few = _seed_gold(client, "Cさん", TAME_PAIRS[:2])
+    assert contrast.contact_tone_fit(tame_cand, cid_few) == 0.5

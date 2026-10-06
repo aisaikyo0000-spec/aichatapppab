@@ -1331,6 +1331,13 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
             f"{same_contact_gold_block}\n{accepted_block}" if same_contact_gold_block else accepted_block
         )
 
+    # 5.56 Step 18: 同一相手への返信距離感サマリー（短い抽象ブロック。実績なしなら空）
+    relationship_block = learning.style.build_relationship_summary(contact_id)
+    if relationship_block:
+        same_contact_gold_block = (
+            f"{same_contact_gold_block}\n{relationship_block}" if same_contact_gold_block else relationship_block
+        )
+
     self_profile = database.get_user_profile()
     contact_info = {
         "name": contact["name"],
@@ -1925,6 +1932,10 @@ def generate(body: GenerateRequest):
         # Human feedback は Hard Invariant より下位（validation が先に適用される）。
         sent_sim = learning.contrast.sent_profile_similarity(r, body.contact_id)
         final = round(final + 0.06 * (sent_sim - 0.5), 3)
+        # Step 18 §18-19: 同一相手Goldのトーン適合を最下位項として加算（±0.02）。
+        # Gold 3件未満は中立。Context/Human/Personal Gold より下位。
+        tone_fit = learning.contrast.contact_tone_fit(r, body.contact_id)
+        final = round(final + 0.04 * (tone_fit - 0.5), 3)
         # Step 17-R6 §3: FORCED（不要な文脈での質問）は軽く順位を下げる。質問そのものは禁止しない。
         _r6_q = naturalness.count_meaningful_questions(r)
         _r6_forced = _r6_necessity == "unnecessary" and _r6_q["informative"] >= 1

@@ -312,3 +312,60 @@ def build_same_contact_gold_pairs_block(contact_id: int, limit: int = 10) -> str
     for idx, p in enumerate(gold_pairs, start=1):
         lines.append(f"[実例 {idx}]\n相手: {p.contact_turn.text}\n自分（手入力正解）: {p.self_turn.text}")
     return "\n".join(lines)
+
+
+def build_relationship_summary(contact_id: int | None) -> str:
+    """同一相手への返信距離感サマリー（Step 18）。観測特徴のみを記述し、関係ラベルは付けない。
+
+    Same-contact Gold（手入力実績）から本人がその相手へ返すときの距離感・温度感・
+    フォーマル度・文量・質問率を観測し、短い抽象ブロックとして返す。相手の文体を
+    コピーするためのものではなく、本人の返信特徴を学習するためのもの。
+    実績0件時は空文字（Global へ fallback）。少数時は参考程度と明記する。
+    """
+    if not contact_id:
+        return ""
+    gold_pairs = corpus.extract_same_contact_manual_gold_pairs(contact_id, limit=10)
+    texts = [p.self_turn.text for p in gold_pairs if not p.excluded]
+    if not texts:
+        return ""
+    n = len(texts)
+    prof = compute_style_metrics(texts)
+
+    # フォーマル度（観測のみ）
+    if prof.tame_ratio >= 0.6:
+        formality = "砕けた"
+    elif prof.keigo_ratio >= 0.6:
+        formality = "丁寧"
+    else:
+        formality = "普通"
+    # 温度感（笑・絵文字・感嘆符の観測値から。名前による固定なし）
+    warm_score = prof.laugh_ratio + min(prof.emoji_avg_count, 2.0) / 2.0 + prof.exclamation_ratio
+    if warm_score >= 1.2:
+        warmth = "とても温かい"
+    elif warm_score >= 0.7:
+        warmth = "温かい"
+    elif warm_score <= 0.2:
+        warmth = "そっけない"
+    else:
+        warmth = "普通"
+    # 文量（中央値・行数）
+    if prof.char_median <= 20:
+        brevity = "短め"
+    elif prof.char_median <= 50:
+        brevity = "普通"
+    else:
+        brevity = "長め"
+    # 質問率（観測のみ。高いから毎回質問するわけではない）
+    if prof.question_ratio >= 0.5:
+        q_desc = "質問多め"
+    elif prof.question_ratio <= 0.2:
+        q_desc = "質問少なめ"
+    else:
+        q_desc = "質問普通"
+    confidence = f"（この相手への手入力実績{n}件より）" if n >= 3 else f"（実績{n}件のみのため参考程度）"
+    return (
+        f"＜この相手への返信距離感＞{confidence}\n"
+        f"- 距離感: {formality}・{warmth}（笑い{'多め' if prof.laugh_ratio >= 0.3 else '少なめ'}・{brevity}・{q_desc}）。"
+        f"文量目安: {prof.char_p25}〜{prof.char_p75}字程度・{prof.line_p25}〜{prof.line_p75}行。"
+        f"この距離感・温度感・文量を目安に返信すること。"
+    )

@@ -3,16 +3,16 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / 対応コミット: `a030515`（`wip: step 18-r2 ranking analysis`・状態記録）
+最終更新: 2026-10-08 / 対応コミット: `c5495cc`（`docs: record 18-r2 quota block`・状態記録）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `a030515` (`wip: step 18-r2 ranking analysis`)
-- Working tree: prompt.py 1箇所＋docs（未コミット・記録予定）
-- 進行中ステップ: **Step 18-R2**（§8 分析完了・コード修正済み・70評価は Quota 待ち）
+- 最新コミット: `c5495cc` (`docs: record 18-r2 quota block`)
+- Working tree: clean（Quota 枯渇で70未完了・コード a030515 のまま固定）
+- 進行中ステップ: **Step 18-R2 継続**（5件のみ成功・65件未完了・Quota 回復待ち）
 
 ## Step 18-R2 状態
 

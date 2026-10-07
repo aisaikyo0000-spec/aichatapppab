@@ -3,14 +3,14 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / 対応コミット:（記録予定 `docs: record step 18-r1 findings`）
+最終更新: 2026-10-08 / 対応コミット: `7cb1334`（`docs: record step 18-r1 findings`・状態記録）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `5554537` (`docs: update liaison commit refs`)
+- 最新コミット: `7cb1334` (`docs: record step 18-r1 findings`)
 - Working tree: docs のみ（製品コード無変更・記録予定）
 - 進行中ステップ: **Step 18-R1**（§1-5 実行・修正なしと確定・ChatGPT 判断待ち）
 

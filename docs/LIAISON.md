@@ -3,18 +3,25 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / 対応コミット: `eef4634`（`wip: step 18-r2 3.5 loop findings`・状態記録）
+最終更新: 2026-10-08 / 対応コミット:（記録予定 `wip: step 18-r3 findings`）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `eef4634` (`wip: step 18-r2 3.5 loop findings`)
-- Working tree: clean（Quota 枯渇で70未完了・コード a030515 のまま固定）
-- 進行中ステップ: **Step 18-R2 継続**（5件のみ成功・65件未完了・Quota 回復待ち）
+- 最新コミット: `fcf5cdd` (`docs: update liaison commit refs`)
+- Working tree: docs のみ（製品コードは iter-1 状態で確定・記録予定）
+- 進行中ステップ: **Step 18-R3**（loop 1 iteration＋revert・4/6・ChatGPT 判断待ち）
 
-## Step 18-R2 状態
+## Step 18-R3 結果
+
+- 70ケース（3.5-uniform）: AI 0.062✓ / Context 0.604✗ / Human 0.896✗ / Conv 0.981✓ / Q 0.000✓ / Echo 0.119✓
+- **4/6**。純粋反応 push は Context 悪化で revert。残存 gap は測定 artifact と確定
+- 接触bench 2/3（B文量ばらつき。length 優先化は見送り）
+- 詳細は `docs/development/current-generation-analysis.md` の `## Step 18-R3` を参照
+
+## Step 18-R2 状態（履歴）
 
 - §8 ranking 分析: Top-1≠max-Conv 29件の内訳は forced 0・mild 9・div 3・nat 17。ranking bug なし（Context 優先は正しい順位付け）
 - 修正: 短＋話題の組合せ例を1箇所追加（pytest 287 passed）。Quota 枯渇で70未測定

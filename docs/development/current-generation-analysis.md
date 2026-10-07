@@ -1509,8 +1509,43 @@ sort: final 降順（normal）／役割整列（followup）
 
 - loop 2 iteration を genuine に実行（系統的 +0.028/+0.023 達成＋backfire revert＋artifact 分析）。
 - 残存 gap は測定 artifact 由来で制約内修正不可。これ以上の prompt 変更は backfire 実績（R6b/R5/R6-iter2）＋Echo 反転リスクのため期待値マイナス。
-- **4/6（§4基準）で wip 記録して停止**。ChatGPT 判断待ち（marginal 受理／測定修正／基準調整／別アプローチ指示）。
+- **4/6（§25基準）で wip 記録して停止**。ChatGPT 判断待ち（marginal 受理／測定修正／基準調整／別アプローチ指示）。
 - pytest 287 passed / npm build 成功。
+
+## Step 18-R3
+
+- 実施日: 2026-10-08 / コミット: `wip: step 18-r3 findings`（§26 未達のため feat せず。loop 1 iteration＋revert まで実行）
+- 目的: Context（0.604→≥0.605）＋Human（0.896→≥0.900）の改善。3.5-uniform。Novel は対象外。
+
+### 失敗ケース分析（§3・§6）
+
+- Context 低 75件: rel 0.0×18（質問への良回答＋token 不一致＋回答不能）・0.2×6・0.3×26（自然な返信だが lexicon 外）・0.5×14・0.6-0.67×9。
+- Human 低 47件: ほぼ全て relevance との複合（単独は echo 1・question 1 のみ）。Context 改善が Human も持ち上げる構造。
+- Echo cap 20件の分離（§5）: 自然な mirror・良回答・必要 reuse の12件は修正対象外。真の言い換え返し 8件（b21/b22/b33/b44/b61/b64×2/b66）が genuine 修正対象。
+
+### 変更と revert（§8・§19・§21）
+
+- loop iter 1（short-tier に純粋反応優先を追加）: Echo 0.119→0.097・AI 改善も、Context 0.604→0.586 に悪化（話題性低下の tradeoff）。§21 に従い **revert**。
+- loop iter 2（良い例追加）: Context/Human さらに悪化。**revert**。
+- 最終製品コード変更（Step 18 差分）: **2箇所保持**（①★行の反応明確化＝系統的 +0.028/+0.023 に寄与、②短＋話題語コンボ＝18-R2 で追加し Context 維持に寄与）。純粋反応・良い例の2件は revert 済み。
+- pytest 287 passed 維持。
+
+### 接触bench（§20・2/3）
+
+- A OK（laugh 1.0）・C OK・B MISS（len 17.3 vs Gold 25.4。文量適応のばらつき）。
+- B-length は run により 27.0/19.7/15.3/17.3 と変動（relationship 文量目安の遵守率が部分的）。
+- length 優先化（接触別を発言長区分より上位）は、狭いプローブへの過剰長文リスク＋backfire 実績のため見送り（期待値マイナスと判断）。
+
+### 20ケース目視（§22・抜粋）
+
+- R6→18→R3 で系統的な文脈無視・話題変更・AI説明の増加なし。b45-R18 の逆質問解消等の改善方向を維持。
+- 実際に送れそうか: 短い相づち・終了・受領は自然。距離感は接触別ベンチ通り（A短・B丁寧・C中、ただしB文量にばらつき）。
+
+### 最終判定（§20・§26）
+
+- 70ケース（3.5-uniform・iter-1 状態の測定値で判定）: AI 0.062✓ / Context 0.604✗ / Human 0.896✗ / Conv 0.981✓ / Q 0.000✓ / Echo 0.119✓。**4/6**。
+- 接触bench 2/3。pytest 287 / build 成功。
+- **不合格**。§26 により完成扱いせず、wip 記録して停止。ChatGPT 判断待ち。
 
 ### 残課題
 

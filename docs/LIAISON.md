@@ -3,18 +3,26 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / 対応コミット: `4506b1d`（`wip: step 18 contact adaptation`・状態記録）
+最終更新: 2026-10-08 / 対応コミット:（記録予定 `docs: record step 18-r1 findings`）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `4506b1d` (`wip: step 18 contact adaptation`)
-- Working tree: style.py＋contrast.py＋generation.py＋tests＋scripts＋docs（未コミット・記録予定）
-- 進行中ステップ: **Step 18**（接触別ベンチ＋70回帰完成・5/6・ChatGPT 判断待ち）
+- 最新コミット: `5554537` (`docs: update liaison commit refs`)
+- Working tree: docs のみ（製品コード無変更・記録予定）
+- 進行中ステップ: **Step 18-R1**（§1-5 実行・修正なしと確定・ChatGPT 判断待ち）
 
-## Step 18 結果
+## Step 18-R1 結果
+
+- R6 vs 18 の10悪化ケースを全件比較: b08 の AI_QUESTION 戦略反転＋言い換え変動。adaptation は synthetic で不活性（単体テストで証明）と確定
+- §4 遵守（tone ±0.02 は最小項・変更なし）。§5 seeded 重み実験（全 weight で Top-1 安定・0.02 適切・変更なし）
+- Brevity cap 試行→接触別 3/3→1/3 に破壊→§10 に従い revert。製品コード変更ゼロ
+- 70ケース: 変更なしのため Step 18 の 5/6 を維持（Conversation 0.956 未達継続）
+- 詳細は `docs/development/current-generation-analysis.md` の `## Step 18-R1` を参照
+
+## Step 18 結果（履歴）
 
 - 接触別ベンチ（3 contacts・同一メッセージ）: **3/3 識別**。B の文量適応が R6 比 **8倍改善**（距離12.7→1.6）
 - 70ケース（3.1統一）: AI 0.076✓ / Context 0.607✓ / Human **0.908**✓改善 / Conversation 0.956✗ / Questions 0.005✓ / Echo 0.048✓
@@ -113,6 +121,7 @@
 - 17-R5: 3/7 統一3.1（Context/Human/Echo。Questions さらに悪化・AI-like も僅差未達に転落）
 - 17-R6: **6/6 合格**（？？例示除去で Questions 0.000。Novel は対象外）
 - 18: 5/6（Human 改善＋Style Fit 実証。Conversation のみノイズ範囲で未達）
+- 18-R1: 製品コード変更ゼロ（§1-5 実行・brevity cap は revert）。5/6 維持
 
 ## 既知の分析結果
 
@@ -124,7 +133,7 @@
 ## 作業者への質問・次のアクション
 
 1. ~~Quota 回復後、残り10件を実行→60件と結合→70ケース完全版で合否判定~~ → 完了（3.1 で実行し70ケース完成）
-2. 18 は 5/6（Conversation のみノイズ範囲で未達）で記録・push 後に停止。ChatGPT の判断待ち（ノイズとして受理／再実行指示／基準調整）。新規の改善実装は指示があるまで行わない
+2. 18-R1 は製品コード変更ゼロ（§1-5 実行・brevity cap revert）で記録・push 後に停止。ChatGPT の判断待ち（ノイズとして受理／再実行指示／基準調整／rollback）。新規の改善実装は指示があるまで行わない
 
 ## ChatGPT への連絡欄
 
@@ -136,3 +145,4 @@
 - 2026-10-07: 17-R5 完成（70×3.1統一）。Context 維持（0.619）も Questions さらに悪化（0.157）・AI-like 僅差未達転落で不合格（3/7）。悪い例の列挙がコピーを誘発した backfire と特定。R5 追記 revert を推奨。`wip: step 17-r5 results` で push 後に停止。次の指示待ち。
 - 2026-10-08: 17-R6 完成（70×3.1統一）。自律ループ10 iteration で **6/6 合格**（AI 0.081/Context 0.618/Human 0.900/Conversation 0.969/Questions 0.000/Echo 0.067）。決定打は？？の例示除去（？？使用 30→0）。pytest 281 passed / build 成功。合格コミットを push 後に停止。確認後 Step 18 の指示待ち。
 - 2026-10-08: 18 完成（接触別ベンチ 3/3 識別＋70×3.1統一）。Human 改善（0.908）＋Style Fit 実証（B文量 8倍）。70ケース 5/6（Conversation 0.956 のみノイズ範囲で未達。prompt.py 無変更＝系統的悪化なし）。`wip: step 18 contact adaptation` で push 後に停止。判断待ち。
+- 2026-10-08: 18-R1 完成（§1-5 実行）。10悪化ケース比較で引き直し変動と確定（b08 戦略反転）。§4遵守・§5 seeded実験（全weight安定）で変更なし。Brevity cap は 3/3→1/3 破壊のため revert。製品コード変更ゼロ。5/6 維持。docs のみ記録して停止。判断待ち。

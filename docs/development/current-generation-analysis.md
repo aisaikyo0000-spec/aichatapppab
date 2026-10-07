@@ -1438,6 +1438,41 @@ sort: final 降順（normal）／役割整列（followup）
 - Novel artifact（笑笑・汎用語）の測定仕様は未解決のまま（§26 対象外）。
 - per-contact closing 率・recency 減衰・phase別接触 profile は未実装（必要になれば）。
 
+## Step 18-R1
+
+- 実施日: 2026-10-08 / コミット: docs のみ（製品コード無変更。§9 ループは全項目実行も修正なしと確定）
+- 目的: Conversation Fit 回帰（0.956→≥0.963）の原因特定と修正。ノイズ結論の禁止（§1・§15）に従い全件比較を実施。
+
+### R6 vs 18 per-case 比較（§1-2・Conversation 低下10件）
+
+- b01/b03/b40/b43/b50/b51/b56/b60/b66（言い換えレベルの変動）・b08（R6: 回避返信3件 → 18: [AI_QUESTION]×3 の戦略反転）。
+- b40（了解です！/承知しました笑/わかりました！→了解です！/承知しました！/ありがとうございます！）はほぼ同一。
+- run_live は Gold なし・router ranking なし・Step 18 は prompt.py 無変更のため生成パスはコード同一。差は新規 LLM draw のみ。
+
+### Contact Adaptation の関与（§3）
+
+- synthetic 70ケースには Gold が存在しないため relationship_summary は空文字・contact_tone_fit は 0.5 中立（単体テスト `test_relationship_summary_empty_without_data`・`test_contact_tone_fit_neutral_without_data` で固定済み）。
+- よって 10件の差に adaptation が関与した可能性はゼロ（router ranking 自体が run_live で実行されない）。
+- 証拠に基づく結論: 引き直し変動（b08 の戦略反転を含む）。§15 の「ノイズだから合格」は行わないが、原因の証拠記録は §1 の要求通り実施。
+
+### 優先順位（§4）・重み実験（§5）
+
+- §4 遵守確認: tone_fit ±0.02 は最小の monetary 項（correction ±0.05・sent ±0.03 より下位）。変更なし。
+- §5 重み実験（0/0.005/0.01/0.02）: synthetic 70では Gold なしのため全 weight で恒等的に無効（void）。seeded 接触（A/B/C）での offline 再ランキングでは全 weight で Top-1 安定（0→0.02 で順位不変）。±0.02 は補助的で適切と確定。変更なし。
+- 注: §5 を synthetic 70 で実行しても意味がない（tone_fit が実行されない）ため seeded で正しく実行した。
+
+### Brevity 実験と revert（§10）
+
+- Conversation=length の観点から short-tier soft cap（2行・30字以内目安）を試行。
+- 結果: 接触別識別が 3/3→1/3 に破壊（B の文量適応が Gold 25.4 に対し 19.7 に短縮）。§10「識別できなくなった場合は採用しない」に従い **revert**。
+- 最終製品コード変更: **ゼロ**（revert により Step 18 状態に復帰。pytest 287 passed 維持）。
+
+### 判定
+
+- §14 Conversation ≥0.963: 0.956 で未達（§9 ループは原因特定・重み実験・brevity 試行＋revert まで実行も、系統的修正なしと確定）。
+- Human 0.908・Style Fit（B文量8倍）・3/3 識別（Step 18 記録）は維持。製品コード無変更のため regression なし。
+- **不合格のまま docs のみ記録して停止**。ChatGPT 判断待ち（ノイズとして受理／再実行指示／基準調整／R6 への rollback 指示）。
+
 ## 9. Frontend・DB・周辺の補足（生成フローに関わる範囲）
 
 - Frontend: `GenerationPanel.tsx: generate()` が `condition/revision_instruction(original=案全文)/tone/mode` を送り 3 案カード化。`ChatArea.tsx` は AI 案送信を `source='generated'+historyId`、手入力を `source='manual'` で送る（＝Contrast の分岐点）。`HistoryModal` で rating 付与。`PracticePanel`（練習モード）は生成フローと別系統。

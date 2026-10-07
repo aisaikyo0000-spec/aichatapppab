@@ -3,14 +3,14 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / 対応コミット:（記録予定 `wip: step 18-r2 ranking analysis`）
+最終更新: 2026-10-08 / 対応コミット: `a030515`（`wip: step 18-r2 ranking analysis`・状態記録）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `435b95b` (`docs: update liaison commit refs`)
+- 最新コミット: `a030515` (`wip: step 18-r2 ranking analysis`)
 - Working tree: prompt.py 1箇所＋docs（未コミット・記録予定）
 - 進行中ステップ: **Step 18-R2**（§8 分析完了・コード修正済み・70評価は Quota 待ち）
 

@@ -3,18 +3,24 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / 対応コミット: `7cb1334`（`docs: record step 18-r1 findings`・状態記録）
+最終更新: 2026-10-08 / 対応コミット:（記録予定 `wip: step 18-r2 ranking analysis`）
 
 ---
 
 ## 現在の状態
 
 - Branch: `main`
-- 最新コミット: `7cb1334` (`docs: record step 18-r1 findings`)
-- Working tree: docs のみ（製品コード無変更・記録予定）
-- 進行中ステップ: **Step 18-R1**（§1-5 実行・修正なしと確定・ChatGPT 判断待ち）
+- 最新コミット: `435b95b` (`docs: update liaison commit refs`)
+- Working tree: prompt.py 1箇所＋docs（未コミット・記録予定）
+- 進行中ステップ: **Step 18-R2**（§8 分析完了・コード修正済み・70評価は Quota 待ち）
 
-## Step 18-R1 結果
+## Step 18-R2 状態
+
+- §8 ranking 分析: Top-1≠max-Conv 29件の内訳は forced 0・mild 9・div 3・nat 17。ranking bug なし（Context 優先は正しい順位付け）
+- 修正: 短＋話題の組合せ例を1箇所追加（pytest 287 passed）。Quota 枯渇で70未測定
+- 詳細は `docs/development/current-generation-analysis.md` の `## Step 18-R2` を参照
+
+## Step 18-R1 結果（履歴）
 
 - R6 vs 18 の10悪化ケースを全件比較: b08 の AI_QUESTION 戦略反転＋言い換え変動。adaptation は synthetic で不活性（単体テストで証明）と確定
 - §4 遵守（tone ±0.02 は最小項・変更なし）。§5 seeded 重み実験（全 weight で Top-1 安定・0.02 適切・変更なし）
@@ -146,3 +152,4 @@
 - 2026-10-08: 17-R6 完成（70×3.1統一）。自律ループ10 iteration で **6/6 合格**（AI 0.081/Context 0.618/Human 0.900/Conversation 0.969/Questions 0.000/Echo 0.067）。決定打は？？の例示除去（？？使用 30→0）。pytest 281 passed / build 成功。合格コミットを push 後に停止。確認後 Step 18 の指示待ち。
 - 2026-10-08: 18 完成（接触別ベンチ 3/3 識別＋70×3.1統一）。Human 改善（0.908）＋Style Fit 実証（B文量 8倍）。70ケース 5/6（Conversation 0.956 のみノイズ範囲で未達。prompt.py 無変更＝系統的悪化なし）。`wip: step 18 contact adaptation` で push 後に停止。判断待ち。
 - 2026-10-08: 18-R1 完成（§1-5 実行）。10悪化ケース比較で引き直し変動と確定（b08 戦略反転）。§4遵守・§5 seeded実験（全weight安定）で変更なし。Brevity cap は 3/3→1/3 破壊のため revert。製品コード変更ゼロ。5/6 維持。docs のみ記録して停止。判断待ち。
+- 2026-10-08: 18-R2 開始（§8 ranking分析・短＋話題語修正・pytest 287）。70評価は 3.1 の 429 Quota 枯渇で未完了（20分timeout＋3分待機も回復せず）。wip: step 18-r2 ranking analysis で記録後に停止。Quota 回復後の70実行指示待ち。

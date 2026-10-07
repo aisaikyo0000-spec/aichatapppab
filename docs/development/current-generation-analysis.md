@@ -1438,6 +1438,35 @@ sort: final 降順（normal）／役割整列（followup）
 - Novel artifact（笑笑・汎用語）の測定仕様は未解決のまま（§26 対象外）。
 - per-contact closing 率・recency 減衰・phase別接触 profile は未実装（必要になれば）。
 
+## Step 18-R2
+
+- 実施日: 2026-10-08 / コミット: `wip: step 18-r2 ranking analysis`（Quota 枯渇のため70評価未完了。記録のみで停止）
+- 目的: Conversation Fit 回帰修正（0.956→≥0.963）。Contact Adaptation（Human改善・3/3識別）を維持。
+
+### §8 ranking 寄与分析（offline・70ケース記録データ・LLM不要）
+
+- pipeline ranking を再現（style 中立＋nat＋FORCED＋mild＋diversity）し Top-1≠max-Conversation を抽出: **29/70**。
+- 内訳: forced 0・mild 9・div 3・nat 17。
+- forced demotion が max-Conv を落とす例はゼロ。nat 17件は Context 優先の正しい順位付け（§4・§19 通り）。mild/div 12件は tie-break の正常動作。
+- 結論: ranking bug なし（§9）。修正不要。問題は生成側（短＋話題の両立候補の不足＝§10）。
+
+### 変更内容（§10・prompt.py のみ1箇所）
+
+- user_instruction の話題語ルールに短＋話題の組合せ例を追加: 「短い返信にも話題の言葉を1語入れると自然で文脈にも合う（例: 相手「昨日映画見てきた」→「映画いいですね！」。長い説明は不要）」。
+- 良い例のコピーは安全（悪い例の列挙禁止は維持）。Context・Conversation の両立を狙う genuine 修正。
+- pytest 287 passed 維持。`npm run build` 成功。
+
+### 70ケース評価（§18-19・未完了）
+
+- gemini-3.1-flash-lite の 429 Quota 枯渇により 70ケース実行不可（20分 timeout＋3分待機後も 429）。
+- 新 version（短＋話題語）の測定は Quota 回復待ち。現時点の判定不可。
+- 最終判定: **保留（Quota 待ち）**。製品コード変更は pytest 通過済みで保持。ChatGPT 判断待ち（Quota 回復後の再実行指示）。
+
+### 残課題
+
+- Quota 回復後の70ケース測定（同一条件・3.1・70・210）。
+- 測定後の §27 判定（6項目＋接触bench 3/3）。
+
 ## Step 18-R1
 
 - 実施日: 2026-10-08 / コミット: docs のみ（製品コード無変更。§9 ループは全項目実行も修正なしと確定）

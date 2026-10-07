@@ -613,7 +613,7 @@ def build_system_prompt(
             ledger_lines.append("※（追いメッセージモード・話題引きずり禁止）直前で途切れた古い話題（会話の続き）は絶対に蒸し返さず、話題を完全に切り替えて新しいフックを作成してください。")
         else:
             if last_c_msg:
-                ledger_lines.append(f"★（最優先返答対象）相手（{contact_name}さん）の直前の最新メッセージ:\n「{last_c_msg}」\n※まずこのメッセージ内容に対する反応・共感から返信を始めること。ただし相手の発言の言葉をそのまま言い換えて返信を始めず、自分の反応の言葉から返すこと（Step 17-R）。")
+                ledger_lines.append(f"★（最優先返答対象）相手（{contact_name}さん）の直前の最新メッセージ:\n「{last_c_msg}」\n※まずこのメッセージ内容に対する反応・共感から返信を始めること。反応・共感とは自分の言葉（おつかれ/いいね/わかる/笑など）であり、相手の発言の繰り返しではない。ただし相手の発言の言葉をそのまま言い換えて返信を始めず、自分の反応の言葉から返すこと（Step 17-R・18-R2）。")
             ledger_lines.append(f"【COUNTERPART INTENT】\n{intent}\n（相手発言の意図分類。返信方針を決めるための強い参考情報であり、Hard Rule ではない。最終判断は会話履歴・本人実例・条件を総合して行うこと）")
             ledger_lines.append(f"- Intent別方針（{intent}）: {_INTENT_POLICIES[intent]}")
             # Step 7: 連続質問の抑制（参考情報。相手の質問・確認必要時・Gold質問中心は除外）

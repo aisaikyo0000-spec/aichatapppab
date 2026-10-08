@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 
@@ -81,6 +82,7 @@ def record_gemini_benchmark_success(
                         {
                             "account": attempt.get("account"),
                             "model": attempt.get("model"),
+                            "config_fingerprint": _quota_config_fingerprint(config),
                         }
                     ),
                     encoding="utf-8",
@@ -88,6 +90,30 @@ def record_gemini_benchmark_success(
                 temp_path.replace(route_state_path)
             return index
     return None
+
+
+def _quota_config_fingerprint(config: dict[str, object]) -> str | None:
+    attempts = config.get("quota_attempts")
+    if not isinstance(attempts, list):
+        return None
+    route_identity = []
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            return None
+        api_key = attempt.get("api_key")
+        account = attempt.get("account")
+        model = attempt.get("model")
+        if not all(isinstance(value, str) for value in (api_key, account, model)):
+            return None
+        route_identity.append(
+            {
+                "account": account,
+                "model": model,
+                "key_digest": hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
+            }
+        )
+    serialized = json.dumps(route_identity, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def load_gemini_benchmark_route(
@@ -102,7 +128,13 @@ def load_gemini_benchmark_route(
         return None
     account = route.get("account")
     model = route.get("model")
+    fingerprint = route.get("config_fingerprint")
     if not isinstance(account, str) or not isinstance(model, str):
+        return None
+    if (
+        not isinstance(fingerprint, str)
+        or fingerprint != _quota_config_fingerprint(config)
+    ):
         return None
 
     attempts = config.get("quota_attempts")

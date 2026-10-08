@@ -232,9 +232,9 @@
 - 3.5は日次RPD上限を返したため、APIが自動で3.1へ切替。70ケース評価はIteration 7コードで実行中。3.1の応答503は一部発生しており、case IDを固定して全件成功まで再試行予定
 - pytest/build・70指標・fresh reviewer結果を追記後に最終判定する。現時点では未完了・pushなし
 
-## Step 18-R4 最新進捗（Iteration 23–25）
+## Step 18-R4 進捗記録（Iteration 23–24時点）
 
-- GitHubのmainを基準に作業中。cloneの基点は `a75ba76998a377e527f1ea3bedaa655a6b89569c`、現在のローカルHEADは `150be15`。R4最終合格条件を満たしていないため、まだpushしていない
+- GitHubのmainを基準に作業した当時の記録。cloneの基点は `a75ba76998a377e527f1ea3bedaa655a6b89569c`、当時のローカルHEADは `150be15`。この記録時点ではR4最終合格条件を満たしておらず、pushしていなかった
 - Iteration 22の独立Python Reviewerは、伝聞の「空いている」を確定予定と誤認するケースを指摘。修正したIteration 23のReviewerも、`聞いていた` / `言われてた` / `聞かされていない` 等の隣接表現を再検出し **FAIL**。範囲を広げた回帰テストを追加し、Iteration 24の新しいReviewerは **PASS**
 - `backend/tests/test_validation_and_repair.py`: **134 passed**。最終差分適用後の全backend suite: **451 passed**（FastAPIの非推奨警告2件）。`frontend` の `npm run build`: **PASS**。`git diff --check`: PASS（CRLFの注意のみ）
 - 最新Contact Bench（Gemini 3.1 Flash Lite、同一probe「今週末、雨みたいだね。」）はA/B/C完走。Aは砕けた短文で平均11.7字、Bは敬語中心で26字、Cは中間的な丁寧さで12.7字。Goldの距離感と文量差を確認し **3/3** と判定

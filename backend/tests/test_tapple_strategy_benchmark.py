@@ -121,3 +121,27 @@ def test_live_benchmark_covers_meeting_hesitation_and_safety_boundaries():
 
         result["replies"] = ["ぜひ来週会いましょう。"]
         assert not expectation_met(scenario, result), scenario_id
+
+
+def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit():
+    scenario = next(item for item in SCENARIOS if item["id"] == "declining_engagement")
+    required_markers = scenario["reply_must_contain_any"]
+    contact_text = scenario["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": "wait",
+            "rationale": "短い返答が続いているので、今は追わずに待ちます。",
+            "evidence": [contact_text],
+            "invite_example": None,
+        },
+        "replies": ["そうなんですね。無理せず、また話したくなったら話しましょう。"],
+    }
+
+    assert required_markers
+    assert expectation_met(scenario, result)
+
+    result["replies"] = ["今日の仕事はどうでしたか？"]
+    assert not expectation_met(scenario, result)
+
+    result["replies"] = ["なんで返事が短くなったの？今度カフェに行きませんか？"]
+    assert not expectation_met(scenario, result)

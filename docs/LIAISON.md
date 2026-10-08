@@ -7,17 +7,20 @@
 
 ## 2026-10-09 最新状況
 
-- GitHub `main`確認時のSHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。製品コード最新は`2382a64`、資料を含む最新commitは`c71b923`。forkのリモートbranchが同じSHAであることを確認済み。
+- GitHub `main`確認時のSHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。製品コード最新は`2382a64`。今回作業の起点となる更新前push済みHEADは`25a6da5`。PR #1はOpenで未マージ。
 - Tapple安全レビューで、否定が重なる警戒表現を見逃す問題と、仕事・試験・天候など無関係な不安を会う不安として扱う問題を順に発見。REDテスト追加後に修正し、Tapple suiteは**563 passed**、backend全体は**1,143 passed / 2 warnings**。独立安全ReviewerとPython Reviewerは両方**PASS**。Python側の追加重点テストは**600 passed**。`ruff`と`mypy`は環境になく未実行。
 - ベンチ応答が候補文と利用者向け質問を同時に返す不正形を、runner・verifierで失敗扱いにした。手動レビューartifactに代表ケースの返信本文も入れる。ベンチ評価ロジックを変えず、既存fixtureを維持した。
 - quota切替focused suiteは**45 passed**。順序は主3.5→主3.1→別アカウント3.5→別アカウント3.1で、`rate_limit`の場合だけ次へ進む。設定上の別キーはgemini3.mdから読む。APIキーの値は表示・保存していない。
 - frontend production build、Python `compileall`、`git diff --check`はPASS。Gemini APIは呼び出していない。利用制限と朝の再開確認を待っており、実API疎通・70ケース・Contact Bench・Tapple実生成文の評価は未完了。
-- [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)を追加。公式調査は自己申告の傾向として扱い、学術研究と利用者の逸話は一般化し過ぎず、固定メッセージ数や返信速度で誘う時期を決めない方針を記録した。
-- Step 18-R4は未完成。70ケースRegression、Contact Bench 3/3、実生成文の人手確認、独立Reviewer全員のPASSを揃えていないため、Step 19へは進まない。
+- [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)を追加。公式調査は自己申告の傾向として扱い、学術研究と利用者の逸話は一般化し過ぎず、固定メッセージ数や返信速度で誘う時期を決めない方針を記録した。公式の2026年富士急ハイランド共同調査も追加し、自己選択・回顧回答で因果を示さない限界を明記した。
+- Contact Bench用API-free統合テストを追加。同じprobeをA/B/Cの実生成経路に流し、各相手のGold 6件・same-contact層・Gold文のprompt反映と、戻り値の固定mock返信で口調・文量が相手別に異なることを検証した。backend全体は**1,144 passed / 2 warnings**、frontend production buildは**PASS**、compileallとdiff checkも**PASS**。
+- 過去のContact Bench 3/3 artifactは2026-10-09のGold重複修正前のため現行受入証拠にしない。固定mock統合テストは実Geminiの自然さや文面品質を示さない。今回差分のPython Reviewerとrunbook/history Reviewerは**PASS**。最新70ケース、Contact Bench実生成3/3、Tapple全11シナリオと全文レビューが未完了のため、Step 18-R4は未完成。Step 19へは進まない。
 
 ---
 
-## 現在の状態
+## 過去の作業履歴（記録当時のスナップショット）
+
+> この見出しより下の進捗・テスト件数・commit SHAは、各記録日時点の履歴であり、現行状態や最新の受け入れ証拠ではない。最新状態は冒頭の「2026-10-09 最新状況」を参照すること。
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
 - 作業ブランチ: `codex/chat-quality-20261008`（ローカル最新コードcommitは`6b68dcc`。予備アカウント使用時に、疎通確認で制限済みと分かった主アカウントへ戻らない）
@@ -426,6 +429,29 @@ $pipelineOut = Join-Path $runDir 'pipeline.json'
 $contactOut = Join-Path $runDir 'contact.json'
 $tappleOut = Join-Path $runDir 'tapple.json'
 $quotaRouteState = Join-Path $runDir 'quota-route.json'
+if (-not (Test-Path 'scripts/check_tapple_api_connectivity.py')) { throw 'repository rootではありません。' }
+foreach ($requiredPath in @('scripts/run_pipeline_benchmark.py', 'scripts/verify_pipeline_benchmark.py', 'scripts/run_contact_benchmark.py', 'scripts/run_tapple_strategy_benchmark.py')) {
+    if (-not (Test-Path $requiredPath)) { throw "必要な評価スクリプトがありません: $requiredPath" }
+}
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw 'pythonがPATHにありません。' }
+if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'npmがPATHにありません。' }
+if (-not (Test-Path $primaryKeyFile) -or -not (Test-Path $secondaryKeyFile)) { throw '主・予備のキー設定ファイルが見つかりません。' }
+python -m pytest --version
+if ($LASTEXITCODE -ne 0) { throw 'pytestを起動できません。API probe前に環境を整えてください。' }
+python -m pytest backend/tests --collect-only -q *> $null
+if ($LASTEXITCODE -ne 0) { throw 'backend test collectionに失敗しました。API probe前に環境を整えてください。' }
+Push-Location frontend
+npm --version
+if ($LASTEXITCODE -eq 0) { npm ls --depth=0 *> $null }
+$npmReadinessExit = $LASTEXITCODE
+if ($npmReadinessExit -eq 0) { npm run build *> $null }
+$frontendPreflightExit = $LASTEXITCODE
+Pop-Location
+if ($npmReadinessExit -ne 0 -or $frontendPreflightExit -ne 0 -or -not (Test-Path 'frontend/package.json')) { throw 'frontend dependency/build preflightに失敗しました。API probe前に環境を整えてください。' }
+$env:PYTHONPATH = (Join-Path (Get-Location) 'scripts')
+$keyCheck = & python -c 'from pathlib import Path; import sys; from api_key_file import read_gemini_api_key; a,b=[read_gemini_api_key(Path(p)) for p in sys.argv[1:3]]; print("primary_present=" + str(bool(a)) + " secondary_present=" + str(bool(b)) + " distinct=" + str(bool(a and b and a != b))); sys.exit(0 if a and b and a != b else 1)' $primaryKeyFile $secondaryKeyFile
+if ($LASTEXITCODE -ne 0) { throw "キー設定を安全に読み込めません。値は表示せず停止します。$keyCheck" }
+Write-Output $keyCheck
 $probeOutput = & python scripts/check_tapple_api_connectivity.py --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile 2>&1
 if ($LASTEXITCODE -ne 0) { throw "疎通に失敗したため追加呼び出しを止めます。$probeOutput" }
 $probeMatch = [regex]::Match(($probeOutput -join "`n"), 'PASS model=(\S+) account=(primary|secondary)')

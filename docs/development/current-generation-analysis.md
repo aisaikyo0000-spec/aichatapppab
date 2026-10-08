@@ -2114,3 +2114,9 @@ APIは呼び出していないため、実際のquota応答と生成品質は未
 まず旧動作で失敗する回帰テストを追加し、RED test commit `8d7d53a`を作成した。実装修正commitは`6b68dcc`。focused suiteはbenchmark config **18 passed**、APIキー・model fallback **27 passed**。`python -m pytest backend/tests -q`は**1,084 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。新しいread-only code reviewerもPASSと判定した。
 
 Gemini APIは呼び出していない。最新70ケース、Contact Bench全9返信、Tapple全11シナリオの実生成と目視確認は未実施で、Step 18-R4は未完成。修正commit `6b68dcc`と資料commit `3c1da1b`はforkへpushし、remote SHA一致を確認した。API疎通確認は利用者が再開を指示するまで行わない。
+
+## 2026-10-09 Contact Adaptation オフライン受入テスト
+
+過去のContact Bench 3/3 artifactはGold重複計上を修正する前の結果のため、現行実装の受入証拠から外した。再実行前に、同一probeをベンチと同じAPI経路へ通すmock統合テストを追加した。A/B/Cそれぞれの応答プロンプトに同じ入力、相手専用の手入力Gold、6件のGold数とsame-contact hierarchy tierが反映されること、短文・中間・長文および口調比率がfixtureどおりに分かれることを確認した。これは実Geminiの生成品質を評価するテストではない。
+
+`python -m pytest backend/tests -q`: **1,144 passed / 2 warnings**。Contact Bench focused testは**3 passed**、frontend production build、Python compileall、`git diff --check`もPASS。Gemini APIは呼び出していない。最新70ケース、Contact Bench実生成9返信の3/3人手確認、Tapple 11シナリオの実生成全文レビュー、今回差分のfresh Reviewerが残るためStep 18-R4は未完成。レビュー後にオフライン準備のWIPをfork作業branchへpushする予定で、GitHub mainには反映しない。

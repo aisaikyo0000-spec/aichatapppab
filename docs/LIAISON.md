@@ -10,9 +10,9 @@
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（機能修正・レビュー対応commitは`b7c1cca`、状態同期commitは`ef7ea1d`。後者までforkへのpushとSHA一致を確認済み）
+- 作業ブランチ: `codex/chat-quality-20261008`（直近push確認済みは`8c63563`。Tapple回帰テストと検出器修正はローカルcommit`f2cc261`まで進み、資料更新後にpush予定）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。ベンチ間のquota成功経路共有と評価artifactの目視対象抽出を実装。全backend 858 passed、frontend build PASS、最新差分の独立レビューPASS。実API評価は未実施
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tappleの質問・催促・話題逸脱チェックと自然な会話終了の評価を修正し、最新差分の独立ReviewerはPASS。全backend **859 passed / 2 warnings**、frontend build、compileall、CLI `--help`、`git diff --check`もPASS。実API評価は未実施
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を再開可能な時間帯に行う。完了条件がそろうまでStep 18-R4は合格としない
 
 ## Step 18-R4 進捗（オフライン受け入れ準備）
@@ -20,13 +20,15 @@
 - ベンチの各ケースは同一run内の直近の成功経路から再開する。pipeline、Contact、Tappleは同じroute-stateファイルを使い、quotaで切り替わった経路を後続ベンチへ渡す。ファイルにはアカウント・モデルと、キー設定を照合するSHA-256 fingerprintだけを記録する。APIキー本体は保存せず、キー設定が変わった状態ファイルは無視する。runフォルダ名にもGUIDを含め、別runとの衝突を避ける
 - 接続確認は最大4回で、3.5メイン→3.1メイン→3.5予備→3.1予備の順。quota以外のエラーでは別モデル・アカウントへ切り替えない。APIキーはログ・artifactへ出力しない
 - アプリ本体にも予備アカウントへの切替があり、メイン3.5と3.1の両方がquotaの場合に予備3.5、続いて予備3.1を試す。既存の自動テストで4経路の順序と成功停止を確認
-- ローカル設定の安全確認では、provider=Gemini、標準3.5、予備モデル3.1、メイン・予備キーともに読み込み済み。キーの値は表示していない。実際にAPIが受け付けるかは朝の疎通確認まで未確定
+- 実行環境の設定はprovider=Gemini、標準3.5 Flash Lite、fallback 3.1 Flash Lite。`GEMINI_API_KEY_FILE`はgemini2.md、`GEMINI_SECONDARY_API_KEY_FILE`はgemini3.mdを指し、両キーが別の値として読み込まれることを確認した。キーの値は表示していない。APIでの有効性は疎通確認まで未確定
 - 朝の実行手順を修正し、疎通で成功したモデルとアカウントを後続ベンチへ渡す。70ケースから返信例8件を表示して人が確認し、Contact/Tappleの返信artifactも確認してからPASSを入力する
 - route-state共有テストを追加し、修正前に失敗することを確認した。不正なUTF-8、キー設定の変更、fingerprintのない旧形式を含む状態ファイルは無視する。quota関連focused suiteは **27 passed**。全backend suiteは**853 passed / 2 warnings**。frontend build、compileall、3つのCLI `--help`、`git diff --check`、PowerShell受け入れ手順の構文検査はPASS。Tapple safety Reviewerとroute-state設定指紋Reviewerはともに**PASS**
 - 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全9シナリオを画面に表示する
 - 独立Tapple調査で、会話文から相手の信頼性や実際の安全性をAIが判定できるように読める点と、返信の温度低下時の対応が未検証である点を指摘された。招待提案にはAIの安全性判断の限界と本人の判断を促す注意を付け、短い返答・話題展開の減少が続く場合に追いかけず待つ9件目のシナリオを追加した
 - 70ケースの目視確認用出力は固定8件だけでなく、検証器が注意候補と本人確認分岐をすべて列挙する。注意候補は自動不合格ではなく、人が返信全体とartifactを照合するための目印
 - 独立レビューで検出されたTappleの9件目fixture漏れと不正UTF-8 artifactのtracebackを回帰テストで再現して修正。Tapple・検証器・モデルfallbackのfocused suiteは**373 passed**。全backend suiteは**858 passed / 2 warnings**、frontend build・compileall・`git diff --check`・PowerShell AST parseは**PASS**。新規のread-only Python Reviewerは修正後の差分に**PASS**
+- Tappleの追加レビューでは、句読点なしの質問、間接的な返信要求、相づち後の話題逸脱を見つけた。修正後は、自然な相づち・再開可能な締め方・短い気遣いを許容し、句読点なしの追記も含む無関係な話題を拒否する。focused suiteは**5 passed**。直近の新規read-only Reviewerは**PASS**。全backend suiteは**859 passed / 2 warnings**、frontend build・compileall・CLI `--help`・`git diff --check`も**PASS**
+- アプリ本体のquota切替順はメイン3.5→メイン3.1→予備3.5→予備3.1。次の経路へ進むのはrate limit時だけで、既存テストで4経路と成功時の停止を確認。gemini2.mdを主キー、gemini3.mdを予備キーとして読み込む設定は確認済みだが、APIの有効性は未確認。ユーザーの朝の疎通確認前にAPIは呼び出さない
 - ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。オフライン準備分は独立レビュー後にforkへpushし、SHA一致を確認する
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）

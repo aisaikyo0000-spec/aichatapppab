@@ -4,6 +4,12 @@
 
 Tappleの招待提案には、AIが相手の信頼性や実際の安全性を判定できないことを明記し、利用者自身が安全だと感じる場合に限り検討するよう表示する。返信が繰り返し短くなり話題の展開も減ったケースを9件目として追加し、返信速度だけで関心を推測しない方針をpromptとベンチに反映した。これはsynthetic caseの期待動作であり、実APIでの遵守は未検証。
 
+独立レビューで、9件目の返信が短い反応に合うかを確認していない点が見つかった。ベンチに短い受け止めや自然な会話終了を示す返信要件を加え、無関係な質問と、相手を責めて再勧誘する返信を不合格にする回帰テストを追加した。このマーカー判定は文脈適合の目安で、実際の文体品質を保証しない。
+
+続く独立レビューでは句読点のない質問「住んでる場所どこ」「最近どう」が評価器を通る問題が見つかった。両方の回帰ケースを修正前に失敗させてから検出器を広げ、「そっか。また話そう」のような相づちは誤検出しないことを確認した。Tapple focused suiteは**5 passed**、fallback focused suiteは**17 passed**。fresh reviewと全backend suiteは実行中。実APIでの出力は未確認。
+
+さらにfresh reviewで、質問の抜け、間接的な返信要求、相づち後の無関係な話題が検出器を通る問題と、固定語尾リストが自然な言い換えを落とす問題が見つかった。追加テストをREDで確認してから、句読点なしの質問・返信や連絡を促す表現を検出し、短い相づちの後には文脈に沿う会話終了を求める評価に変更した。追加レビューで判明した「連絡くれると嬉しい」の見逃しと「無理せず過ごしてね」などの自然な言い換えも回帰テストに加えた。Tapple focused suiteは**5 passed**。最終差分の新規read-only Python Reviewerは**PASS**。全backend suiteは**859 passed / 2 warnings**、frontend build、`compileall`、CLI `--help`、`git diff --check`もPASS。Geminiの切替はprimary 3.5→primary 3.1→secondary 3.5→secondary 3.1で、rate limit時だけ次へ進む。実API疎通、最新70ケース、Contact Bench、Tappleの実生成と文章確認は未実施。
+
 70ケースの手動確認では、代表8ケースに加え、検証器が注意を示した候補と本人確認への分岐を全て出力する。注意候補は品質不合格の自動判定ではなく、人が元の会話・返信・評価artifactを照合するための確認リストである。不正なUTF-8 artifactを読み込んでも検証器がtracebackで終了しないよう、JSON形式の構造化エラーにする。
 
 独立レビューの初回判定は、Tappleシナリオ追加に対するテストfixture漏れと不正UTF-8入力時のクラッシュを指摘したためFAIL。両方をREDテストで再現して修正し、新規Reviewerの再確認は**PASS**。focused suiteは**373 passed**、全backend suiteは**858 passed / 2 warnings**、frontend build・`compileall`・`git diff --check`・PowerShell AST parseもPASS。Geminiの経路はprimary 3.5→primary 3.1→secondary 3.5→secondary 3.1で、次の経路へ進む条件はquota/rate limitに限定する。API疎通、最新70ケース、Contact Bench、Tappleの実生成はまだ行っていない。
@@ -16,7 +22,7 @@ pipeline・Contact・Tappleの各ベンチが、同じrun専用`quota-route.json
 
 ベンチ各ケースの呼び出しで、前のケースが成功したモデル・アカウントから再開する。quotaに当たった場合は、メイン3.5→メイン3.1→予備3.5→予備3.1の残りの経路を順に試す。アプリ本体もメイン3.5と3.1が両方quotaになった後、予備3.5、予備3.1へ進む。疎通確認はこの順で最大4回まで行い、quota以外のエラーでは切り替えない。Iteration 26時点では経路状態を各ベンチ内だけで保持していたが、今回のオフライン準備でpipeline、Contact、Tapple間の共通route-stateを追加した。
 
-朝のPowerShell手順は疎通に成功したモデル・アカウントを後続ベンチへ渡し、70ケースからの返信例8件、Contact Bench全返信、Tapple全返信を画面に表示して確認できるようにした。ローカル設定はprovider=Gemini、標準3.5、予備3.1で、両キーが読み込み済みと確認した。キーの値は出力していないが、APIでの有効性は未確認。Iteration 26時点の`python -m pytest backend/tests -q`は**849 passed**だった。共通route-state追加後は**851 passed / 2 warnings**で、frontend production build・`compileall`・CLI `--help`・`git diff --check`もPASS。Iteration 26時点のPython Reviewerは**PASS**。今回のroute-state変更はfresh review中。APIは呼び出していないため、実生成評価と最新のquota状態は未確認。Step 18-R4は継続中。
+朝のPowerShell手順は疎通に成功したモデル・アカウントを後続ベンチへ渡し、70ケースからの返信例8件、Contact Bench全返信、Tapple全返信を画面に表示して確認できるようにした。ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主キーgemini2.md・予備キーgemini3.mdを読み込めることを確認した。両ファイルのキーは異なるが、APIでの有効性は未確認。Iteration 26時点の`python -m pytest backend/tests -q`は**849 passed**だった。共通route-state追加後は**851 passed / 2 warnings**で、frontend production build・`compileall`・CLI `--help`・`git diff --check`もPASS。Iteration 26時点のPython Reviewerは**PASS**。route-state変更時のレビューはその時点ではpendingだったが、後続修正後の独立レビューは冒頭に記載したとおりPASS。APIは呼び出していないため、実生成評価と最新のquota状態は未確認。Step 18-R4は継続中。
 
 ## 2026-10-09 Tapple Iteration 25: 迷い・安全懸念時の再勧誘ガード
 
@@ -26,7 +32,7 @@ pipeline・Contact・Tappleの各ベンチが、同じrun専用`quota-route.json
 
 Geminiのprimary 3.5、primary 3.1、予備アカウント3.5、予備3.1への切替経路はmockテストで確認済み。実APIは呼んでいないため、実際のquota状態は未確認。70ケースの最新実行、Contact Bench 3/3、Tapple 8シナリオの実返信と目視レビューも未実施であり、Step 18-R4は未完成。テストRED commitsは`2074291`、`53aa7e7`、`5ba125d`、シナリオ追加は`777d05f`、コードは`cf0e0d0`、`c854f16`、`36a54d8`。最新コードcommitは`36a54d8`で、GitHub main基点`a75ba76`は変更していない。
 
-> 初回調査は2026-09-27に実施しました。最新の実装・検証状況は、この冒頭の「2026-10-09 Tapple Iteration 25」を参照してください。
+> 初回調査は2026-09-27に実施しました。最新の実装・検証状況は、この冒頭の「2026-10-09 受け入れ準備の追加レビュー」を参照してください。
 
 ## 2026-10-08 返信品質・Geminiフォールバック更新
 

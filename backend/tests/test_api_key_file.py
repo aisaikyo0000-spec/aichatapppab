@@ -4,12 +4,40 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import httpx
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from api_key_file import read_gemini_api_key
 import check_tapple_api_connectivity as connectivity
 from check_tapple_api_connectivity import _make_probe_provider
+
+
+@pytest.mark.parametrize(
+    "model", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+)
+def test_connectivity_probe_sends_only_one_request_on_quota_error(monkeypatch, model):
+    provider = _make_probe_provider("test-key")
+    requested_models = []
+
+    def send_rate_limit_response(_headers, payload):
+        requested_models.append(payload["model"])
+        return httpx.Response(429, text="quota exceeded")
+
+    monkeypatch.setattr(provider, "_send_request", send_rate_limit_response)
+
+    with pytest.raises(connectivity.AIError) as exc_info:
+        provider.generate(
+            model=model,
+            messages=[],
+            temperature=0.0,
+            max_tokens=128,
+        )
+
+    assert exc_info.value.code == "rate_limit"
+    assert requested_models == [model]
 
 
 def test_reads_gemini_api_key_from_env_assignment(tmp_path):
@@ -35,12 +63,6 @@ def test_rejects_ambiguous_multiline_raw_file(tmp_path):
 
 def test_missing_file_returns_empty_without_exposing_path_content(tmp_path):
     assert read_gemini_api_key(tmp_path / "missing") == ""
-
-
-def test_probe_provider_never_retries_and_spends_extra_requests():
-    provider = _make_probe_provider("AQ.test-token")
-
-    assert provider.MAX_RETRIES == 1
 
 
 class _FakeProvider:

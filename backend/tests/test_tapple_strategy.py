@@ -7,6 +7,7 @@ import pytest
 from app.ai import prompt
 from app.routers.generation import (
     _build_repair_messages,
+    _is_tapple_private_place_proposal,
     _parse_replies_strict,
     _parse_tapple_strategy as _parse_tapple_strategy_messages,
     validate_candidate_replies,
@@ -159,6 +160,65 @@ def test_strategy_accepts_exact_conversation_evidence_and_explicit_interest():
     assert result.evidence == ["今度一緒に行きたいです"]
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "会いたくないわけではないです。",
+        "会いたくないとは言えないです。",
+        "会えないわけではないです。",
+        "行けないわけじゃないよ。",
+        "会うのは難しくないです。",
+        "空いていないわけではないです。",
+        "都合が合わないわけではないです。",
+        "会いたくないわけではありません。",
+        "会うのは難しいとは思わないです。日曜なら大丈夫です。",
+        "会うのは難しいと思いません。日曜なら会えます。",
+        "会えないわけではありません。",
+        "空いていないわけではありません。",
+        "都合が合わないわけではありません。",
+    ],
+)
+def test_qualified_non_refusal_does_not_force_strategy_stop(statement):
+    raw = _raw_strategy(
+        {
+            "action": "continue",
+            "rationale": "気持ちを確認しながら話します。",
+            "evidence": [statement],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action != "stop"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "日曜は会えませんか？",
+        "日曜は行けませんか？",
+        "日曜は都合が合いませんか？",
+        "会えないかな？",
+    ],
+)
+def test_availability_questions_are_not_treated_as_declines(statement):
+    raw = _raw_strategy(
+        {
+            "action": "continue",
+            "rationale": "日程を確認しています。",
+            "evidence": [statement],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action != "stop"
+
+
 def test_explicit_request_to_be_invited_can_authorize_invite():
     statement = "ぜひ誘ってください"
     raw = _raw_strategy(
@@ -261,6 +321,9 @@ def test_decline_response_cannot_include_a_reinvitation():
         "また今度カフェでもどう？",
         "来週カフェとかどう？",
         "また会えたら嬉しいな",
+        "わかりました。日曜はどうですか？",
+        "残念ですが、来週なら都合つきますか？",
+        "今度そこ行こう",
     ],
 )
 def test_tapple_wait_strategy_rejects_soft_reinvitations(reply):
@@ -273,6 +336,523 @@ def test_tapple_wait_strategy_rejects_soft_reinvitations(reply):
     )
 
     assert any("誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "土曜は会えないけど日曜なら会えます！",
+        "土曜は会えませんが日曜なら大丈夫です。",
+        "土曜は行けませんが日曜なら行けます。",
+        "忙しくて会えないけど、来週なら会える。",
+        "来月は会えませんが再来月なら会えます。",
+        "土曜は予定があって、日曜なら大丈夫です。",
+    ],
+)
+def test_counterproposal_after_unavailable_date_is_not_misread_as_decline(statement):
+    raw = _raw_strategy(
+        {
+            "action": "continue",
+            "rationale": "相手が別の日程を提案しています。",
+            "evidence": [statement],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "continue"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "土曜は会えないけど日曜なら会えます。でも、やっぱり会うのは難しいです。",
+        "土曜は無理だけど日曜なら大丈夫です。ただ会いたくありません。",
+        "土曜は難しいですが、日曜なら大丈夫です。でもやっぱり会えません。",
+        "土曜は難しいですが、日曜なら大丈夫です。でもやっぱり行けません。",
+        "土曜なら大丈夫ですが、日曜は会えません。",
+        "土曜は会えませんが日曜なら会えません。",
+        "土曜は行けませんが日曜なら行けません。",
+        "土曜は難しいですが、日曜なら空いてません。",
+        "来月は無理ですが再来月なら会えます。でも再来月も都合が悪いです。",
+    ],
+)
+def test_explicit_decline_after_counterproposal_takes_precedence(statement):
+    raw = _raw_strategy(
+        {
+            "action": "continue",
+            "rationale": "日曜を提案しています。",
+            "evidence": [statement],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+    violations = validate_candidate_replies(
+        ["日曜はどうですか？"],
+        1,
+        counterpart_message=statement,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert result is not None
+    assert result.action == "stop"
+    assert any(
+        refusal in result.evidence[0]
+        for refusal in (
+            "会うのは難し",
+            "会いたくありません",
+            "会えません",
+            "行けません",
+            "空いてません",
+            "都合が悪",
+        )
+    )
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_scheduling_after_explicit_acceptance_is_allowed():
+    violations = validate_candidate_replies(
+        ["ぜひ！日曜はどうですか？"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_explicit_later_refusal_overrides_earlier_acceptance_for_scheduling():
+    statement = "ぜひ一緒に行きたいです。でも会いたくないです。"
+    violations = validate_candidate_replies(
+        ["日曜はどうですか？"],
+        1,
+        counterpart_message=statement,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "counterpart_message",
+    [
+        "友達が『一緒に行きたい』って言ってた",
+        "友達が土曜は難しいけど、日曜なら大丈夫って言ってた。",
+        "カフェは行きたいけど、まだ会うのは不安です。",
+    ],
+)
+def test_scheduling_is_not_allowed_for_hearsay_or_hedged_interest(counterpart_message):
+    violations = validate_candidate_replies(
+        ["そうなんですね。日曜はどうですか？"],
+        1,
+        counterpart_message=counterpart_message,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_first_person_counterproposal_is_not_blocked_by_unrelated_friend_availability():
+    violations = validate_candidate_replies(
+        ["日曜ならどうですか？"],
+        1,
+        counterpart_message="友達は土曜は無理だけど、私は日曜なら大丈夫です。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_third_party_date_does_not_authorize_scheduling_on_that_date_for_self():
+    violations = validate_candidate_replies(
+        ["日曜ならどうですか？"],
+        1,
+        counterpart_message=(
+            "友達が土曜は難しいけど日曜なら大丈夫って言ってました。"
+            "私は来週なら会えます。"
+        ),
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_first_person_date_is_allowed_when_it_is_the_one_they_offered():
+    violations = validate_candidate_replies(
+        ["来週ならどうですか？"],
+        1,
+        counterpart_message=(
+            "友達が土曜は難しいけど日曜なら大丈夫って言ってました。"
+            "私は来週なら会えます。"
+        ),
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_scheduling_is_allowed_after_natural_unavailable_date_counterproposal():
+    violations = validate_candidate_replies(
+        ["日曜ならどうですか？"],
+        1,
+        counterpart_message="土曜は予定があって、日曜なら大丈夫です。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_both_suggested_dates_unavailable_do_not_authorize_scheduling():
+    violations = validate_candidate_replies(
+        ["日曜はどうですか？"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！でも土曜も日曜も予定があって厳しいです。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "来月ホテルで会いましょう。",
+        "家で飲みましょう。",
+        "部屋で会いませんか？",
+        "自宅で待ち合わせしよう。",
+        "ホテルを待ち合わせ場所にしよう。",
+        "ホテル集合でどうですか？",
+        "お互いの家で落ち合いませんか？",
+        "部屋集合にしよう。",
+        "家に来ませんか？",
+        "ホテル泊まりで会おう。",
+        "ホテル行こう。",
+        "ホテルに泊まりませんか？",
+        "家に泊まりませんか？",
+        "ホテルで一泊しませんか？",
+        "家に泊まっていきませんか？",
+        "ホテルに泊まっていかない？",
+        "ホテルの客室で会いましょう。",
+        "民泊で会いましょう。",
+        "自宅の中で会いましょう。",
+        "家の中で会おう。",
+        "ホテルに泊まっていく？",
+        "家に泊まっていく？",
+        "部屋に泊まっていく？",
+        "客室に泊まっていく？",
+        "家で映画を見よう。",
+        "家でご飯を食べませんか？",
+        "家で会ってからカフェに行こう。",
+        "家に寄ってからカフェに行こう。",
+        "ホテルのスイートルームで会おう。",
+        "スイートで会いませんか？",
+        "家で映画でも見ませんか？",
+        "家で料理しませんか？",
+        "うちでゆっくりしようよ。",
+        "カフェで会ってから家で過ごそう。",
+        "カフェの後にホテルで休もう。",
+        "ホテルのバーで飲んだ後に部屋に行かない？",
+        "家に寄ってからカフェで会いましょう。",
+        "ホテル行かない？",
+        "ホテルで会わない？",
+        "ラブホ行かない？",
+        "ホテル泊まろ？",
+        "泊まっていかない？",
+        "お泊まりしない？",
+        "家飲みしよ",
+        "うち飲みしよ",
+        "ホテルに行きませんか？",
+        "うちで飲も。",
+        "家でご飯食べよ。",
+        "家寄ってよ。",
+        "うちで飲まない？",
+        "うちで飲まない",
+        "家で映画見ない？",
+        "家でご飯食べない？",
+        "家でご飯食べない",
+        "家に寄らない？",
+        "家に寄らない",
+        "今度うちおいでよ。",
+        "家寄っていかない？",
+        "宅飲みしようよ。",
+        "カフェの後は家でどう？",
+    ],
+)
+def test_tapple_reply_cannot_suggest_a_private_place(reply):
+    violations = validate_candidate_replies(
+        [reply],
+        1,
+        counterpart_message="今回は会うのは遠慮します。",
+        strategy_mode="tapple",
+        tapple_action="stop",
+    )
+
+    assert any("場所" in violation for violation in violations)
+
+
+def test_tapple_reply_cannot_insult_the_contact_after_decline():
+    violations = validate_candidate_replies(
+        ["自分勝手ですね。無理しないでください。"],
+        1,
+        counterpart_message="今回は会うのは遠慮します。",
+        strategy_mode="tapple",
+        tapple_action="stop",
+    )
+
+    assert any("侮辱" in violation for violation in violations)
+
+
+def test_tapple_allows_rejecting_a_private_venue_and_confirming_a_public_alternative():
+    violations = validate_candidate_replies(
+        ["ホテルはやめて、駅前のカフェにしましょう。"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation or "誘い" in violation for violation in violations)
+
+
+def test_tapple_allows_negated_hotel_mention_with_public_meeting_proposal():
+    violations = validate_candidate_replies(
+        ["ホテルには行かずカフェで会いましょう。"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation or "誘い" in violation for violation in violations)
+
+
+def test_tapple_allows_negated_hotel_stay_with_public_meeting_proposal():
+    violations = validate_candidate_replies(
+        ["ホテルに泊まらずカフェで会いましょう。"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation or "誘い" in violation for violation in violations)
+
+
+def test_tapple_allows_negated_hotel_meeting_with_public_alternative():
+    violations = validate_candidate_replies(
+        ["ホテルでは会わずカフェで会いましょう。"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation or "誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "ホテルは使わずカフェで会おう。",
+        "ホテルには行かない。カフェで会いましょう。",
+        "ホテルでは会わない。カフェにしよう。",
+    ],
+)
+def test_tapple_allows_rejecting_hotel_and_suggesting_public_cafe(reply):
+    violations = validate_candidate_replies(
+        [reply],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation for violation in violations)
+
+
+def test_tapple_allows_rejecting_suite_and_suggesting_public_cafe():
+    violations = validate_candidate_replies(
+        ["スイートルームではなくカフェで会いましょう。"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation or "誘い" in violation for violation in violations)
+
+
+def test_tapple_allows_rejecting_home_meeting_and_suggesting_public_cafe():
+    violations = validate_candidate_replies(
+        ["家で会うのはやめて、カフェにしよう。"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation or "誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize("reply", ["家に来ないでください。", "家に来ないでね。"])
+def test_tapple_does_not_treat_negative_come_over_requests_as_proposals(reply):
+    assert not _is_tapple_private_place_proposal(reply)
+
+
+def test_tapple_allows_public_hotel_lobby_as_meeting_location():
+    violations = validate_candidate_replies(
+        ["ホテルのロビーで会いましょう。"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation or "誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "今度は会わない？",
+        "今度遊びに行かない？",
+        "今度デートしない？",
+        "今度映画見ない？",
+        "今度映画見ない",
+        "ホテル行かない？",
+        "お茶しない？",
+        "お茶しない",
+        "今度お茶しない？",
+    ],
+)
+def test_tapple_rejects_casual_reinvitation_after_decline(reply):
+    violations = validate_candidate_replies(
+        [reply],
+        1,
+        counterpart_message="今回は会うのは遠慮します。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "家の近くのカフェで会いましょう。",
+        "駅前のホテルのカフェで会いましょう。",
+        "ホテルのカフェで会いましょう。",
+        "ホテルのラウンジで会いましょう。",
+        "ホテルのバーで会いましょう。",
+    ],
+)
+def test_tapple_does_not_treat_safe_public_venue_mentions_as_private(reply):
+    violations = validate_candidate_replies(
+        [reply],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("場所" in violation for violation in violations)
+
+
+def test_tapple_does_not_cancel_a_private_place_violation_with_later_negation():
+    violations = validate_candidate_replies(
+        ["ホテルに行こう。ホテルはやめよう。"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("場所" in violation for violation in violations)
+
+
+def test_private_place_invitation_is_repaired_before_reply_is_returned(client, monkeypatch):
+    from app import database
+
+    decline = "今回は会うのは遠慮します。"
+    first = _raw_strategy(
+        {
+            "action": "stop",
+            "rationale": "相手は会うことを断っています。",
+            "evidence": [decline],
+            "invite_example": None,
+        },
+        replies=["わかりました。来月ホテルで会いましょう。"],
+    )
+    repaired = _raw_strategy(
+        {
+            "action": "stop",
+            "rationale": "相手の断りを尊重します。",
+            "evidence": [decline],
+            "invite_example": None,
+        },
+        replies=["わかりました。教えてくれてありがとう。"],
+    )
+
+    class QueuedProvider:
+        name = "gemini"
+
+        def __init__(self):
+            self.responses = [first, repaired]
+
+        def generate(self, **_kwargs):
+            return self.responses.pop(0)
+
+        def available_models(self):
+            return ["gemini-3.5-flash-lite"]
+
+    provider = QueuedProvider()
+    monkeypatch.setattr("app.routers.generation.factory.get_provider", lambda *_args: provider)
+    monkeypatch.setattr(
+        "app.routers.generation.get_ai_config",
+        lambda: {
+            "provider": "gemini",
+            "model": "gemini-3.5-flash-lite",
+            "api_key": "test-key",
+            "temperature": 0.2,
+            "max_tokens": 512,
+            "history_limit": 50,
+            "fallback_provider": "gemini",
+            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_api_key": "test-key",
+            "secondary_api_key": "",
+        },
+    )
+    monkeypatch.setattr("app.routers.generation.time.sleep", lambda *_args: None)
+    database.set_setting("ai_provider", "gemini")
+    database.set_setting("ai_model", "gemini-3.5-flash-lite")
+    database.set_setting("api_key_gemini", "test-key")
+
+    contact_id = client.post("/api/contacts", json={"name": "テストさん"}).json()["id"]
+    client.post(
+        f"/api/contacts/{contact_id}/messages",
+        json={"sender": "contact", "content": decline},
+    )
+    response = client.post(
+        "/api/generate",
+        json={"contact_id": contact_id, "candidates": 1, "strategy_mode": "tapple"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["replies"] == ["わかりました。\n教えてくれてありがとう。"]
+    assert response.json()["strategy"]["action"] == "stop"
 
 
 def test_decline_forces_stop_even_if_model_says_invite():
@@ -509,7 +1089,7 @@ def test_invitation_example_must_be_public_and_must_not_suggest_contact_exchange
         "カフェで話したあと、家飲みしませんか？",
         "カフェで話したあと、うち飲みしませんか？",
         "カフェの個室でゆっくり話しませんか？",
-        "人の多いカフェのあと、ホテルのラウンジに行きませんか？",
+        "人の多いカフェのあと、ホテルの客室に行きませんか？",
     ):
         result = _parse_tapple_strategy(
             _raw_strategy(

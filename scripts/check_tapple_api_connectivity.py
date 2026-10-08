@@ -1,4 +1,4 @@
-"""Make one minimal, Tapple-mode Gemini request without printing credentials."""
+"""Probe Gemini accounts in order without printing credentials."""
 from __future__ import annotations
 
 import argparse
@@ -77,7 +77,9 @@ def _select_available_model(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="one-request Tapple-mode API connectivity check")
+    parser = argparse.ArgumentParser(
+        description="Tapple-mode connectivity check (up to four requests, one per model/account)"
+    )
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env")
     parser.add_argument("--secondary-env-file", type=Path)
     parser.add_argument("--primary-model", default="gemini-3.5-flash-lite")

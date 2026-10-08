@@ -1,11 +1,25 @@
 import json
 import pytest
 
+from app.routers import generation
 from scripts.run_tapple_strategy_benchmark import (
     SCENARIOS,
     _write_artifact,
     summarize_expectations,
 )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "行きたくないわけではありません。",
+        "行きたくないわけじゃありません。",
+        "行きたくないとは言えません。",
+        "行きたくないとは限りません。",
+    ],
+)
+def test_qualified_non_refusal_is_not_an_unsupported_intent_marker(statement):
+    assert generation._TAPPLE_UNSUPPORTED_INTENT_INFERENCE_RE.search(statement) is None
 
 
 def _valid_results():

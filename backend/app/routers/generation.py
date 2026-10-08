@@ -119,16 +119,116 @@ def _parse_replies_strict(
 
 
 _TAPPLE_DECLINE_RE = re.compile(
-    r"(?:会いたくない|会いたくありません|行きたくない|行きたくありません|"
+    r"(?:会いたくない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません)|"
+    r"会いたくありません(?!わけではありません|とは言えません|とは限りません)|"
+    r"行きたくない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません)|"
+    r"行きたくありません(?!わけではありません|とは言えません|とは限りません)|"
     r"(?:会いたい|行きたい).{0,12}(?:思わない|思いません|思っていない|思っていません|"
     r"思ってない|思ってません|思っていなかった|思ってなかった|"
     r"わけではない|わけじゃない|とは限らない|とは言えない)|"
     r"(?:会う|行く).{0,8}つもりは(?:ない|ありません)|"
-    r"会う.{0,12}(?:難し|無理|できな|したくな|考えていな)|"
+    r"会う.{0,12}(?:難し(?!くない|いとは思わない|いと思わない|いとは思いません|いと思いません)|"
+    r"無理(?!ではない)|できな(?!くはない)|したくな|考えていな)|"
     r"(?:デート|お出かけ).{0,12}(?:難し|無理|できな|したくな)|"
-    r"(?:会えない|行けない)|今回は.{0,8}(?:やめ|遠慮)|"
+    r"(?:会えない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません|かな|かも)|"
+    r"会えません(?!か|わけではありません|とは言えません)|"
+    r"行けない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません|かな|かも)|"
+    r"行けません(?!か|わけではありません|とは言えません)|"
+    r"空いていない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|かも)|"
+    r"空いてません(?!か|わけではありません|とは言えません)|"
+    r"都合が合わない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|かも)|"
+    r"都合が合いません(?!か|わけではありません|とは言えません)|"
+    r"都合がつかない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|かも)|"
+    r"都合がつきません(?!か|わけではありません|とは言えません)|"
+    r"空いていません(?!か|わけではありません|とは言えません))|"
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|今週|来週|今月|来月|再来月|別の日|別日)"
+    r".{0,12}(?:予定があって|予定があり|都合が悪|空いていない|空いてません|厳し)|"
+    r"今回は.{0,8}(?:やめ|遠慮)|"
     r"ごめんなさい.{0,16}(?:会|行)|今は.{0,8}(?:難し|無理|できな))"
 )
+_TAPPLE_COUNTERPROPOSAL_RE = re.compile(
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|その日).{0,12}"
+    r"(?:難し|無理|会えな|会えません|行けな|行けません|空いていない|空いてません|"
+    r"都合が合わな|都合が合いません|都合がつかな|都合がつきません|都合が悪|"
+    r"予定があって|予定があり|予定が合わな)"
+    r".{0,16}(?:でも|けど|が|なら|で|、).{0,12}"
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日)"
+    r".{0,8}(?:なら|は).{0,8}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)|"
+    r"(?:忙し|予定が合わな|都合が悪|会えな|行けな|難し|無理)"
+    r".{0,16}(?:でも|けど|が|なら|で|、).{0,16}"
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日)"
+    r".{0,8}(?:なら|は).{0,8}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)"
+)
+_TAPPLE_ACCEPTED_INVITATION_RE = re.compile(
+    r"(?:ぜひ|喜んで).{0,12}(?:一緒に|行き|会い|大丈夫)|"
+    r"一緒に.{0,8}(?:行きたい|行きましょう|会いたい|会いましょう)|"
+    r"(?:行きたい|会いたい)(?:です|！|$)"
+)
+_TAPPLE_CONTRADICTORY_INVITE_RATIONALE_RE = re.compile(
+    r"(?:意思を示して(?:いません|おらず)|"
+    r"(?:意思がない|意思はない)(?!わけではない|わけじゃない|とは限らない|とは言えない)|"
+    r"希望していません|曖昧さが残|とは言い切れない|と言い切れない|"
+    r"とは言えない(?!わけではない)|"
+    r"前向きではない|断って(?:いる|います|いた|る)|断った(?:可能性|かもしれ)|"
+    r"断られて(?:いる|います|いた)|拒否して(?:いる|います|いた)|"
+    r"拒否した(?:可能性|かもしれ)|会いたくない(?:と|って|様子)|"
+    r"行きたくない(?:と|って|様子)|(?:会う|行く)のは難し)"
+)
+_TAPPLE_CONTRADICTORY_STOP_RATIONALE_RE = re.compile(
+    r"(?:会いたい気持ち.{0,8}(?:強|ある)|会いたい意思|行きたい意思|"
+    r"明確な参加意思|ぜひ.{0,8}(?:会い|一緒に行き)|一緒に行きたい)"
+)
+_TAPPLE_UNSUPPORTED_INTENT_INFERENCE_RE = re.compile(
+    r"(?:会いたい気持ちがない|会いたい意思がない|"
+    r"会いたくない(?!わけではない(?:です)?|わけではありません|わけじゃない(?:です)?|"
+    r"わけじゃありません|とは限らない(?:です)?|とは限りません|"
+    r"とは言えない(?:です)?|とは言えません)|"
+    r"行きたくない(?!わけではない(?:です)?|わけではありません|わけじゃない(?:です)?|"
+    r"わけじゃありません|とは限らない(?:です)?|とは限りません|"
+    r"とは言えない(?:です)?|とは言えません))"
+)
+_TAPPLE_OBVIOUS_TOPIC_PIVOT_RE = re.compile(
+    r"(?:ところで|話(?:は)?変わるけど|そういえば|ちなみに).{0,24}"
+    r"(?:転職|就職|副業|投資|資格|仕事の相談|会社の相談|恋愛相談|悩み相談)|"
+    r"(?:転職して|転職を考え|就職して|副業を始め|投資を始め|投資に興味|"
+    r"資格を取|新しい会社に入|会社に入った|仕事の相談に乗って|"
+    r"会社の話.{0,10}(?:相談|ある)|(?:会社|仕事).{0,10}相談に乗って|相談に乗ってください|"
+    r"政治に興味|政治について|ゲームを始め|ゲームをしませんか|遊びませんか|"
+    r"釣りを始め|おすすめの竿|釣り.{0,12}(?:ハマ|好き|趣味|行く)|引っ越)"
+)
+_TAPPLE_DISRESPECTFUL_REPLY_RE = re.compile(
+    r"(?:自分勝手|わがまま|面倒くさい|しつこい|頭おかしい|意味わからない|"
+    r"だからモテない|性格悪い|常識ない|最低(?:ですね|だね|な人|すぎ)|"
+    r"死ね|死んで|消えて(?:ください|くれ|よ|ろ)|馬鹿|バカ|ばか|クズ|くず|キモい|"
+    r"気持ち悪い|うざい|ウザい|頭悪すぎ|メンヘラ|地雷女|ブス|性格終わって|"
+    r"(?:^|[。！？!?])クソ(?:$|[。！？!?]))"
+)
+
+
+def _unqualified_tapple_decline_match(text: str) -> re.Match[str] | None:
+    declines = list(_TAPPLE_DECLINE_RE.finditer(text))
+    if not declines:
+        return None
+    counterproposals = list(_TAPPLE_COUNTERPROPOSAL_RE.finditer(text))
+    return next(
+        (
+            decline
+            for decline in reversed(declines)
+            if not any(
+                counter.start() <= decline.start() < counter.end()
+                for counter in counterproposals
+            )
+        ),
+        None,
+    )
+
+
+def _has_unqualified_tapple_decline(text: str) -> bool:
+    return _unqualified_tapple_decline_match(text) is not None
 _TAPPLE_INVITE_POSITIVE_RE = re.compile(
     r"(?:一緒に.{0,8}(?:行きたい|行こう|行きましょう|会いたい|会おう|会いましょう)|"
     r"(?:今度|近いうち).{0,8}(?:一緒に行きたい|会いたい|会いましょう)|"
@@ -143,6 +243,24 @@ _TAPPLE_THIRD_PARTY_INTEREST_RE = re.compile(
     r"(?:一緒に.{0,8}(?:行きたい|行こう|会いたい|会おう)|誘って(?:ください|ね)|会いましょう)|"
     r"(?:行きたい|会いたい).{0,16}(?:って|と)(?:言って(?:た|いた|います)|聞いて(?:た|いた|います))"
 )
+_TAPPLE_THIRD_PARTY_COUNTERPROPOSAL_RE = re.compile(
+    r"(?:友達|友人|同僚|家族|知人|彼氏|彼女|別の人|他の人|ほかの人).{0,40}"
+    r"(?P<date>土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日).{0,16}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)"
+)
+_TAPPLE_FIRST_PERSON_COUNTERPROPOSAL_RE = re.compile(
+    r"(?:私|自分)(?:は|なら|も).{0,12}"
+    r"(?P<date>土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日).{0,8}"
+    r"(?:なら|は).{0,8}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)"
+)
+_TAPPLE_DATE_UNAVAILABILITY_RE = re.compile(
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日)"
+    r".{0,12}(?:難し|無理|会えない|会えません|行けない|行けません|"
+    r"予定があって|予定があり|予定が合わな|都合が悪|空いていない|空いてません|厳し)"
+)
 _TAPPLE_REINVITATION_RE = re.compile(
     r"(?:(?:今度|また|次|来週|今週(?:末)?|週末|今日|明日|いつか|改めて|"
     r"落ち着いたら|都合が合えば|タイミングが合えば|よかったら|もしよければ).{0,20})?"
@@ -151,10 +269,77 @@ _TAPPLE_REINVITATION_RE = re.compile(
     r".{0,16}(?:行きませんか|行きましょう|行こう(?:よ)?|会いませんか|会いましょう|"
     r"会おう(?:よ)?|会わない|しませんか|しましょう|しよう(?:よ)?|どう(?:ですか|かな)?|"
     r"嬉しい|うれしい|楽しみ|いいね|良ければ|よければ|たいな|できたら|できれば)"
+    r"|(?:(?:今度|また|次|来週|週末|今日|明日|よかったら|もしよければ).{0,12})?"
+    r"(?:会わない|行かない|デートしない|遊びに行かない|"
+    r"(?:映画|カフェ|ご飯|ごはん|食事|デート|お茶|飲み|遊び)(?:を|に)?"
+    r"(?:見ない|行かない|食べない|しない|飲まない)|"
+    r"(?:お茶|飲み|ご飯|ごはん|食事)しない)(?:[？?]|$)"
+)
+_TAPPLE_SCHEDULING_PROPOSAL_RE = re.compile(
+    r"(?:今度|また|次|来月|再来月|今月|来年|来週|今週(?:末)?|週末|今日|明日|土曜(?:日)?|日曜(?:日)?|"
+    r"平日|いつか|改めて|落ち着いたら|都合が合えば).{0,16}"
+    r"(?:そこ|一緒|会う|会え|行く|行け|カフェ|ご飯|お茶|予定|都合|空いて|"
+    r"どう(?:ですか|かな)?|大丈夫|行こう|会おう|しませんか|しよう)"
+    r"|(?:都合|空き|予定).{0,12}(?:ありますか|どうですか|つきますか|合いますか)"
 )
 _TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|飲食店|公共の場所|人通りのある場所|人の多い場所|商業施設|フードコート|駅前|公園)")
 _TAPPLE_PRIVATE_PLACE_RE = re.compile(
-    r"(?:自宅|お?うち(?:で|に|へ|集合|待ち合わせ|飲み)|お?家(?:で|に|へ|集合|待ち合わせ|飲み)|ホテル|個室)"
+    r"(?:自宅|お?うち(?:で|に|へ|集合|待ち合わせ|飲み)|お?家(?:で|に|へ|集合|待ち合わせ|飲み)|ホテル|客室|個室|スイートルーム|スイート|ルーム)"
+)
+_TAPPLE_NEGATED_PRIVATE_PLACE_RE = re.compile(
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|民泊|貸別荘|ゲストハウス|レンタルルーム|旅館|客室|個室|スイートルーム|スイート|ルーム)(?:には|は)行かない(?![？?])|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|民泊|貸別荘|ゲストハウス|レンタルルーム|旅館|客室|個室|スイートルーム|スイート|ルーム)(?:では|には)会わない(?![？?])|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|民泊|貸別荘|ゲストハウス|レンタルルーム|旅館|客室|個室|スイートルーム|スイート|ルーム)"
+    r"(?:には|では|に|で|へ|は)?(?:.{0,12}(?:会うのは|会うのを|行くのは|行くのを))?"
+    r"(?:行かず|行かないで|行きません(?!か)|泊まらず|泊まらないで|泊まらなくて|"
+    r"会わず|会わないで|会いません(?!か)|使わず|使わないで|やめて|避けて|ではなく|じゃなく)"
+)
+_TAPPLE_SAFE_PRIVATE_REFERENCE_RE = re.compile(
+    r"(?:家|お?うち|お?家|自宅)(?:の)?(?:近く|近所|付近)(?:の)?"
+    r"(?:カフェ|喫茶店|レストラン|飲食店)|"
+    r"ホテルの(?:カフェ|喫茶店|レストラン|飲食店|ロビー|フロント|エントランス|ラウンジ|バー)"
+)
+_TAPPLE_PRIVATE_PLACE_PROPOSAL_RE = re.compile(
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|客室|個室|スイートルーム|スイート|ルーム)(?:に|で|へ)?"
+    r"(?:泊まりませんか|泊まりましょう|泊まろう|泊まりたい|泊まってください|"
+    r"泊まっていきませんか|泊まっていかない|泊まっていきましょう|泊まっていこう|"
+    r"泊まっていきたい|泊まっていく|泊まってく|"
+    r"泊まらない|一泊しませんか|一泊しましょう|一泊しよう)|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事))(?:に|へ|で)?"
+    r"(?:来て|来ませんか|来ない(?!で|ね)|遊びに来|おいで(?:よ)?|お越し)|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事))(?:の中|のなか)(?:で|に|へ).{0,8}"
+    r"(?:会いませんか|会いましょう|会おう|行きませんか|行きましょう|行こう)|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事))(?:で|に|へ).{0,16}"
+    r"(?:映画を見|ご飯を食べ|食事し|飲み|会って|寄っ|過ご|遊びに来).{0,20}"
+    r"(?:しませんか|ませんか|しよう|よう(?:よ)?|行こう|行きましょう|どう(?:ですか|かな))|"
+    r"ホテル(?:に)?(?:行きませんか|行きましょう|行こう(?:よ)?|行きたい)|"
+    r"ホテル.{0,10}(?:泊まり|泊まって|泊まりませんか|泊まろう).{0,8}"
+    r"(?:会おう|会い|過ご|デート)|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|客室|個室|スイートルーム|スイート|ルーム)(?:を.{0,8}待ち合わせ場所に|"
+    r"(?:で|に|へ)?(?:集合|待ち合わせ|落ち合|合流))|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|客室|個室|スイートルーム|スイート|ルーム)(?:で|に|へ)"
+    r".{0,8}(?:会いませんか|会いましょう|会おう|行きませんか|行きましょう|行こう|"
+    r"飲みませんか|飲みましょう|映画を見ませんか|過ごしませんか|話しませんか|"
+    r"待ち合わせしませんか|待ち合わせしよう|待ち合わせしよ|どう(?:ですか|かな))|"
+    r"ホテル.{0,8}(?:ラウンジ|客室|部屋)に(?:行きませんか|行きましょう|行こう)|"
+    r"(?:家飲み|うち飲み|宅飲み)(?:しませんか|しない(?:？|\?)|しよ(?:う)?|しようよ)|"
+    r"(?:宅飲み)(?:しませんか|しよう(?:よ)?|しない(?:？|\?)|しよ(?:う)?|どう(?:ですか|かな|[？?]))|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|客室|個室|"
+    r"スイートルーム|スイート|ルーム)(?:に|で|へ|の中で|の中に|のバーで)?"
+    r".{0,36}(?:泊まろ|泊まっていく|お泊まり(?:しない|しませんか|しよう)|"
+    r"映画でも?見ませんか|映画見ない(?:？|\?|$)|料理しませんか|"
+    r"ご飯食べよ|ご飯食べない(?:？|\?|$)|食べよ|飲も(?:う)?|飲まない(?:？|\?|$)|"
+    r"ゆっくりしよう|休もう|休まない(?:？|\?)|過ごそう|"
+    r"寄っていかない|寄っていこう|寄ってよ|寄らない(?:？|\?|$)|"
+    r"行きませんか|行きましょう|行こう|行かない(?:？|\?|$)|"
+    r"会いませんか|会いましょう|会おう|会わない(?:？|\?)|"
+    r"見ませんか|食べませんか|飲みませんか|しませんか|しよう(?:よ)?|よう(?:よ)?|"
+    r"しない(?:？|\?|$)|どう(?:ですか|かな|[？?]))|"
+    r"(?:民泊|貸別荘|ゲストハウス|レンタルルーム|旅館)(?:で|に|へ)"
+    r".{0,36}(?:泊まろ|泊まって|会いませんか|会いましょう|会おう|行こう|"
+    r"行きましょう|過ごそう|休もう|どう(?:ですか|かな|[？?]))|"
+    r"(?:泊まっていく|泊まっていかない|泊まろ(?:う)?|お泊まり(?:しない|しませんか|しよう))"
+    r"(?:[？?！!。]|$)"
 )
 _TAPPLE_CONTACT_EXCHANGE_RE = re.compile(
     r"(?:LINE|ライン|連絡先|電話番号|メールアドレス|メアド|SNS|インスタ|Instagram|"
@@ -174,6 +359,14 @@ def _is_tapple_contact_exchange_request(text: str) -> bool:
         _TAPPLE_CONTACT_EXCHANGE_RE.search(text)
         and _TAPPLE_CONTACT_EXCHANGE_ACTION_RE.search(text)
     )
+
+
+def _is_tapple_private_place_proposal(text: str) -> bool:
+    text_without_negated_mentions = _TAPPLE_NEGATED_PRIVATE_PLACE_RE.sub(" ", text)
+    text_without_contextual_public_places = _TAPPLE_SAFE_PRIVATE_REFERENCE_RE.sub(
+        " ", text_without_negated_mentions
+    )
+    return bool(_TAPPLE_PRIVATE_PLACE_PROPOSAL_RE.search(text_without_contextual_public_places))
 
 
 def _parse_tapple_strategy(
@@ -204,7 +397,7 @@ def _parse_tapple_strategy(
         return None
 
     last_contact = contact_messages[-1]
-    decline_match = _TAPPLE_DECLINE_RE.search(last_contact)
+    decline_match = _unqualified_tapple_decline_match(last_contact)
     if decline_match:
         return TappleStrategy(
             action="stop",
@@ -231,7 +424,7 @@ def _parse_tapple_strategy(
         safe_example = proposed.invite_example
         if safe_example and (
             not _TAPPLE_PUBLIC_PLACE_RE.search(safe_example)
-            or _TAPPLE_PRIVATE_PLACE_RE.search(safe_example)
+            or _is_tapple_private_place_proposal(safe_example)
             or _TAPPLE_CONTACT_EXCHANGE_RE.search(safe_example)
         ):
             safe_example = None
@@ -1296,18 +1489,95 @@ def validate_candidate_replies(
             violations.append(f"案{i}が空文字です。")
 
     if strategy_mode == "tapple":
+        counterpart_text = counterpart_message or ""
+        has_unqualified_decline = bool(
+            _has_unqualified_tapple_decline(counterpart_text)
+        )
+        counterproposal_match = _TAPPLE_COUNTERPROPOSAL_RE.search(counterpart_text)
+        reported_third_party_text = re.split(
+            r"(?:って|と)(?:言って|聞いて|言われ)", counterpart_text, maxsplit=1
+        )[0]
+        third_party_counterproposal = _TAPPLE_THIRD_PARTY_COUNTERPROPOSAL_RE.search(
+            reported_third_party_text
+        )
+        first_person_counterproposal = _TAPPLE_FIRST_PERSON_COUNTERPROPOSAL_RE.search(
+            counterpart_text
+        )
+        later_date_unavailability = bool(
+            counterproposal_match
+            and any(
+                unavailable.start() >= counterproposal_match.end()
+                for unavailable in _TAPPLE_DATE_UNAVAILABILITY_RE.finditer(counterpart_text)
+            )
+        )
+        has_counterproposal = bool(
+            counterproposal_match
+            and not later_date_unavailability
+        )
+        has_date_unavailability = bool(
+            _TAPPLE_DATE_UNAVAILABILITY_RE.search(counterpart_text)
+        )
+        accepted_invitation_allows_scheduling = bool(
+            _TAPPLE_ACCEPTED_INVITATION_RE.search(counterpart_text)
+            and not _TAPPLE_INVITE_HEDGE_RE.search(counterpart_text)
+            and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(counterpart_text)
+            and not has_date_unavailability
+        )
         for i, rep in enumerate(replies, start=1):
+            self_proposed_date = (
+                first_person_counterproposal.group("date")
+                if first_person_counterproposal
+                else None
+            )
+            if self_proposed_date:
+                self_proposed_date = self_proposed_date.replace("曜日", "曜").replace(
+                    "別の日", "別日"
+                )
+            reply_uses_self_proposed_date = bool(
+                self_proposed_date and self_proposed_date in rep
+            )
+            scheduling_is_expected = (
+                tapple_action == "continue"
+                and not has_unqualified_decline
+                and (
+                    accepted_invitation_allows_scheduling
+                    or (
+                        has_counterproposal
+                        and (
+                            third_party_counterproposal is None
+                            or reply_uses_self_proposed_date
+                        )
+                    )
+                )
+            )
+            if _is_tapple_private_place_proposal(rep):
+                violations.append(
+                    f"案{i}に自宅・ホテル・個室などで会う提案があります。"
+                    "初回の待ち合わせは人目のある公共の場所にしてください。"
+                )
+            if _TAPPLE_DISRESPECTFUL_REPLY_RE.search(rep):
+                violations.append(
+                    f"案{i}に相手を侮辱する表現があります。断りには敬意を保って返してください。"
+                )
             if _is_tapple_contact_exchange_request(rep):
                 violations.append(
                     f"案{i}に外部連絡先の交換や移動を促す表現があります。"
                     "連絡先交換を提案せず、タップル上で会話を続ける文面にしてください。"
                 )
-            if (
-                _TAPPLE_REINVITATION_RE.search(rep)
-                and (
-                    tapple_action != "invite"
-                    or _TAPPLE_DECLINE_RE.search(counterpart_message or "")
+            has_reinvitation = bool(_TAPPLE_REINVITATION_RE.search(rep))
+            has_scheduling_proposal = bool(_TAPPLE_SCHEDULING_PROPOSAL_RE.search(rep))
+            if has_reinvitation and not (
+                (tapple_action == "invite" and not has_unqualified_decline)
+                or scheduling_is_expected
+            ):
+                violations.append(
+                    f"案{i}に、会う誘いを返信文へ混ぜています。"
+                    "誘い方は返信候補ではなく戦略欄で提案してください。"
+                    "相手が断っている場合は、誘い直しや説得をせずに返してください。"
                 )
+            elif has_scheduling_proposal and not (
+                (tapple_action == "invite" and not has_unqualified_decline)
+                or scheduling_is_expected
             ):
                 violations.append(
                     f"案{i}に、会う誘いを返信文へ混ぜています。"

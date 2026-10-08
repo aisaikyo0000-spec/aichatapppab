@@ -3,18 +3,18 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Tapple Iteration 5、backend 1,084件を確認
+最終更新: 2026-10-09 / quota fallback修正、backend 1,084件を確認
 
 ---
 
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（最新コードcommitは`bec4388`。現在の意思と過去の拒否を節ごとに判定）
+- 作業ブランチ: `codex/chat-quality-20261008`（ローカル最新コードcommitは`6b68dcc`。予備アカウント使用時に、疎通確認で制限済みと分かった主アカウントへ戻らない）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。現HEAD `bec4388`でbackendは**1,084 passed / 2 warnings**、Tapple専用は**519 passed**、quota/fallback関連は**45 passed**。frontend production build、Python compileall、`git diff --check`はPASS。最新差分の独立code reviewerと安全ReviewerはともにPASS
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。現HEAD `6b68dcc`でbackendは**1,084 passed / 2 warnings**、Tapple専用は**519 passed**、quota/fallback関連は**45 passed**。frontend production build、Python compileall、`git diff --check`はPASS。quota切替の独立code reviewerと安全ReviewerはともにPASS
 - Geminiの利用経路は主3.5→主3.1→予備3.5→予備3.1。rate limit時だけ次の経路へ進む。今回、70ケース・Contact・Tappleの成果物に`successful_route: {account, model}`を記録し、APIキーを含めないことを回帰テストで確認した。実APIは呼び出していない
-- 最新コードcommitは`bec4388`。進捗資料とWIPコードをfork作業branchへpushし、remote SHA一致を確認済み。PR #1はOpenで未マージ、mainには未反映
+- 直近の公開済みcommitは`c9501ef`。ローカル最新コード`6b68dcc`と本資料は未push。PR #1はOpenで未マージ、mainには未反映
 - 次の作業: 利用者の確認後に実API疎通を行い、70ケース、Contact Bench、Tapple全11シナリオの実生成と全文レビューをする。全条件が揃うまでStep 18-R4を合格としない
 
 今回のPair testでは、二つの実ベンチ会話に同じ`invite`提案を渡す。温かい相互会話では`invite`を維持し、反応が薄い履歴ではstrategy parserが`wait`へ調整することを確認する。従来のシナリオ設定だけを見るテストを補う。
@@ -24,8 +24,14 @@
 - 独立レビューで、現在の明確な「会いたい」が過去の難しさより先に書かれると、過去の拒否を現在の拒否・迷いとして扱う問題を見つけた。修正後は両方の文順で招待判断を保ち、過去の拒否より後に新しい明確な拒否が続く場合は、その現在の拒否だけを有効にする
 - 友人・第三者の発言を引用した文章が本人の意思として扱われない回帰テストも追加した。旧実装の誤判定を示すテストを先に追加し、現在の拒否・引用文・両順序の意思表現を含むテストで修正後の挙動を確認した
 - 現HEAD `bec4388`のTapple専用テストは**519 passed**、backend全体は**1,084 passed / 2 warnings**、主・予備のモデル切替関連テストは**45 passed**。frontend production build、Python compileall、`git diff --check`もPASS。新しい独立code reviewerとTapple safety reviewerはともに**PASS**
-- Gemini APIは呼び出していない。実際の疎通、最新70ケース、Contact Benchの全9返信、Tapple全11シナリオの生成と返信全文レビューは未実施。よってStep 18-R4は未完成で、合格版としてはpushしていない
+- Gemini APIは呼び出していない。実際の疎通、最新70ケース、Contact Benchの全9返信、Tapple全11シナリオの生成と返信全文レビューは未実施。よってStep 18-R4は未完成
 - モデル順序は主アカウント3.5→主3.1→別アカウント3.5→別アカウント3.1。次へ切り替えるのは`rate_limit`時だけ。主側の3.5と3.1が両方制限された場合は、別アカウントへ切り替える。API実呼出し前のテストで順序と非quotaエラー時に停止することを確認した
+
+## 2026-10-09 quota fallbackの経路修正
+
+疎通確認が予備アカウントで成功した場合、後続ベンチの設定が主アカウントへ戻る問題を修正した。主3.5・主3.1が`rate_limit`と確認された後に、quota fallbackが同じ2経路を再試行しないようにした。通常起動時の順序は主3.5 → 主3.1 → 予備3.5 → 予備3.1のまま維持する。
+
+回帰テストを先に追加し、旧動作で失敗することを確認した。RED test commitは`8d7d53a`、修正commitは`6b68dcc`。quota設定18件、キー読込・モデルfallback27件、backend全体**1,084 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。独立code reviewerはPASS。Gemini APIは呼び出していない。ローカル最新commitとこの記録は未pushで、fork branchの公開済みHEADは`c9501ef`。Step 18-R4の実API疎通、最新70ケース、Contact 9返信、Tapple 11シナリオの生成・目視確認は未完了。
 
 ## Step 18-R4 進捗（オフライン受け入れ準備）
 
@@ -41,7 +47,7 @@
 - 独立レビューで検出されたTappleの9件目fixture漏れと不正UTF-8 artifactのtracebackを回帰テストで再現して修正。Tapple・検証器・モデルfallbackのfocused suiteは**373 passed**。全backend suiteは**858 passed / 2 warnings**、frontend build・compileall・`git diff --check`・PowerShell AST parseは**PASS**。新規のread-only Python Reviewerは修正後の差分に**PASS**
 - Tappleの追加レビューでは、句読点なしの質問、間接的な返信要求、相づち後の話題逸脱を見つけた。修正後は、自然な相づち・再開可能な締め方・短い気遣いを許容し、句読点なしの追記も含む無関係な話題を拒否する。focused suiteは**5 passed**。直近の新規read-only Reviewerは**PASS**。全backend suiteは**859 passed / 2 warnings**、frontend build・compileall・CLI `--help`・`git diff --check`も**PASS**
 - アプリ本体のquota切替順はメイン3.5→メイン3.1→予備3.5→予備3.1。次の経路へ進むのはrate limit時だけで、既存テストで4経路と成功時の停止を確認。gemini2.mdを主キー、gemini3.mdを予備キーとして読み込む設定は確認済みだが、APIの有効性は未確認。ユーザーの朝の疎通確認前にAPIは呼び出さない
-- 朝の評価手順で疎通確認が予備アカウントを選んだ場合にも、主キーを後続ベンチへ渡すよう修正した。これで予備3.5・3.1が両方rate limitになった場合、主3.5・3.1へ戻れる。各ベンチに`--active-account`を渡し、artifact上のアカウント名も実際のキーに合わせる。キー順序と表示ラベルのfocused suiteは**13 passed**。全backend suiteは**862 passed / 2 warnings**、frontend build、compileall、CLI `--help`、PowerShell AST parse、`git diff --check`もPASS。新規read-only Python Reviewerは**PASS**。実APIでの切替は未確認
+- 当時の評価手順では、予備アカウントを使い切った後に、すでに制限を確認した主アカウントへ戻る経路が残っていた。この問題は後述の2026-10-09 quota fallback修正で解消した
 - ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。オフライン準備分は独立レビュー後にforkへpushし、SHA一致を確認する
 
 ## Step 18-R4 Iteration 23: Tapple誘い時期と安全懸念の境界
@@ -393,7 +399,7 @@
 - Step 18-R4の過去Reviewer指摘だった「少数の本人Goldを同一相手Silverが上書きする」条件を現HEADで再監査。focused test **36 passed**、Gold優先を確認し、独立Reviewer **PASS**
 - 生成APIエラー後は各ベンチを停止し、部分artifactに実行数・期待数・停止理由を記録して終了コード2を返す。70件目の失敗も`complete: false`になる。RED test commit `e38fe63`、GREEN commit `8f0e78d`、独立Reviewer **PASS**
 
-## Gemini予備アカウント設定の実行環境確認
+## Gemini予備アカウント設定の実行環境確認（2026-10-08時点の履歴）
 
 - 作業環境のGit管理外`.env`に主キー・予備キーのファイル参照を設定。キー本体はコピー・表示していない
 - アプリ設定の読込結果はGemini 3.5 primary、Gemini 3.1 fallback、主・予備キーあり、両キー相違を確認。`test_api_key_file.py`と`test_model_fallback.py`は**25 passed / 2 warnings**
@@ -472,6 +478,8 @@ Write-Output "fork branch verified at $localSha"
 疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 11シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
 
 Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run_status.complete`はA/B/Cの生成完了だけを示す。JSON内の9返信をすべて読み、どの連絡先にも送れる自然な返信になっていること、入力内容に答えて不要な質問や根拠のない事実を足していないこと、相手の語句をそのまま写していないことを確認する。さらにAは手入力Goldに沿って短く砕けた傾向、Bは自然な丁寧さと相対的に十分な文量、Cは中間の文量と丁寧・砕けた表現の混在が返信群に表れることを確認する。固定文字数やsignatureの差だけでは合格にせず、3者の実際の返信群すべてが条件を満たす場合だけ3/3とする。
+
+この手順は現行の朝の実行手順です。疎通確認が予備アカウントで成功した場合、後続評価では予備側の残りのモデルだけを使い、主アカウントへ戻りません。主3.5と主3.1を疎通確認ですでに`rate_limit`と確認しているためです。モデルを進める条件は引き続き`rate_limit`だけです。
 
 ## Gemini主キーのファイル読込
 

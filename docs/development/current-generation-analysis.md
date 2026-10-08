@@ -2096,3 +2096,11 @@ API依存の完了条件は未達。朝の利用者確認後に単発疎通を�
 現HEAD `bec4388`でTapple専用テストは**519 passed**、backend全体は**1,084 passed / 2 warnings**、モデル・アカウント切替関連は**45 passed**。frontend production build、Python `compileall`、`git diff --check`もPASS。最終差分を確認した新しいcode reviewerと独立Tapple safety reviewerはともに**PASS**。
 
 APIは呼び出していないため、実際のquota応答と生成品質は未確認である。実行時・評価時の経路順序はprimary 3.5 → primary 3.1 → secondary 3.5 → secondary 3.1で、`rate_limit`時のみ次へ進む。最新70ケース、Contact Bench全9返信、Tapple全11シナリオと生成文の目視レビューが残るため、Step 18-R4は未完成。最新コードと資料はfork作業branchへpushし、remote SHA一致を確認した。GitHub mainは基点`a75ba76`のまま。
+
+## 2026-10-09 quota fallbackで制限済みアカウントへ戻らない修正
+
+朝の疎通確認が予備アカウントで成功すると、評価ベンチが疎通確認で制限済みと判定した主3.5・主3.1を再試行する経路が残っていた。予備アカウントをactiveとして開始する場合は、予備側の残りのモデルだけを設定し、主アカウントへ戻らないよう修正した。通常起動時の主3.5 → 主3.1 → 予備3.5 → 予備3.1という順序、rate limit時だけ進む条件、主アカウントから評価を始める場合のfallbackは維持した。
+
+まず旧動作で失敗する回帰テストを追加し、RED test commit `8d7d53a`を作成した。実装修正commitは`6b68dcc`。focused suiteはbenchmark config **18 passed**、APIキー・model fallback **27 passed**。`python -m pytest backend/tests -q`は**1,084 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。新しいread-only code reviewerもPASSと判定した。
+
+Gemini APIは呼び出していない。最新70ケース、Contact Bench全9返信、Tapple全11シナリオの実生成と目視確認は未実施で、Step 18-R4は未完成。修正コードと資料はローカルにあり、forkの公開済みHEADは`c9501ef`。API疎通確認は利用者が再開を指示するまで行わない。

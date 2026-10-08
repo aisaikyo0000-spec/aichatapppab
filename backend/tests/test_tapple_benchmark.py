@@ -40,5 +40,5 @@ def test_tapple_benchmark_keeps_incomplete_run_distinct_from_quality_failure():
 
     assert summary["quality_pass"] is False
     assert summary["expectations_met"] == 1
-    assert summary["expectation_failures"] == ["missing scenario"]
+    assert summary["expectation_failures"] == ["ambiguous_interest", "decline"]
     assert summary["exit_code"] == 2

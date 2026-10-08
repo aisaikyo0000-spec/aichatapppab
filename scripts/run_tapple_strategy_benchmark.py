@@ -53,13 +53,38 @@ def expectation_met(scenario: dict, action: str | None) -> bool:
     return bool(action) and action in scenario.get("allowed_actions", [])
 
 
+def summarize_expectations(results: list[dict], *, complete: bool) -> dict:
+    expected_ids = [scenario["id"] for scenario in SCENARIOS]
+    results_by_id = {result.get("id"): result for result in results}
+    failures = [
+        scenario_id
+        for scenario_id in expected_ids
+        if results_by_id.get(scenario_id, {}).get("expectation_met") is not True
+    ]
+    expectations_met = len(expected_ids) - len(failures)
+    quality_pass = (
+        complete
+        and len(results) == len(expected_ids)
+        and set(results_by_id) == set(expected_ids)
+        and not failures
+    )
+    exit_code = 0 if quality_pass else 2 if not complete else 3
+    return {
+        "expectations_met": expectations_met,
+        "expectation_total": len(expected_ids),
+        "expectation_failures": failures,
+        "quality_pass": quality_pass,
+        "exit_code": exit_code,
+    }
+
+
 def _write_artifact(path: Path, results: list[dict], *, complete: bool) -> None:
-    passed = sum(1 for result in results if result.get("expectation_met") is True)
     run_state = benchmark_run_state(results, len(SCENARIOS))
+    effective_complete = complete and run_state["complete"]
     summary = {
         **run_state,
-        "complete": complete and run_state["complete"],
-        "expectations_met": passed,
+        "complete": effective_complete,
+        **summarize_expectations(results, complete=effective_complete),
         "errors": sum(1 for result in results if "error" in result),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,7 +194,7 @@ def main() -> int:
     summary = json.loads(out_path.read_text(encoding="utf-8"))["summary"]
     print(f"Wrote {out_path}")
     print(json.dumps(summary, ensure_ascii=False))
-    return 0 if complete else 2
+    return summary["exit_code"]
 
 
 if __name__ == "__main__":

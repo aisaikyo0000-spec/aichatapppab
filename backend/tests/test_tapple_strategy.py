@@ -2562,6 +2562,29 @@ def test_denied_first_meeting_wary_concern_does_not_block_invite(statement):
     assert result.invite_example is not None
 
 
+def test_explicit_denial_of_meeting_resistance_does_not_block_invite():
+    for statement in (
+        "初対面に抵抗はありません。ぜひ一緒に行きたいです。",
+        "会うことに抵抗はないです。ぜひ一緒に行きたいです。",
+        "会うのは緊張しません。ぜひ一緒に行きたいです。",
+        "直接会うのは緊張しないです。ぜひ一緒に行きたいです。",
+    ):
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたい"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
+
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+        assert result is not None, statement
+        assert result.action == "invite", statement
+        assert result.invite_example is not None, statement
+
+
 def test_unrelated_fear_does_not_block_invite():
     for statement in (
         "ぜひ一緒に行きたいです。怖い映画が好きです。",
@@ -2596,6 +2619,8 @@ def test_unrelated_concerns_do_not_block_invite():
     for statement in (
         "会うのは楽しみですが、母の体調が心配です。ぜひ一緒に行きたいです。",
         "会うのは楽しみだけど、明日の予定が不安です。ぜひ一緒に行きたいです。",
+        "会う日は雨が心配です。ぜひ一緒に行きたいです。",
+        "デートの日程が心配です。ぜひ一緒に行きたいです。",
     ):
         raw = _raw_strategy(
             {

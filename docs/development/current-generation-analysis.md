@@ -1998,3 +1998,9 @@ Tapple戦略ベンチでは、記号だけ・短すぎる根拠、招待方針�
 相手別Goldを除いたGold profileを基準値にしてから、対象相手のGoldを既存weightで混ぜるようにした。他相手Goldがなければ唯一のGold profileを維持する。修正前の再現テストは失敗し、修正後はContact Adaptation suite **27 passed**、backend全体 **697 passed / 2 warnings**、frontend production build **PASS**。独立Python Reviewerは**PASS**。quota時の主3.5→主3.1→予備3.5→予備3.1のfallback suiteは**29 passed**。
 
 Gemini APIはまだ呼び出していない。最新70ケース、Contact Bench 3/3、Tappleの実生成文レビューも未実施のため、Step 18-R4は未完成・未push。再現テストcommitは`32a4e9d`、修正commitは`0ab254d`。資料更新を含むWIPは未push。
+
+## 朝のContact Bench判定基準
+
+Contact BenchのCLIは、A/B/Cの生成完了だけを返し、品質の3/3判定は行わない。`contact.json`の全9返信を読み、各返信が同じ入力「仕事で疲れた」に沿い、実際に送れる自然さであることを確認する。根拠のない事実や不要な質問がなく、相手の文面をコピーしていないことも確認する。
+
+Aの返信群はGoldに沿った短く砕けた傾向、Bは自然な丁寧さと相対的に十分な文量、Cは中間の文量と丁寧・砕けた表現の混在を示す必要がある。文字数やtone signatureの違いだけでは合格にせず、文脈・自然さ・本人Goldとの適合を含めてA/B/Cすべてが条件を満たした場合だけ3/3とする。いずれかが満たさない場合は不合格の返信を記録し、Tapple実生成へ進まない。

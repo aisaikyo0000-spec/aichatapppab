@@ -382,7 +382,8 @@ if ($LASTEXITCODE -ne 0) { throw '70件の網羅性、artifact指標、6つの�
 if ((Read-Host '返信実例も確認し、不自然さや文脈ずれがなければPASS') -cne 'PASS') { throw '実例の品質を確認できないためContact Benchを止めます。' }
 python scripts/run_contact_benchmark.py --out $contactOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
 if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。artifact: $contactOut" }
-if ((Read-Host 'contact.jsonの実生成を確認し、Contact Bench 3/3ならPASS') -cne 'PASS') { throw 'Contact Benchが3/3でないためTapple評価を止めます。' }
+Get-Content -Raw $contactOut
+if ((Read-Host '全9返信を読み、A/B/Cの文体差と文脈・自然さ・非コピー基準をすべて満たせばPASS') -cne 'PASS') { throw 'Contact Benchの品質基準が3/3に達していないためTapple評価を止めます。' }
 python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
 if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が3/3でないか実行未完了です。artifact: $tappleOut" }
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
@@ -399,6 +400,8 @@ if ((Read-Host '最終diffを独立Python ReviewerとTapple safety ReviewerがPA
 ```
 
 疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 3ケースと返信全文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
+
+Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run_status.complete`はA/B/Cの生成完了だけを示す。JSON内の9返信をすべて読み、どの連絡先にも送れる自然な返信になっていること、入力内容に答えて不要な質問や根拠のない事実を足していないこと、相手の語句をそのまま写していないことを確認する。さらにAは手入力Goldに沿って短く砕けた傾向、Bは自然な丁寧さと相対的に十分な文量、Cは中間の文量と丁寧・砕けた表現の混在が返信群に表れることを確認する。固定文字数やsignatureの差だけでは合格にせず、3者の実際の返信群すべてが条件を満たす場合だけ3/3とする。
 
 ## Gemini主キーのファイル読込
 

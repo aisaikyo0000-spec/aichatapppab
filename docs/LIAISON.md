@@ -3,17 +3,17 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-08 / Step 18-R4 Iteration 5 の検証結果を追記
+最終更新: 2026-10-09 / Step 18-R4 Iteration 22 の検証結果を追記
 
 ---
 
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（fork上、最新製品コードSHA: `98e07b1912fa1f7a8380c61ee3efe404f01cc156`）
+- 作業ブランチ: `codex/chat-quality-20261008`（fork上。最新commitは`5cdc764`、今回の実装修正・資料更新は未commit）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4 Iteration 5。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`、作業ブランチHEADは `150be155129a761d85a1ed4cfdabbf0e4158523b`。検証済みの未コミット変更あり
-- 次の作業: Iteration 5のfresh Reviewer判定、指摘修正。Human/Conversation未達のため合格・pushとはしない
+- 進行状況: Step 18-R4 Iteration 22。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tapple境界修正と独立レビューはPASS。全体テスト・資料更新後にforkへWIPを公開する
+- 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を再開可能な時間帯に行う。完了条件がそろうまでStep 18-R4は合格としない
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）
 
@@ -441,3 +441,17 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - 独立Reviewerが指摘した評価器差分をHEADと照合し、今回の作業差分から除去した。第三者の代替日と本人自身が提案した日程を区別し、返信側で本人の提案日を確認してから予定調整を許す。また「土曜は予定があって、日曜なら大丈夫」のような自然な代替日提案を拒否扱いしない。Tapple focused suite **190 passed**、全backend suite **696 passed / 2 warnings**、fallback focused suite **29 passed**。frontend production build、compileall、各benchmark `--help`、`git diff --check` **PASS**
 - この最終差分に対するfresh Python ReviewerとTapple safety reviewerは**PASS**。評価器スクリプトとthresholdに差分がないことも確認。朝の疎通・全ゲート手順も独立Reviewer **PASS**
 - APIは呼び出していない。実際のquota判定、最新70ケース、Contact Bench、Tapple生成文の確認は未実施。よってStep 18-R4は未完成で、WIPはpushしていない
+
+## Step 18-R4 Iteration 6: Tappleの安全懸念と意思判定（2026-10-09）
+
+- Tappleの招待判定を独立レビューで検証し、明確な参加意思と安全・信頼への懸念が同時にある場合に招待を保留する。懸念は根拠抜粋ではなく直近の相手発言全体から確認し、「身元が分からない」「相手がどんな人か分からない」「まだ会ったことがなくて不安」「安全かどうか分からない」も対象にした。否定形の「怖くない」「心配していない」は懸念と誤認しない
+- 一般的な保留表現は、明確な参加意思を示す根拠抜粋に適用する。参加意思と無関係な仕事の逆接や仕事上の悩みは招待を妨げない。前後を問わず明示的な迷い・対面への抵抗・会う前にメッセージを続けたい希望があれば招待・日程調整を保留する。天気への心配は、安全上の懸念として扱わず、懸念を否定しきれていない二重否定は安全確認済みとみなさない
+- 独立Python reviewで、文頭に「正直／私は」が付く迷いの見逃しと、「不安を感じていない」という否定の誤検出を直した。追加レビューで日程候補について迷う文面の誤検出が見つかり、日程の話題が会うこと自体への迷いに波及しない回帰テストと判定を追加した。Tapple strategy **223 passed**。主3.5→主3.1→予備アカウント3.5→予備3.1の切替・APIキー疎通mockテスト **26 passed**。backend全体suiteを最新差分で再実行中。frontend production build、対象Python `compileall`、`git diff --check` はPASS。Iteration 21の独立ReviewerとPython Reviewerが確認中
+- Gemini APIは未呼び出し。実際の70ケース、Contact Bench、Tapple実生成文の目視確認は残っており、Step 18-R4は未完成。GitHub main基点 `a75ba76` は変更していない
+
+## Step 18-R4 Iteration 22: Tappleの迷い・安全文脈の境界回帰（2026-10-09）
+
+- 独立レビューで見つかった口語の「迷う／悩んでる」の見逃し、仕事・資格・転職先など会うことと無関係な悩みの誤ブロック、仕事帰り・会社近くのデート安全懸念の誤除外を修正した。会うこと自体の迷いと安全懸念は、同じ文に仕事の話があっても招待・日程調整を保留する
+- Tapple strategy **299 passed**、backend全体 **828 passed / 2 warnings**。主3.5→主3.1→予備3.5→予備3.1のAPIキー・quota fallback mock tests **26 passed**。frontend production build、Python compile、`git diff --check` はPASS
+- 最新差分への独立code reviewerとPython reviewerはともに **PASS**。実Gemini APIは未呼び出し。最新70ケース、Contact Bench、Tapple実生成文のレビューは未完了
+- main基点 `a75ba76` は変更していない。検証完了後、forkの作業branchへWIPをfast-forward pushする予定。Step 18-R4は未完成

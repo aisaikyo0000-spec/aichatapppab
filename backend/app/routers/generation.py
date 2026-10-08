@@ -236,8 +236,195 @@ _TAPPLE_INVITE_POSITIVE_RE = re.compile(
 )
 _TAPPLE_INVITE_HEDGE_RE = re.compile(
     r"(?:たら|れば|かも|かな|いつか|できたら|できれば|行けたら|会えたら|"
-    r"行けない|会えない|難し|無理|今は|まだ|けど|けれど)"
+    r"行けない|会えない|難し|無理|今は|"
+    r"まだ.{0,8}(?:難し|無理|会え|行け|迷|悩|考え|早い|未定|分から|わから|決められ|決めかね|不安|抵抗))"
 )
+_TAPPLE_EXPLICIT_HESITATION_RE = re.compile(
+    r"^\s*(?:(?:正直|実は|私は|私も|本当は|ぶっちゃけ)(?:、|,)?.{0,8})?"
+    r"(?:(?:まだ|少し|ちょっと).{0,8})?"
+    r"(?:迷って|悩んで|考えさせて|決めかね).{0,20}"
+    r"(?:一緒に行き|行きたい|会いたい|会いましょう|デート|会う)|"
+    r"(?:会う|デート|会いたい|一緒に行く)"
+    r"(?!日(?:程|時|取り|を|で|が|の|に|は|なら)|曜日|候補日|場所|店|"
+    r"か.{0,4}(?:どこ|場所|店)|何を着|何を話|服装|話題|天気)"
+    r"(?:かどうか|べきか|こと自体|ことに|ことを|のを|のは|か).{0,8}"
+    r"(?:迷って|迷い|悩んで|悩み|考え|決め)|"
+    r"(?:一緒に行き|行きたい|会いたい|会いましょう|デート|会う)"
+    r"(?!日(?:程|時|取り|を|で|が|の|に|は|なら)|曜日|候補日|場所|店|"
+    r"か.{0,4}(?:どこ|場所|店)|何を着|何を話|服装|話題|天気).{0,12}"
+    r"(?:けど|けれど|でも|ものの|ですが|だが|が、|が,)、?"
+    r"(?:(?:少し|ちょっと|まだ).{0,2})?"
+    r"(?:迷って|迷い|悩んで|悩み|考えさせて|考えたい|決めかね)"
+)
+_TAPPLE_LOGISTICS_HESITATION_RE = re.compile(
+    r"(?:会う日|日程|候補|曜日|どこで会う|会う場所|場所|お店|店|"
+    r"何を着|何着|服装|何を話|話題)"
+    r"[^。.!！?？\n]{0,8}(?:迷って|迷い|悩んで|悩み|考え)"
+)
+_TAPPLE_LATER_HESITATION_RE = re.compile(
+    r"(?:(?:正直|実は|私は|私も|本当は|ぶっちゃけ|でも|それでも|まだ|少し|ちょっと)"
+    r".{0,8})?(?:迷って|迷い|迷う|悩んで|悩み|悩む|考えさせて|決めかね)"
+)
+_TAPPLE_HESITATION_QUALIFIED_NEGATION_RE = re.compile(
+    r"(?:迷って|悩んで)(?:い)?(?:は|が)?(?:い)?(?:ません|ないです|ない|おりません)"
+    r"(?:とは言え|とは言い切れ|とは限ら|わけでは|わけじゃ|かもしれ)"
+)
+_TAPPLE_HESITATION_NEGATION_RE = re.compile(
+    r"(?:迷って|悩んで)(?:い)?(?:は|が|と)?(?:い)?"
+    r"(?:ません|ないです|ない|おりません)|"
+    r"(?:は|が)?(?:迷い|悩み)(?:ません|ありません|ないです|ない|ございません)|"
+    r"(?:迷い|悩み)(?:は|が)?(?:ありません|ないです|ない|ございません)|"
+    r"(?:迷って|悩んで)いるとは言えません"
+)
+_TAPPLE_DIRECT_MEETING_HESITATION_RE = re.compile(
+    r"(?<!どこで)(?:会う|会うこと|会うの)(?!日(?:程|時|取り|を|で|が|の|に|は|なら)|"
+    r"場所|曜日|候補日|前に何を話)[^、,。.!！?？\n]{0,12}"
+    r"(?:迷って|迷い|迷う|悩んで|悩み|悩む|ためら)|"
+    r"(?:会いたい|一緒に行きたい).{0,8}"
+    r"(?:けど|けれど|でも|ものの|ですが|だが|が、|が,)、?"
+    r"(?:(?:少し|ちょっと|まだ).{0,2})?"
+    r"(?:迷って|迷い|迷う|悩んで|悩み|悩む|考えさせて|決めかね)"
+)
+_TAPPLE_UNRELATED_HESITATION_TOPIC_RE = re.compile(
+    r"(?:仕事|家族|友達|友人|同僚|職場|会社|勉強|転職先|転職|資格|進路|就職|"
+    r"引っ越し|引越し|将来|健康|天気)"
+    r"(?:が|は|も|に|を|のこと(?:で|を|に|が)?|について|に関して|で|から)"
+    r"(?:(?!会う|会える|デート|対面|直接)[^。.!！?？\n、,，]){0,18}"
+    r"(?:迷って|迷い|迷う|悩んで|悩み|悩む|考え)"
+)
+_TAPPLE_UNRELATED_SAFETY_TOPIC_RE = re.compile(
+    r"(?:仕事|職場|会社|家庭|家族|勉強|転職)"
+    r"(?:の|に関する|について(?:は|の|が|も)?|からの)?$"
+)
+_TAPPLE_SAFETY_CONTEXT_RE = re.compile(
+    r"(?:会う|会える|デート|対面|直接|安全|信頼|信用|身元|素性)"
+)
+_TAPPLE_UNRELATED_SAFETY_CLAUSE_RE = re.compile(
+    r"(?:仕事|職場|会社|現場|工場)"
+    r"(?:(?!会う|会える|デート|対面|直接)[^。.!！?？\n、,，]){0,20}"
+    r"(?:安全|不安|心配|怖|こわ|恐)"
+)
+_TAPPLE_DECISION_TIME_REQUEST_RE = re.compile(
+    r"(?:考える|考えさせて|決める|判断する).{0,8}(?:時間|猶予).{0,8}"
+    r"(?:ほしい|ください|もらえ|いただけ|もらってもいい|いただいてもいい|"
+    r"もらってもよい|いただいてもよい)|"
+    r"(?:決める|判断する)前に.{0,8}(?:時間|猶予).{0,8}(?:ほしい|ください|もらえ|いただけ)|"
+    r"(?:考えてから|考えた上で).{0,8}(?:返事|返信|回答).{0,8}(?:したい|させて)|"
+    r"(?:少し|もう少し|ちょっと)?考えたい(?:です)?|"
+    r"(?:返事|返信|回答).{0,8}(?:時間|猶予).{0,8}(?:ほしい|ください|もらえ|いただけ)|"
+    r"(?:返事|返信|回答).{0,12}(?:もう少し|少し)?考えてから.{0,8}(?:したい|させて)|"
+    r"(?:返事|返信).{0,16}待って.{0,8}"
+    r"(?:もらえ|もらってもいい|いただけ|ください|ほしい|ほしいです)|"
+    r"(?:返事|返信|回答).{0,8}(?:明日|明後日|今日の後|あとで|後で|後ほど|後日|来週)"
+    r".{0,8}(?:します|する|しますね|するね|返します|返す|答えます|答える)|"
+    r"(?:明日|明後日|今日の後|あとで|後で|後ほど|後日|来週)"
+    r"(?:まで(?:には|に)?|には|は)?(?:返事|返信|回答).{0,8}"
+    r"(?:します|する|しますね|するね|返します|返す|答えます|答える)|"
+    r"(?:明日|明後日|今日の後|あとで|後で|後ほど|後日|来週)"
+    r"(?:まで(?:には|に)?|には|まで)?待って.{0,8}"
+    r"(?:もらえ|もらってもいい|いただけ|ください|ほしい|ほしいです)"
+)
+_TAPPLE_MEETING_DEFERRAL_RE = re.compile(
+    r"(?:もう少し|もうちょっと|まずは|しばらく).{0,12}"
+    r"(?:メッセージ|やり取り|話).{0,16}(?:してから|続けてから)|"
+    r"(?:会う|会うのは|会うことは|デート).{0,8}(?:まだ早い|早いと思|抵抗|ためら)|"
+    r"(?:先に|まずは).{0,8}(?:メッセージ|やり取り).{0,12}(?:して|続け)"
+)
+_TAPPLE_SAFETY_CONCERN_RE = re.compile(
+    r"(?:会う|会える|デート|直接会う|会いに行く).{0,8}"
+    r"(?:不安|怖|こわ|恐|心配|抵抗|ためら|気が進まない)|"
+    r"(?:会いたい|一緒に行きたい).{0,4}(?:けど|けれど|が|ものの|でも).{0,4}"
+    r"(?:少し|ちょっと|まだ)?(?:不安|怖|こわ|恐|心配|抵抗|ためら)|"
+    r"(?:安全|安全性).{0,12}(?:かどうか|か).{0,12}(?:分から|わから|不明|判断できない)|"
+    r"(?:安全面|安全性|安全).{0,10}(?:不安|心配|怖|こわ|恐)|"
+    r"(?:不安|怖|こわ|恐|心配).{0,20}(?:安全|信頼|信用|身元|素性)|"
+    r"(?:信頼|信用|信じられ).{0,12}(?:できるか|まだ|難し|不安|心配|わから|分から|怖|こわ|恐)|"
+    r"(?:信頼|信用|信じられ)(?:できない|できるか不安)|"
+    r"(?:信じて(?:いい|よい)か|信じても大丈夫か).{0,12}"
+    r"(?:不安|心配|怖|こわ|恐|迷|分から|わから)|"
+    r"(?:安全|信頼|信用|あなた).{0,12}"
+    r"(?:信じきれない|信じ切れない|信じきれません|信じ切れません|信じられない|信じられません)|"
+    r"(?:身元|素性|相手のこと|相手について|相手がどんな人|どんな方|どんな人).{0,18}"
+    r"(?:分から|わから|知ら|不安|心配|怖|こわ|恐)|"
+    r"会ったことが(?:ない|なくて|なかった).{0,10}(?:不安|心配|怖|こわ|恐)"
+)
+_TAPPLE_SAFETY_CONCERN_NEGATION_RE = re.compile(
+    r"(?:不安|怖|こわ|恐|心配)(?:く)?(?:だと)?(?:では|じゃ|とは|は|を)?"
+    r"(?:ありません|ないです|ない|ございません|して(?:い)?ません|して(?:い)?ない(?:です)?|"
+    r"感じて(?:い)?ません|感じて(?:い)?ない(?:です)?)"
+)
+_TAPPLE_SAFETY_CONCERN_QUALIFIED_NEGATION_RE = re.compile(
+    r"(?:不安|怖|こわ|恐|心配)(?:く)?(?:だと)?(?:では|じゃ|とは|は|を)?"
+    r"(?:ありません|ないです|ない|ございません|して(?:い)?ません|して(?:い)?ない(?:です)?|"
+    r"感じて(?:い)?ません|感じて(?:い)?ない(?:です)?)"
+    r"(?:"
+    r"(?:とは|と)(?:言え|いえ|言い切れ|いいきれ)(?:ない|ません)|"
+    r"とは限らない|とは限りません|わけではない|わけじゃない|"
+    r"かも(?:しれない|しれません)|"
+    r"(?:とは|と)?思え(?:ない|ません)|(?:とは|と)?思わ(?:ない|ないです|ないかも)"
+    r")"
+)
+
+
+def _has_tapple_safety_concern(text: str) -> bool:
+    for match in _TAPPLE_SAFETY_CONCERN_QUALIFIED_NEGATION_RE.finditer(text):
+        nearby_context = text[max(0, match.start() - 16) : match.start()]
+        if _TAPPLE_UNRELATED_SAFETY_TOPIC_RE.search(nearby_context) and not (
+            _TAPPLE_SAFETY_CONTEXT_RE.search(nearby_context)
+        ):
+            continue
+        return True
+    without_denied_concerns = _TAPPLE_SAFETY_CONCERN_NEGATION_RE.sub("", text)
+    without_unrelated_safety = _TAPPLE_UNRELATED_SAFETY_CLAUSE_RE.sub(
+        "", without_denied_concerns
+    )
+    return _TAPPLE_SAFETY_CONCERN_RE.search(without_unrelated_safety) is not None
+
+
+def _has_tapple_explicit_hesitation(text: str) -> bool:
+    text_without_unrelated_hesitation = _TAPPLE_UNRELATED_HESITATION_TOPIC_RE.sub("", text)
+    if _TAPPLE_HESITATION_QUALIFIED_NEGATION_RE.search(text_without_unrelated_hesitation):
+        return True
+
+    text_without_denied_hesitation = _TAPPLE_HESITATION_NEGATION_RE.sub(
+        "", text_without_unrelated_hesitation
+    )
+    if _TAPPLE_DIRECT_MEETING_HESITATION_RE.search(text_without_denied_hesitation):
+        return True
+
+    accepted = _TAPPLE_ACCEPTED_INVITATION_RE.search(text_without_denied_hesitation)
+    text_without_logistics_hesitation = _TAPPLE_LOGISTICS_HESITATION_RE.sub(
+        "", text_without_denied_hesitation
+    )
+    sentences = re.split(r"[。.!！?？\n]+", text_without_logistics_hesitation)
+    accepted_sentence_index = next(
+        (
+            index
+            for index, sentence in enumerate(sentences)
+            if _TAPPLE_ACCEPTED_INVITATION_RE.search(sentence)
+        ),
+        None,
+    )
+    standalone_hesitation = accepted_sentence_index is not None and any(
+        _TAPPLE_LATER_HESITATION_RE.search(sentence)
+        and not _TAPPLE_UNRELATED_HESITATION_TOPIC_RE.search(sentence)
+        for sentence in sentences
+    )
+    return (
+        _TAPPLE_EXPLICIT_HESITATION_RE.search(text_without_logistics_hesitation) is not None
+        or standalone_hesitation
+        or bool(
+            accepted
+            and _TAPPLE_DECISION_TIME_REQUEST_RE.search(text_without_denied_hesitation)
+        )
+        or _TAPPLE_MEETING_DEFERRAL_RE.search(text_without_logistics_hesitation)
+        is not None
+    )
+
+
+def _has_tapple_post_acceptance_hedge(text: str) -> bool:
+    accepted = _TAPPLE_ACCEPTED_INVITATION_RE.search(text)
+    return bool(accepted and _TAPPLE_INVITE_HEDGE_RE.search(text[accepted.end() :]))
 _TAPPLE_THIRD_PARTY_INTEREST_RE = re.compile(
     r"(?:友達|友人|同僚|家族|知人|別の人|他の人|ほかの人|彼氏|彼女).{0,40}"
     r"(?:一緒に.{0,8}(?:行きたい|行こう|会いたい|会おう)|誘って(?:ください|ね)|会いましょう)|"
@@ -411,6 +598,8 @@ def _parse_tapple_strategy(
             evidence in last_contact
             and _TAPPLE_INVITE_POSITIVE_RE.search(evidence)
             and not _TAPPLE_INVITE_HEDGE_RE.search(evidence)
+            and not _has_tapple_explicit_hesitation(last_contact)
+            and not _has_tapple_safety_concern(last_contact)
             and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(last_contact)
             for evidence in exact_evidence
         )
@@ -1513,13 +1702,17 @@ def validate_candidate_replies(
         has_counterproposal = bool(
             counterproposal_match
             and not later_date_unavailability
+            and not _has_tapple_explicit_hesitation(counterpart_text)
+            and not _has_tapple_safety_concern(counterpart_text)
         )
         has_date_unavailability = bool(
             _TAPPLE_DATE_UNAVAILABILITY_RE.search(counterpart_text)
         )
         accepted_invitation_allows_scheduling = bool(
             _TAPPLE_ACCEPTED_INVITATION_RE.search(counterpart_text)
-            and not _TAPPLE_INVITE_HEDGE_RE.search(counterpart_text)
+            and not _has_tapple_post_acceptance_hedge(counterpart_text)
+            and not _has_tapple_explicit_hesitation(counterpart_text)
+            and not _has_tapple_safety_concern(counterpart_text)
             and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(counterpart_text)
             and not has_date_unavailability
         )

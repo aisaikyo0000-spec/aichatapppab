@@ -280,6 +280,11 @@ _TAPPLE_PAST_MEETING_REAFFIRMATION_RE = re.compile(
     r".{0,16}(?:今度|次回|改めて).{0,8}"
     r"(?:会いたい|会え(?:ます|る)|一緒に行きたい)"
 )
+_TAPPLE_HISTORICAL_DECLINE_CONTEXT_RE = re.compile(
+    r"(?:前は|以前は|昔は|かつて|前回は|以前).{0,24}"
+    r"(?:と思ってい(?:ました|た)|と考えてい(?:ました|た)|"
+    r"難しかった|厳しかった|無理だった)"
+)
 
 
 def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
@@ -318,6 +323,9 @@ def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
         and not _has_reaffirmed_tapple_intent_after_decline(
             text, decline, quoted_declines
         )
+        and not _has_current_tapple_intent_before_historical_decline(
+            text, decline, quoted_declines
+        )
         and not _has_linked_tapple_counterproposal(text, decline)
     ]
 
@@ -339,6 +347,34 @@ def _has_reaffirmed_tapple_intent_after_decline(
         if _has_first_person_tapple_intent_evidence(
             text, positive.group(0), _TAPPLE_INVITE_POSITIVE_RE
         ):
+            return True
+    return False
+
+
+def _has_current_tapple_intent_before_historical_decline(
+    text: str,
+    decline: re.Match[str],
+    quoted_declines: list[re.Match[str]],
+) -> bool:
+    if any(quote.start() <= decline.start() < quote.end() for quote in quoted_declines):
+        return False
+
+    for positive in _TAPPLE_INVITE_POSITIVE_RE.finditer(text, 0, decline.start()):
+        current_context = text[max(0, positive.start() - 20) : positive.start()]
+        sentence_end = re.search(r"[。！？!?]", text[decline.end() :])
+        context_end = (
+            decline.end() + sentence_end.start()
+            if sentence_end is not None
+            else len(text)
+        )
+        historical_context = text[positive.end() : context_end]
+        if not re.search(r"(?:今は|現在は|今なら)", current_context):
+            continue
+        if not _has_first_person_tapple_intent_evidence(
+            text, positive.group(0), _TAPPLE_INVITE_POSITIVE_RE
+        ):
+            continue
+        if _TAPPLE_HISTORICAL_DECLINE_CONTEXT_RE.search(historical_context):
             return True
     return False
 

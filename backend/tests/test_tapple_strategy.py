@@ -2217,6 +2217,7 @@ def test_vague_future_interest_does_not_reopen_current_decline(statement):
         "会うことは控えたいですが、今は会うつもりはありません。来週なら会えます。",
         "お会いするのは控えさせていただきます。来週なら会えます。",
         "お会いしたくはありませんが、来週なら会えます。",
+        "今は会いたいです。でも、やはり会うのは無理です。",
     ],
 )
 def test_hard_meeting_refusal_is_not_reopened_by_later_availability(statement):

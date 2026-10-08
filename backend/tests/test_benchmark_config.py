@@ -125,11 +125,11 @@ def test_benchmark_route_state_reuses_last_success_without_persisting_api_key(tm
 
     assert index == 2
     route_state_text = route_state_path.read_text(encoding="utf-8")
-    assert json.loads(route_state_text) == {
-        "account": "secondary",
-        "model": "gemini-3.5-flash-lite",
-    }
+    saved_route = json.loads(route_state_text)
+    assert saved_route["account"] == "secondary"
+    assert saved_route["model"] == "gemini-3.5-flash-lite"
     assert "test-secret" not in route_state_text
+    assert "config_fingerprint" in saved_route
 
     next_benchmark_config = build_gemini_benchmark_config(
         primary_key="primary-test-secret",
@@ -142,6 +142,33 @@ def test_benchmark_route_state_reuses_last_success_without_persisting_api_key(tm
 
     assert restored_index == 2
     assert next_benchmark_config["quota_attempt_start_index"] == 2
+
+
+def test_benchmark_route_state_ignores_route_when_api_key_configuration_changes(tmp_path):
+    route_state_path = tmp_path / "quota-route.json"
+    first_config = build_gemini_benchmark_config(
+        primary_key="primary-test-secret",
+        secondary_key="secondary-test-secret",
+        model="gemini-3.5-flash-lite",
+    )
+    benchmark_config.record_gemini_benchmark_success(
+        first_config,
+        api_key="secondary-test-secret",
+        model="gemini-3.5-flash-lite",
+        route_state_path=route_state_path,
+    )
+    changed_config = build_gemini_benchmark_config(
+        primary_key="rotated-primary-secret",
+        secondary_key="rotated-secondary-secret",
+        model="gemini-3.5-flash-lite",
+    )
+
+    index = benchmark_config.load_gemini_benchmark_route(
+        changed_config, route_state_path
+    )
+
+    assert index is None
+    assert changed_config["quota_attempt_start_index"] == 0
 
 
 def test_benchmark_route_state_ignores_unavailable_or_invalid_route(tmp_path):

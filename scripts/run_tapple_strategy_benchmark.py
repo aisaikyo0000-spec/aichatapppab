@@ -118,6 +118,11 @@ SCENARIOS = (
             "わかりました", "分かりました", "了解", "そっか",
             "また話したくなったら", "話せるときにまた", "気が向いたらまた",
         ],
+        "reply_must_end_with_any": [
+            "また話そう", "また話そうね", "また話しましょう",
+            "また話したくなったら話そう", "また話したくなったら話しましょう",
+            "話せるときにまた", "気が向いたらまた",
+        ],
         "no_follow_up_questions": True,
         "no_follow_up_pressure": True,
         "max_reply_sentences": 2,
@@ -155,6 +160,8 @@ _FOLLOW_UP_QUESTION_RE = re.compile(
     r"[^。！？!?]{0,12}(?:の|か|かな|思う|する|した|してる|してた|だった|いる|行く|いく)"
     r"(?:[。.!！?？\s]|$)"
     r"|(?:何|なに|どこ|だれ|誰|いつ|なぜ|なんで|どう|どんな)(?:[。.!！?？\s]|$)"
+    r"|(?:どういう|どんな|どのくらい|どのへん)[^。！？!?]{0,12}(?:感じ|こと|ところ|の)(?:[。.!！?？\s]|$)"
+    r"|いつ(?:暇|空いてる|空いている|都合|大丈夫|行ける|会える)(?:[。.!！?？\s]|$)"
 )
 _FOLLOW_UP_PRESSURE_RE = re.compile(
     r"(?:何か|なにか).{0,8}(?:あった|ある).{0,8}(?:教えて|聞かせて|話して)"
@@ -162,6 +169,8 @@ _FOLLOW_UP_PRESSURE_RE = re.compile(
     r"|(?:よかったら|よければ|もしよければ).{0,16}(?:話そう|話したい|聞きたい)"
     r"|(?:もっと|もう少し)(?:話|やりとり|返事|返信)"
     r"|(?:返事|返信)(?:して|ください|ちょうだい)"
+    r"|(?:返事|返信).{0,8}(?:くれる|もらえる|くれたら|もらえたら|ほしい|嬉しい|うれしい)"
+    r"|一言.{0,8}(?:ちょうだい|もらえる|くれる|ください|ほしい|お願い)"
 )
 
 
@@ -237,6 +246,12 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
         required_reply_markers = scenario.get("reply_must_contain_any", [])
         if required_reply_markers and not any(marker in reply for marker in required_reply_markers):
             failures.append("reply_not_contextual")
+        ending_markers = scenario.get("reply_must_end_with_any", [])
+        normalized_reply = reply.rstrip().rstrip("。.!！?？…")
+        if ending_markers and not any(
+            normalized_reply.endswith(marker) for marker in ending_markers
+        ):
+            failures.append("reply_missing_contextual_off_ramp")
 
     invite_example = strategy.get("invite_example") if isinstance(strategy, dict) else None
     if action == "invite":

@@ -382,6 +382,26 @@ def test_recent_gold_gradually_influences_all_contact_gold(client):
     assert all_gold.tame_ratio < blended_contact.tame_ratio < recent.tame_ratio
 
 
+def test_recent_gold_emoji_preferences_blend_without_an_abrupt_switch(client):
+    older_gold = [
+        (f"以前の返信 {index}", "ありがとう😄")
+        for index in range(7)
+    ]
+    recent_gold = [
+        (f"最近の返信 {index}", "ありがとう🐱")
+        for index in range(5)
+    ]
+    cid = _seed_gold(client, "最近の絵文字傾向", older_gold + recent_gold)
+
+    profile = style.compute_hierarchical_profile(cid)
+
+    assert profile["contact_recency_weight"] == pytest.approx(7 / 17)
+    assert profile["same_contact_all_gold_profile"].frequent_emojis == ["😄", "🐱"]
+    assert profile["same_contact_recent_gold_profile"].frequent_emojis == ["🐱"]
+    assert profile["same_contact_blended_gold_profile"].frequent_emojis == ["🐱", "😄"]
+    assert profile["active_profile"].frequent_emojis == ["🐱", "😄"]
+
+
 def test_learned_policy_describes_mixed_tone_without_forcing_casual(client):
     mixed = style.compute_style_metrics([
         "ありがとうございます！",

@@ -1089,6 +1089,8 @@ def test_explicit_hesitation_before_positive_interest_blocks_invite():
         ("ぜひ一緒に行きたいですが、どんな方か分からず不安です。", "一緒に行きたい"),
         ("ぜひ一緒に行きたいですが、どんな人か知らなくて不安です。", "一緒に行きたい"),
         ("ぜひ一緒に行きたいですが、会ったことがなくて不安です。", "一緒に行きたい"),
+        ("ぜひ一緒に行きたいですが、あなたを信じていいか不安です。", "一緒に行きたい"),
+        ("ぜひ一緒に行きたいですが、安全だと信じきれないです。", "一緒に行きたい"),
     ],
 )
 def test_invite_gate_blocks_safety_and_familiarity_concerns(statement, evidence):
@@ -1213,6 +1215,8 @@ def test_denied_meeting_safety_concern_does_not_block_explicit_invite(statement)
     [
         "会うのは怖くないとは言えません。ぜひ一緒に行きたいです。",
         "不安ではないとは言えないですが、ぜひ一緒に行きたいです。",
+        "会うのが怖くないとは言い切れませんが、ぜひ一緒に行きたいです。",
+        "不安ではないと言い切れないですが、ぜひ一緒に行きたいです。",
     ],
 )
 def test_qualified_denial_does_not_clear_safety_concern(statement):

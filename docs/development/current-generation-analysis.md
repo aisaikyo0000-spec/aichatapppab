@@ -1944,3 +1944,9 @@ Gemini復旧後にタップル戦略を確認するため、独立スクリプ�
 期待値チェックの単体テスト2件、`--help`、独立Python Reviewerは**PASS**。最新backend全体は**511 passed / 2 warnings**、frontend buildも**PASS**。APIはまだ呼び出していない。API再開時は疎通を1回だけ実施し、70ケース、Contact Bench、Tapple 3ケースの順に回す。各artifactはローカル一時領域へ保存し、失敗ケースも残してReviewerへ渡す。
 
 なお、主キー側で3.5と3.1の両方がレート制限になったときだけ予備アカウントへ移り、予備側でも3.5→3.1を試す。主アカウントの3.1が成功した場合はアカウントを切り替えない。この分岐は回帰テストで確認済み。
+
+## Tappleベンチの期待値判定修正
+
+独立レビュー時に、曖昧な好意へ`invite`しない条件だけでは不十分で、会話を唐突に切る`stop`も既存ベンチで合格してしまうと分かった。本人と相手の発言を含む短い会話に変え、許容する行動をケースごとに列挙した。明示的な参加意思では`invite`、曖昧な反応では`continue`/`clarify`/`wait`、拒否では`stop`だけを合格とする。
+
+テストを先に追加した時点で2件が失敗し、修正後はTapple専用テスト**3 passed**、新しい独立Reviewer **PASS**。backend全体は**512 passed / 2 warnings**、frontend buildも**PASS**。`--help`と対象Python compileもPASSで、APIは呼んでいない。RED commitは`2d0c93b`、GREEN commitは`4325e9e`。API実生成・70ケース・Contact Benchは未実施であり、Step 18-R4は未完成。

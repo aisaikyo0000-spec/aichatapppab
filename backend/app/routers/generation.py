@@ -568,6 +568,24 @@ _TAPPLE_SHARED_ACTIVITY_TERMS = (
     "展示", "美術館", "水族館", "動物園", "遊園地", "ライブ", "音楽", "旅行", "温泉",
     "散歩", "公園", "スポーツ", "サッカー", "野球", "ゲーム", "読書", "小説", "文庫", "料理",
 )
+_TAPPLE_GENERIC_INTEREST_TERMS = frozenset(
+    {"最近", "今日", "昨日", "週末", "休日", "今度", "興味", "関心", "体験", "経験", "趣味", "活動", "共通", "一緒", "時間", "場所", "ところ", "本当"}
+)
+
+
+def _extract_tapple_interest_terms(text: str) -> set[str]:
+    """Extract specific Japanese/foreign hobby names without a closed vocabulary."""
+    candidates = re.findall(
+        r"[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,}|[A-Za-z][A-Za-z0-9+#.-]{1,}",
+        text,
+    )
+    return {
+        candidate
+        for candidate in candidates
+        if candidate not in _TAPPLE_GENERIC_INTEREST_TERMS
+    }
+
+
 _TAPPLE_ACTIVITY_DISINTEREST_PREDICATE = (
     r"(?:好き(?:では|じゃ)(?:ありません|ない(?!わけ|こと))|"
     r"得意(?:では|じゃ)(?:ありません|ない(?!わけ|こと))|"
@@ -594,6 +612,11 @@ _TAPPLE_ACTIVITY_DISINTEREST_RE = re.compile(
     rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREFIX}"
     rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREDICATE})"
 )
+_TAPPLE_RENEWED_ACTIVITY_POSITIVE_RE = re.compile(
+    r"(?:(?<!では)(?<!じゃ)(?:好き|得意)(?:です|だ|で|な|かも|と思います|と思う)?|"
+    r"行きたい|行ってみたい|食べてみたい|見てみたい|試してみたい|"
+    r"体験してみたい|気になって(?:います|ます|る)|興味が(?:あります|ある))"
+)
 
 
 def _has_recent_self_disinterest_in_tapple_activity(
@@ -601,43 +624,65 @@ def _has_recent_self_disinterest_in_tapple_activity(
     last_contact_index: int,
     activity_term: str,
 ) -> bool:
-    latest_self_text = next(
-        (
-            prompt.clean_chat_message_content(str(message.get("content") or ""))
-            for message in reversed(conversation_messages[:last_contact_index])
-            if message.get("sender") == "self"
-            and prompt.clean_chat_message_content(str(message.get("content") or ""))
-        ),
-        "",
-    )
+    self_texts = [
+        prompt.clean_chat_message_content(str(message.get("content") or ""))
+        for message in conversation_messages[:last_contact_index]
+        if message.get("sender") == "self"
+        and prompt.clean_chat_message_content(str(message.get("content") or ""))
+    ]
     renewed_interest_re = re.compile(
         r"(?:また|今度|これから|今は|今でも).{0,8}"
         r"(?:好き|行きたい|行ってみたい|気になって|興味)"
     )
-    for clause_match in re.finditer(r"[^。！？!?\n]+", latest_self_text):
-        clause = clause_match.group(0)
-        for term_match in re.finditer(re.escape(activity_term), clause):
-            following_activity_text = clause[term_match.end() :]
-            disinterest_match = _TAPPLE_ACTIVITY_DISINTEREST_RE.match(
-                following_activity_text
-            )
-            if disinterest_match is None:
-                continue
-            disinterest_end = (
-                clause_match.start()
-                + term_match.end()
-                + disinterest_match.end()
-            )
-            later_text = latest_self_text[disinterest_end:]
-            renewal_match = renewed_interest_re.search(later_text)
-            if renewal_match and not any(
-                other_term in later_text[: renewal_match.end()]
-                for other_term in _TAPPLE_SHARED_ACTIVITY_TERMS
-                if other_term != activity_term
-            ):
-                continue
-            return True
-    return False
+    is_disinterested = False
+    for self_text in self_texts:
+        events: list[tuple[int, bool]] = []
+        for clause_match in re.finditer(r"[^。！？!?\n]+", self_text):
+            clause = clause_match.group(0)
+            for term_match in re.finditer(re.escape(activity_term), clause):
+                following_text = clause[term_match.end() :]
+                disinterest_match = _TAPPLE_ACTIVITY_DISINTEREST_RE.match(
+                    following_text
+                )
+                if disinterest_match is not None:
+                    disinterest_end = (
+                        clause_match.start()
+                        + term_match.end()
+                        + disinterest_match.end()
+                    )
+                    events.append((term_match.start(), True))
+                    later_text = self_text[disinterest_end:]
+                    renewal_match = renewed_interest_re.search(later_text)
+                    if renewal_match:
+                        renewal_context = later_text[: renewal_match.end()]
+                        other_terms = (
+                            set(_TAPPLE_SHARED_ACTIVITY_TERMS)
+                            | _extract_tapple_interest_terms(renewal_context)
+                        ) - {activity_term}
+                        renewal_tail = later_text[renewal_match.end() :]
+                        renewal_is_negative = bool(
+                            _TAPPLE_ACTIVITY_DISINTEREST_RE.match(renewal_tail)
+                        )
+                        if not renewal_is_negative and not any(
+                            term in renewal_context for term in other_terms
+                        ):
+                            events.append(
+                                (disinterest_end + renewal_match.start(), False)
+                            )
+                    continue
+
+                positive_match = _TAPPLE_RENEWED_ACTIVITY_POSITIVE_RE.search(
+                    following_text
+                ) or _TAPPLE_ACTIVITY_INTEREST_RE.search(following_text)
+                if positive_match:
+                    events.append(
+                        (term_match.end() + positive_match.start(), False)
+                    )
+
+        for _position, disinterest_event in sorted(events):
+            is_disinterested = disinterest_event
+
+    return is_disinterested
 
 
 def _has_recent_shared_tapple_activity(
@@ -694,7 +739,9 @@ def _has_recent_shared_tapple_activity(
         r"(?:好き|気にな|楽しみ|行ってみたい|食べてみたい|見てみたい|"
         r"はまって|おすすめ)",
         previous_contact_text,
-    ) and not any(mark in previous_contact_text for mark in ("？", "?")):
+    ) and not _TAPPLE_ACTIVITY_INTEREST_RE.search(previous_contact_text) and not any(
+        mark in previous_contact_text for mark in ("？", "?")
+    ):
         return False
 
     prior_self_texts = [
@@ -707,7 +754,10 @@ def _has_recent_shared_tapple_activity(
         for message in conversation_messages[: last_contact_index]
         if message.get("sender") == "contact"
     ]
-    for term in _TAPPLE_SHARED_ACTIVITY_TERMS:
+    candidate_terms = set(_TAPPLE_SHARED_ACTIVITY_TERMS)
+    for prior_text in (*prior_contact_texts, *prior_self_texts, interest_clause):
+        candidate_terms.update(_extract_tapple_interest_terms(prior_text))
+    for term in sorted(candidate_terms, key=len, reverse=True):
         if term not in interest_clause or not any(term in text for text in prior_contact_texts):
             continue
         if _has_recent_self_disinterest_in_tapple_activity(
@@ -1222,7 +1272,7 @@ _TAPPLE_SCHEDULING_PROPOSAL_RE = re.compile(
     r"大丈夫|行こう|会おう|しませんか|しよう)"
     r"|(?:都合|空き|予定).{0,12}(?:ありますか|どうですか|つきますか|合いますか)"
 )
-_TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|飲食店|公共の場所|人通りのある場所|人の多い場所|商業施設|フードコート|駅前|公園)")
+_TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|飲食店|ボルダリングジム|スポーツジム|スポーツ施設|体育館|ボウリング場|公共の場所|人通りのある場所|人の多い場所|商業施設|フードコート|駅前|公園)")
 _TAPPLE_PRIVATE_PLACE_RE = re.compile(
     r"(?:自宅|お?うち(?:で|に|へ|集合|待ち合わせ|飲み)|お?家(?:で|に|へ|集合|待ち合わせ|飲み)|ホテル|客室|個室|スイートルーム|スイート|ルーム)"
 )

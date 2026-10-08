@@ -203,6 +203,11 @@ def compute_hierarchical_profile(
     all_self_texts = [p.self_turn.text for p in valid_pairs]
     # 全 manual Gold
     gold_texts = [p.self_turn.text for p in valid_pairs if p.label == "gold"]
+    other_contact_texts = [
+        p.self_turn.text
+        for p in valid_pairs
+        if not contact_id or p.contact_id != contact_id
+    ]
     # Same-contact Gold is excluded from the prior used to blend that contact back in.
     other_contact_gold_texts = [
         p.self_turn.text
@@ -254,11 +259,20 @@ def compute_hierarchical_profile(
         gold_prior_prof = other_contact_gold_prof if other_contact_gold_prof.sample_count else gold_prof
         active_prof = _blend_style_profiles(gold_prior_prof, same_contact_blended_gold_prof, local_weight, same_contact_gold_prof_count)
         hierarchy_tier = "same_contact_recent_manual_gold"
-    elif gold_prof.sample_count >= 5:
-        active_prof = gold_prof
+    elif other_contact_gold_prof.sample_count >= 5:
+        active_prof = other_contact_gold_prof
         hierarchy_tier = "global_manual_gold"
+    elif other_contact_gold_prof.sample_count:
+        active_prof = other_contact_gold_prof
+        hierarchy_tier = "sparse_manual_gold_fallback"
+    elif other_contact_texts:
+        active_prof = compute_style_metrics(other_contact_texts)
+        hierarchy_tier = "global"
     elif gold_prof.sample_count:
-        active_prof = gold_prof
+        # A contact's first one or two Gold replies are not enough to establish
+        # either its local style or a user-wide prior. Keep the neutral profile
+        # instead of letting those replies define the global fallback.
+        active_prof = compute_style_metrics([])
         hierarchy_tier = "sparse_manual_gold_fallback"
     elif (
         not same_contact_gold_prof_count

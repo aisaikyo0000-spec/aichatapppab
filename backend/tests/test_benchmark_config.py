@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 
 
@@ -105,3 +106,57 @@ def test_known_primary_35_quota_can_start_benchmark_at_primary_31_then_secondary
         ("secondary", "gemini-3.5-flash-lite"),
         ("secondary", "gemini-3.1-flash-lite"),
     ]
+
+
+def test_benchmark_route_state_reuses_last_success_without_persisting_api_key(tmp_path):
+    route_state_path = tmp_path / "quota-route.json"
+    first_config = build_gemini_benchmark_config(
+        primary_key="primary-test-secret",
+        secondary_key="secondary-test-secret",
+        model="gemini-3.5-flash-lite",
+    )
+
+    index = benchmark_config.record_gemini_benchmark_success(
+        first_config,
+        api_key="secondary-test-secret",
+        model="gemini-3.5-flash-lite",
+        route_state_path=route_state_path,
+    )
+
+    assert index == 2
+    route_state_text = route_state_path.read_text(encoding="utf-8")
+    assert json.loads(route_state_text) == {
+        "account": "secondary",
+        "model": "gemini-3.5-flash-lite",
+    }
+    assert "test-secret" not in route_state_text
+
+    next_benchmark_config = build_gemini_benchmark_config(
+        primary_key="primary-test-secret",
+        secondary_key="secondary-test-secret",
+        model="gemini-3.5-flash-lite",
+    )
+    restored_index = benchmark_config.load_gemini_benchmark_route(
+        next_benchmark_config, route_state_path
+    )
+
+    assert restored_index == 2
+    assert next_benchmark_config["quota_attempt_start_index"] == 2
+
+
+def test_benchmark_route_state_ignores_unavailable_or_invalid_route(tmp_path):
+    route_state_path = tmp_path / "quota-route.json"
+    config = build_gemini_benchmark_config(
+        primary_key="primary-test-secret",
+        secondary_key="secondary-test-secret",
+        model="gemini-3.1-flash-lite",
+    )
+    route_state_path.write_text(
+        json.dumps({"account": "secondary", "model": "unknown-model"}),
+        encoding="utf-8",
+    )
+
+    index = benchmark_config.load_gemini_benchmark_route(config, route_state_path)
+
+    assert index is None
+    assert config["quota_attempt_start_index"] == 0

@@ -473,6 +473,38 @@ def test_tapple_benchmark_includes_a_receptive_but_not_yet_agreed_invitation_cas
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
 
 
+@pytest.mark.parametrize(
+    "scenario_id, parsed_action",
+    [
+        ("mutual_activity_interest", "invite"),
+        ("shared_activity_low_reciprocity", "wait"),
+    ],
+)
+def test_activity_interest_pair_runs_through_production_strategy_parser(scenario_id, parsed_action):
+    scenario = next(
+        scenario
+        for scenario in run_tapple_strategy_benchmark.SCENARIOS
+        if scenario["id"] == scenario_id
+    )
+    strategy = {
+        "action": "invite",
+        "rationale": (
+            "共通の話題が続き、相手も関心を広げているため、断りやすく提案します。"
+            if parsed_action == "invite"
+            else "共通の話題があっても、相手の反応が短いため今は待ちます。"
+        ),
+        "evidence": [scenario["messages"][-1]["content"]],
+        "invite_example": "よかったら駅前のカフェでパンケーキを食べませんか？難しければ大丈夫です。",
+    }
+
+    parsed = _parse_tapple_strategy_messages(
+        _raw_strategy(strategy), scenario["messages"]
+    )
+
+    assert parsed is not None
+    assert parsed.action == parsed_action
+
+
 def test_tapple_benchmark_requires_wait_after_engagement_declines():
     scenario = next(
         scenario

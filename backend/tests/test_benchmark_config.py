@@ -135,6 +135,45 @@ def test_benchmark_success_does_not_move_state_for_unknown_route():
     assert config["quota_attempt_start_index"] == 0
 
 
+def test_successful_route_metadata_identifies_account_without_exposing_key():
+    config = build_gemini_benchmark_config(
+        primary_key="primary-test-secret",
+        secondary_key="secondary-test-secret",
+        model="gemini-3.5-flash-lite",
+    )
+
+    route = benchmark_config.successful_gemini_benchmark_route(
+        config,
+        api_key="secondary-test-secret",
+        model="gemini-3.1-flash-lite",
+    )
+
+    assert route == {
+        "account": "secondary",
+        "model": "gemini-3.1-flash-lite",
+    }
+    route_json = json.dumps(route)
+    assert "secondary-test-secret" not in route_json
+    assert "primary-test-secret" not in route_json
+    assert "api_key" not in route
+
+
+def test_successful_route_metadata_is_absent_for_unknown_route():
+    config = build_gemini_benchmark_config(
+        primary_key="primary-test-secret",
+        secondary_key="secondary-test-secret",
+        model="gemini-3.5-flash-lite",
+    )
+
+    route = benchmark_config.successful_gemini_benchmark_route(
+        config,
+        api_key="unknown-secret",
+        model="gemini-3.1-flash-lite",
+    )
+
+    assert route is None
+
+
 def test_known_primary_35_quota_can_start_benchmark_at_primary_31_then_secondary():
     config = build_gemini_benchmark_config(
         primary_key="primary-test-key",

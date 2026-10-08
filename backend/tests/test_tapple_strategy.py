@@ -2058,6 +2058,8 @@ def test_soft_but_clear_decline_forces_stop():
         "お会いすることは致しかねます。",
         "ご一緒するのは難しいです。",
         "会うことは控えたいです。",
+        "今回はお誘いをお断りさせていただきます。",
+        "お会いするのはお断りいたします。",
     ],
 )
 def test_formal_meeting_refusals_block_invite(decline):
@@ -2118,6 +2120,7 @@ def test_formal_meeting_refusals_block_invite(decline):
         "友人から会いたくないと言われましたが、私はぜひ会いたいです。",
         "友人から、会うつもりはないと聞きましたが、私はぜひ会いたいです。",
         "「会うのは無理」と言われましたが、私はぜひ会いたいです。",
+        "「会うのは無理」と友達に言われましたが、私はぜひ会いたいです。",
     ],
 )
 def test_formal_refusal_match_preserves_negation_counterproposal_and_attribution(statement):

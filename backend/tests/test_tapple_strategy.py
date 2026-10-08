@@ -266,7 +266,7 @@ def test_unlisted_shared_hobby_can_support_low_pressure_invite():
             "action": "invite",
             "rationale": "二人の共通の趣味に相手が関心を示しています。",
             "evidence": ["ボルダリングを体験してみたいです"],
-            "invite_example": "よかったら今度、ボルダリングを一緒に体験してみませんか？",
+            "invite_example": "よかったら今度、近くのボルダリングジムで一緒に体験してみませんか？",
         }
     )
 
@@ -275,6 +275,55 @@ def test_unlisted_shared_hobby_can_support_low_pressure_invite():
     assert result is not None
     assert result.action == "invite"
     assert result.invite_example is not None
+
+
+def test_recent_disinterest_blocks_invite_for_unlisted_shared_hobby():
+    conversation = (
+        "相手: ボルダリングに興味があります\n"
+        "自分: 僕もボルダリングが好きです\n"
+        "相手: 最近ボルダリングを体験してみたいです\n"
+        "自分: ボルダリングはあまり得意ではないです\n"
+        "相手: ボルダリングを体験してみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手の希望に合わせて誘います。",
+            "evidence": ["ボルダリングを体験してみたいです"],
+            "invite_example": "よかったら今度、近くのボルダリングジムで一緒に体験してみませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
+def test_unrelated_later_self_message_does_not_clear_activity_disinterest():
+    conversation = (
+        "相手: ボルダリングに興味があります\n"
+        "自分: 僕もボルダリングが好きです\n"
+        "相手: 最近ボルダリングを体験してみたいです\n"
+        "自分: ボルダリングは好きではないです\n"
+        "自分: 週末は映画を見ます\n"
+        "相手: ボルダリングを体験してみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手の希望に合わせて誘います。",
+            "evidence": ["ボルダリングを体験してみたいです"],
+            "invite_example": "よかったら今度、近くのボルダリングジムで一緒に体験してみませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
 
 
 def test_full_latest_message_hedge_blocks_invite_even_when_evidence_omits_it():

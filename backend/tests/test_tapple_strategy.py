@@ -1172,21 +1172,25 @@ def test_explicit_meeting_hesitation_survives_unrelated_or_logistics_context(sta
 
 
 def test_work_anxiety_does_not_count_as_meeting_safety_concern():
-    statement = "仕事の不安はないとは言えませんが、ぜひ一緒に行きたいです。"
-    raw = _raw_strategy(
-        {
-            "action": "invite",
-            "rationale": "一緒に行きたいという意思があります。",
-            "evidence": ["ぜひ一緒に行きたいです"],
-            "invite_example": "人の多いカフェでお茶しませんか？",
-        }
-    )
+    for statement in (
+        "仕事の不安はないとは言えませんが、ぜひ一緒に行きたいです。",
+        "仕事については不安がないとは言えませんが、ぜひ一緒に行きたいです。",
+        "仕事についての不安は消えないけど、ぜひ一緒に行きたいです。",
+    ):
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたいです"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
 
-    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
 
-    assert result is not None
-    assert result.action == "invite"
-    assert result.invite_example is not None
+        assert result is not None, statement
+        assert result.action == "invite", statement
+        assert result.invite_example is not None, statement
 
 
 def test_thinking_about_meeting_logistics_is_not_hesitation():
@@ -1275,6 +1279,10 @@ def test_invite_gate_respects_request_to_delay_meeting(statement):
         "ぜひ一緒に行きたいです。少し考えたいです。",
         "ぜひ一緒に行きたいです。返事は明日まで待っていただけますか。",
         "ぜひ一緒に行きたいです。返事は明日します。",
+        "ぜひ一緒に行きたいです。明日返事します。",
+        "ぜひ一緒に行きたいです。明日までには返事するね。",
+        "ぜひ一緒に行きたいです。あとで返事します。",
+        "ぜひ一緒に行きたいです。明日まで待ってください。",
     ],
 )
 def test_invite_gate_respects_request_for_time_to_decide(statement):
@@ -1446,15 +1454,20 @@ def test_request_to_talk_more_before_meeting_blocks_date_scheduling():
 
 
 def test_work_anxiety_does_not_block_accepted_date_scheduling():
-    violations = validate_candidate_replies(
-        ["日曜はどうですか？"],
-        1,
-        counterpart_message="仕事の不安はないとは言えませんが、ぜひ一緒に行きたいです。",
-        strategy_mode="tapple",
-        tapple_action="continue",
-    )
+    for counterpart_message in (
+        "仕事の不安はないとは言えませんが、ぜひ一緒に行きたいです。",
+        "仕事については不安がないとは言えませんが、ぜひ一緒に行きたいです。",
+        "仕事についての不安は消えないけど、ぜひ一緒に行きたいです。",
+    ):
+        violations = validate_candidate_replies(
+            ["日曜はどうですか？"],
+            1,
+            counterpart_message=counterpart_message,
+            strategy_mode="tapple",
+            tapple_action="continue",
+        )
 
-    assert not any("誘い" in violation for violation in violations)
+        assert not any("誘い" in violation for violation in violations), counterpart_message
 
 
 @pytest.mark.parametrize(
@@ -1471,6 +1484,10 @@ def test_work_anxiety_does_not_block_accepted_date_scheduling():
         "ぜひ一緒に行きたいです。少し考えたいです。",
         "ぜひ一緒に行きたいです。返事は明日まで待っていただけますか。",
         "ぜひ一緒に行きたいです。返事は明日します。",
+        "ぜひ一緒に行きたいです。明日返事します。",
+        "ぜひ一緒に行きたいです。明日までには返事するね。",
+        "ぜひ一緒に行きたいです。あとで返事します。",
+        "ぜひ一緒に行きたいです。明日まで待ってください。",
     ],
 )
 def test_request_for_time_to_decide_blocks_date_scheduling(counterpart_message):

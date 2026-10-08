@@ -326,6 +326,31 @@ def test_unrelated_later_self_message_does_not_clear_activity_disinterest():
     assert result.invite_example is None
 
 
+def test_explicit_later_interest_renews_activity_after_disinterest():
+    conversation = (
+        "相手: カフェ巡りが好きです\n"
+        "自分: 僕もカフェが好きです\n"
+        "相手: 今度カフェに行ってみたいです\n"
+        "自分: カフェは苦手でした\n"
+        "自分: 今はカフェが好きです\n"
+        "相手: 今度一緒にカフェに行きたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "本人が今はカフェを好きだと伝え、相手も一緒に行きたいと話しています。",
+            "evidence": ["今度一緒にカフェに行きたいです"],
+            "invite_example": "よかったら今度、駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example is not None
+
+
 def test_full_latest_message_hedge_blocks_invite_even_when_evidence_omits_it():
     latest = "駅前のカフェに行ってみたいです。タイミングが合えばかな"
     conversation = (

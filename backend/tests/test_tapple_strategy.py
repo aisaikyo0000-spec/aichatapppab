@@ -252,7 +252,27 @@ def test_decline_response_cannot_include_a_reinvitation():
         strategy_mode="tapple",
     )
 
-    assert any("再度誘う" in violation for violation in violations)
+    assert any("誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "また今度カフェでもどう？",
+        "来週カフェとかどう？",
+        "また会えたら嬉しいな",
+    ],
+)
+def test_tapple_wait_strategy_rejects_soft_reinvitations(reply):
+    violations = validate_candidate_replies(
+        [reply],
+        1,
+        counterpart_message="今は会うのはちょっと考えたいです。",
+        strategy_mode="tapple",
+        tapple_action="wait",
+    )
+
+    assert any("誘い" in violation for violation in violations)
 
 
 def test_decline_forces_stop_even_if_model_says_invite():

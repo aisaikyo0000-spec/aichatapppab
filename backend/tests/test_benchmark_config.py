@@ -160,3 +160,18 @@ def test_benchmark_route_state_ignores_unavailable_or_invalid_route(tmp_path):
 
     assert index is None
     assert config["quota_attempt_start_index"] == 0
+
+
+def test_benchmark_route_state_ignores_invalid_utf8(tmp_path):
+    route_state_path = tmp_path / "quota-route.json"
+    route_state_path.write_bytes(b"\xff\xfe")
+    config = build_gemini_benchmark_config(
+        primary_key="primary-test-secret",
+        secondary_key="secondary-test-secret",
+        model="gemini-3.5-flash-lite",
+    )
+
+    index = benchmark_config.load_gemini_benchmark_route(config, route_state_path)
+
+    assert index is None
+    assert config["quota_attempt_start_index"] == 0

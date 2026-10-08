@@ -115,14 +115,10 @@ SCENARIOS = (
         "no_reinvitation": True,
         "reply_must_contain_any": [
             "そうなんですね", "そうなんだ", "そうですね", "そうだね",
-            "わかりました", "分かりました", "了解", "そっか",
+            "わかりました", "分かりました", "わかった", "了解", "そっか", "またね",
             "また話したくなったら", "話せるときにまた", "気が向いたらまた",
         ],
-        "reply_must_end_with_any": [
-            "また話そう", "また話そうね", "また話しましょう",
-            "また話したくなったら話そう", "また話したくなったら話しましょう",
-            "話せるときにまた", "気が向いたらまた",
-        ],
+        "reply_must_end_contextually": True,
         "no_follow_up_questions": True,
         "no_follow_up_pressure": True,
         "max_reply_sentences": 2,
@@ -172,6 +168,28 @@ _FOLLOW_UP_PRESSURE_RE = re.compile(
     r"|(?:返事|返信).{0,8}(?:くれる|もらえる|くれたら|もらえたら|ほしい|嬉しい|うれしい)"
     r"|一言.{0,8}(?:ちょうだい|もらえる|くれる|ください|ほしい|お願い)"
 )
+_ACKNOWLEDGMENT_RE = re.compile(
+    r"^(?:そうなんですね|そうなんだ|そうですね|そうだね|わかりました|分かりました|了解(?:です)?|そっか|わかった|ありがとう|承知しました|承知です)$"
+)
+_OFF_RAMP_ENDING_RE = re.compile(
+    r"^(?:また[^。.!！?？、,]{0,20}(?:話|連絡|やりとり|ね)[^。.!！?？、,]{0,10}"
+    r"|(?:話|連絡|やりとり)[^。.!！?？、,]{0,20}また"
+    r"|またね|気が向いたらまた(?:話|連絡|ね)?"
+    r"|無理せず(?:ゆっくり|休んで|過ごして)?"
+    r"|ゆっくり(?:休んで|して)(?:ね|ください)?"
+    r"|休んで(?:ね|ください)?|気にしないで(?:ね|ください)?)"
+)
+
+
+def _has_contextual_off_ramp(reply: str) -> bool:
+    clauses = [
+        clause.strip()
+        for clause in re.split(r"[。.!！?？、,]+", reply)
+        if clause.strip()
+    ]
+    if not clauses or not _OFF_RAMP_ENDING_RE.fullmatch(clauses[-1]):
+        return False
+    return all(_ACKNOWLEDGMENT_RE.fullmatch(clause) for clause in clauses[:-1])
 
 
 def _evaluate_result(scenario: dict, result: dict) -> list[str]:
@@ -246,11 +264,7 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
         required_reply_markers = scenario.get("reply_must_contain_any", [])
         if required_reply_markers and not any(marker in reply for marker in required_reply_markers):
             failures.append("reply_not_contextual")
-        ending_markers = scenario.get("reply_must_end_with_any", [])
-        normalized_reply = reply.rstrip().rstrip("。.!！?？…")
-        if ending_markers and not any(
-            normalized_reply.endswith(marker) for marker in ending_markers
-        ):
+        if scenario.get("reply_must_end_contextually") and not _has_contextual_off_ramp(reply):
             failures.append("reply_missing_contextual_off_ramp")
 
     invite_example = strategy.get("invite_example") if isinstance(strategy, dict) else None

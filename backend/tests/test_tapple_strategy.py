@@ -2033,6 +2033,40 @@ def test_soft_but_clear_decline_forces_stop():
     assert result.action == "stop"
 
 
+@pytest.mark.parametrize(
+    "decline",
+    [
+        "お会いするのは難しいです。",
+        "お会いするつもりはありません。",
+        "お会いするのは遠慮させていただきます。",
+        "会うことは控えたいです。",
+    ],
+)
+def test_formal_meeting_refusals_force_stop_and_block_invite(decline):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "会うことに前向きです。",
+            "evidence": [decline],
+            "invite_example": "よかったら来週カフェで会いませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {decline}")
+    violations = validate_candidate_replies(
+        ["よかったら来週カフェで会いませんか？"],
+        1,
+        counterpart_message=decline,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert result is not None
+    assert result.action == "stop"
+    assert result.invite_example is None
+    assert any("誘い" in violation for violation in violations)
+
+
 def test_positive_desire_to_meet_is_not_misread_as_decline():
     conversation = "相手: 最近会いたくなってきた"
     raw = _raw_strategy(

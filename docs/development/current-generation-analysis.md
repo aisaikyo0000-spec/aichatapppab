@@ -4,7 +4,7 @@
 
 ベンチ各ケースの呼び出しで、前のケースが成功したモデル・アカウントから再開するようにした。quotaに当たった場合は、メイン3.5→メイン3.1→予備3.5→予備3.1の残りの経路を順に試す。アプリ本体もメイン3.5と3.1が両方quotaになった後、予備3.5、予備3.1へ進む。疎通確認はこの順で最大4回まで行い、quota以外のエラーでは切り替えない。経路状態は個々のベンチ実行内で保持する。pipeline、Contact、Tappleの別プロセス間では共有しないため、後続ベンチが制限済み経路を一度試す可能性がある。
 
-朝のPowerShell手順は疎通に成功したモデル・アカウントを後続ベンチへ渡し、70ケースからの返信例8件、Contact Bench全返信、Tapple全返信を画面に表示して確認できるようにした。`python -m pytest backend/tests -q` は**849 passed**、frontend production build・`compileall`・CLI `--help`・`git diff --check`もPASS。Python Reviewerは**PASS**。APIは呼び出していないため、実生成評価と最新のquota状態は未確認。コードcommitは`14d7cb5`。Step 18-R4は継続中。
+朝のPowerShell手順は疎通に成功したモデル・アカウントを後続ベンチへ渡し、70ケースからの返信例8件、Contact Bench全返信、Tapple全返信を画面に表示して確認できるようにした。ローカル設定はprovider=Gemini、標準3.5、予備3.1で、両キーが読み込み済みと確認した。キーの値は出力していないが、APIでの有効性は未確認。`python -m pytest backend/tests -q` は**849 passed**、frontend production build・`compileall`・CLI `--help`・`git diff --check`もPASS。Python Reviewerは**PASS**。APIは呼び出していないため、実生成評価と最新のquota状態は未確認。コードcommitは`14d7cb5`。Step 18-R4は継続中。
 
 ## 2026-10-09 Tapple Iteration 25: 迷い・安全懸念時の再勧誘ガード
 

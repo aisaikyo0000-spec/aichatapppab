@@ -2072,7 +2072,11 @@ def test_formal_meeting_refusals_force_stop_and_block_invite(decline):
     [
         "お会いするのは難しくありません。ぜひ一緒に行きたいです。",
         "お会いするのは難しいとは言えません。ぜひ一緒に行きたいです。",
-        "お会いするのは難しいですが、来週なら会えます。",
+        "お会いするのは難しいとは限りません。ぜひ一緒に行きたいです。",
+        "お会いするのは難しいわけではありません。ぜひ一緒に行きたいです。",
+        "お会いするのは難しくはないです。ぜひ一緒に行きたいです。",
+        "お会いするのは難しいですが、来週に会えます。",
+        "お会いするのは難しいけど、来週なら大丈夫です。",
         "友達はお会いするのは難しいと言っていましたが、私はぜひ一緒に行きたいです。",
     ],
 )
@@ -2090,6 +2094,39 @@ def test_formal_refusal_match_preserves_negation_counterproposal_and_attribution
 
     assert result is not None
     assert result.action != "stop"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "会いたくないです。でも来週なら会えます。",
+        "お会いするつもりはありません。でも来週なら会えます。",
+        "会うことは控えたいですが、今は会うつもりはありません。来週なら会えます。",
+    ],
+)
+def test_hard_meeting_refusal_is_not_reopened_by_later_availability(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "来週なら会えると伝えています。",
+            "evidence": [statement],
+            "invite_example": "来週カフェで会いませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+    violations = validate_candidate_replies(
+        ["来週カフェで会いませんか？"],
+        1,
+        counterpart_message=statement,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert result is not None
+    assert result.action in {"stop", "wait"}
+    assert result.invite_example is None
+    assert any("誘い" in violation for violation in violations)
 
 
 def test_positive_desire_to_meet_is_not_misread_as_decline():

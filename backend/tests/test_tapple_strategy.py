@@ -2067,6 +2067,31 @@ def test_formal_meeting_refusals_force_stop_and_block_invite(decline):
     assert any("誘い" in violation for violation in violations)
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "お会いするのは難しくありません。ぜひ一緒に行きたいです。",
+        "お会いするのは難しいとは言えません。ぜひ一緒に行きたいです。",
+        "お会いするのは難しいですが、来週なら会えます。",
+        "友達はお会いするのは難しいと言っていましたが、私はぜひ一緒に行きたいです。",
+    ],
+)
+def test_formal_refusal_match_preserves_negation_counterproposal_and_attribution(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手本人から会う意思が示されています。",
+            "evidence": [statement],
+            "invite_example": "よかったら来週カフェで会いませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action != "stop"
+
+
 def test_positive_desire_to_meet_is_not_misread_as_decline():
     conversation = "相手: 最近会いたくなってきた"
     raw = _raw_strategy(

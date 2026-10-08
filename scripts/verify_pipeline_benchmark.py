@@ -77,6 +77,8 @@ def _candidate_metrics_are_valid(cases: list[dict[str, Any]]) -> bool:
         for axis in axes:
             if not isinstance(axis, dict):
                 return False
+            if "personal_style_fit" not in axis or axis["personal_style_fit"] is not None:
+                return False
             for name in axis_names:
                 value = axis.get(name)
                 if (
@@ -92,8 +94,15 @@ def _candidate_metrics_are_valid(cases: list[dict[str, Any]]) -> bool:
 def _same_metric(left: Any, right: Any) -> bool:
     if left is None or right is None:
         return left is right
+    if (
+        isinstance(left, bool)
+        or not isinstance(left, (int, float))
+        or isinstance(right, bool)
+        or not isinstance(right, (int, float))
+    ):
+        return False
     try:
-        return math.isclose(float(left), float(right), rel_tol=0.0, abs_tol=0.000001)
+        return math.isclose(left, right, rel_tol=0.0, abs_tol=0.000001)
     except (TypeError, ValueError):
         return False
 
@@ -131,7 +140,13 @@ def verify_pipeline_artifact(
         or summary.get("expected_total") != EXPECTED_CASE_COUNT
     ):
         failures.append("incomplete_run")
-    if summary.get("errors") != 0 or any("error" in case for case in cases if isinstance(case, dict)):
+    error_count = summary.get("errors")
+    if (
+        isinstance(error_count, bool)
+        or not isinstance(error_count, int)
+        or error_count != 0
+        or any("error" in case for case in cases if isinstance(case, dict))
+    ):
         failures.append("case_errors_present")
     if not _candidate_metrics_are_valid(cases):
         failures.append("case_metrics_invalid")

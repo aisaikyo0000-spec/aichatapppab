@@ -1171,6 +1171,32 @@ def test_explicit_meeting_hesitation_survives_unrelated_or_logistics_context(sta
     assert result.invite_example is None
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "ぜひ一緒に行きたいです。会いたいけど少し迷う。",
+        "ぜひ一緒に行きたいです。会いたいけど、少し迷う。",
+        "ぜひ一緒に行きたいです。会うかどうか迷う。",
+        "ぜひ一緒に行きたいです。会うのは少し悩んでる。",
+    ],
+)
+def test_casual_meeting_hesitation_blocks_invite(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "会うことへの迷いが残っています。",
+            "evidence": ["ぜひ一緒に行きたいです"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
 def test_work_anxiety_does_not_count_as_meeting_safety_concern():
     for statement in (
         "仕事の不安はないとは言えませんが、ぜひ一緒に行きたいです。",
@@ -1576,6 +1602,18 @@ def test_unrelated_work_problem_does_not_block_date_scheduling():
     assert not any("誘い" in violation for violation in violations)
 
 
+def test_unrelated_workload_worry_does_not_block_date_scheduling():
+    violations = validate_candidate_replies(
+        ["ぜひ！日曜はどうですか？"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです。仕事が忙しくて悩んでいます。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
 @pytest.mark.parametrize(
     "counterpart_message",
     [
@@ -1600,6 +1638,18 @@ def test_post_acceptance_unrelated_or_date_choice_concern_allows_scheduling(
         ["日曜はどうですか？"],
         1,
         counterpart_message=counterpart_message,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_positive_anticipation_with_mada_does_not_block_date_scheduling():
+    violations = validate_candidate_replies(
+        ["日曜はどうですか？"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです。まだ行ったことないお店なので楽しみです。",
         strategy_mode="tapple",
         tapple_action="continue",
     )

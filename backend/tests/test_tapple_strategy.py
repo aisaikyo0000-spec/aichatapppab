@@ -1083,7 +1083,7 @@ def test_weather_worry_does_not_block_accepted_date_with_meeting_anticipation():
     violations = validate_candidate_replies(
         ["日曜はどうですか？"],
         1,
-        counterpart_message="明日の天気が心配ですが、会えるのを楽しみにしています。",
+        counterpart_message="ぜひ一緒に行きたいです！明日の天気が心配ですが、会えるのを楽しみにしています。",
         strategy_mode="tapple",
         tapple_action="continue",
     )
@@ -1091,8 +1091,15 @@ def test_weather_worry_does_not_block_accepted_date_with_meeting_anticipation():
     assert not any("誘い" in violation for violation in violations)
 
 
-def test_denied_meeting_safety_concern_does_not_block_explicit_invite():
-    statement = "会うのは不安ではありません。ぜひ一緒に行きたいです。"
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "会うのは不安ではありません。ぜひ一緒に行きたいです。",
+        "会うのは怖くないです。ぜひ一緒に行きたいです。",
+        "安全面は心配していません。ぜひ一緒に行きたいです。",
+    ],
+)
+def test_denied_meeting_safety_concern_does_not_block_explicit_invite(statement):
     raw = _raw_strategy(
         {
             "action": "invite",

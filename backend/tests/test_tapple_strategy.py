@@ -402,6 +402,334 @@ def test_explicitly_resolved_prior_safety_concern_does_not_block_later_interest(
     assert result.action == "invite"
 
 
+def test_tapple_keeps_prior_decline_until_contact_clearly_reopens_meeting():
+    conversation = (
+        "相手: カフェ巡りが好きです。\n"
+        "自分: 今度一緒に行きませんか？\n"
+        "相手: 会うつもりはありません。\n"
+        "自分: 分かりました。もう誘いません。\n"
+        "相手: 新作のケーキを食べてみたいです。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "新作のケーキに関心があります。",
+            "evidence": ["新作のケーキを食べてみたいです"],
+            "invite_example": "よかったら一緒に行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "stop"
+    assert result.invite_example is None
+
+
+def test_clear_contact_reversal_can_reopen_an_invitation_after_prior_decline():
+    conversation = (
+        "相手: カフェ巡りが好きです。\n"
+        "自分: 今度一緒に行きませんか？\n"
+        "相手: 会うつもりはありません。\n"
+        "自分: 分かりました。もう誘いません。\n"
+        "相手: さっきは断ったけど、やっぱりカフェに一緒に行きたいです。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手から改めて関心が示されました。",
+            "evidence": ["やっぱりカフェに一緒に行きたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "invite"
+
+
+@pytest.mark.parametrize(
+    "reopening_message",
+    ["あなたと会いたいです。", "あなたと会ってみたいです。"],
+)
+def test_unprompted_direct_meeting_interest_reopens_prior_refusal(reopening_message):
+    conversation = (
+        "相手: カフェ巡りが好きです。\n"
+        "自分: 今度一緒に行きませんか？\n"
+        "相手: 会うつもりはありません。\n"
+        "自分: 分かりました。もう誘いません。\n"
+        f"相手: {reopening_message}"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手本人が会いたいと明確に伝えています。",
+            "evidence": [reopening_message],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "invite"
+
+
+def test_direct_reversal_alongside_third_party_interest_reopens_prior_refusal():
+    conversation = (
+        "相手: 会うつもりはありません。\n"
+        "自分: 分かりました。もう誘いません。\n"
+        "相手: 友達は一緒に行きたいと言っていますが、私はあなたと会いたいです。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手本人が会いたい意思を明確に示しました。",
+            "evidence": ["私はあなたと会いたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "invite"
+
+
+@pytest.mark.parametrize(
+    "decline",
+    [
+        "会うのは遠慮させていただきます。",
+        "会うのは遠慮させてもらいます。",
+        "会うのはご遠慮ください。",
+        "会うのはご遠慮いただけますか。",
+    ],
+)
+def test_polite_enryo_refusal_remains_a_decline(decline):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手がカフェに興味を示しています。",
+            "evidence": ["カフェに行ってみたいです"],
+            "invite_example": "駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(
+        raw,
+        f"相手: {decline}\n自分: 分かりました。もう誘いません。\n"
+        "相手: 新作のカフェに行ってみたいです。",
+    )
+
+    assert result is not None
+    assert result.action == "stop"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "会うときは遠慮なく希望を教えてください。ぜひ一緒に行きたいです。",
+        "会うなら遠慮なく誘ってください。",
+        "今回は遠慮なく誘ってください。",
+    ],
+)
+def test_positive_encouragement_with_enryo_naku_is_not_a_meeting_decline(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手が会うことに前向きです。",
+            "evidence": [statement],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "invite"
+
+
+def test_current_explicit_decline_overrides_contradictory_reopening_language():
+    conversation = (
+        "相手: カフェ巡りが好きです。\n"
+        "自分: 今度一緒に行きませんか？\n"
+        "相手: さっきは断ったけど、やっぱりカフェに一緒に行きたいです。"
+        "でもあなたとは会うつもりはありません。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手から改めて関心が示されました。",
+            "evidence": ["カフェに一緒に行きたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "stop"
+    assert result.invite_example is None
+
+
+def test_contact_counterproposal_reopens_after_a_date_specific_unavailability():
+    conversation = (
+        "相手: カフェ巡りが好きです。\n"
+        "自分: 土曜に駅前のカフェに行きませんか？\n"
+        "相手: 土曜は予定があって会えません。\n"
+        "自分: 分かりました。また都合のいい時で大丈夫です。\n"
+        "相手: 来週なら都合がつきます。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "continue",
+            "rationale": "相手から別の日程の提案がありました。",
+            "evidence": ["来週なら都合がつきます"],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "continue"
+
+
+def test_multiple_date_specific_unavailabilities_can_reopen_on_a_later_date():
+    conversation = (
+        "相手: 今週は予定があって会えませんが、来週も都合が悪くて会えません。\n"
+        "自分: 分かりました。また都合のいい日があれば教えてください。\n"
+        "相手: 来月なら都合がつきます。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "continue",
+            "rationale": "相手から別の日程の提案がありました。",
+            "evidence": ["来月なら都合がつきます"],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "continue"
+
+
+def test_third_party_interest_does_not_reopen_contact_refusal():
+    conversation = (
+        "相手: 会うつもりはありません。\n"
+        "自分: 分かりました。もう誘いません。\n"
+        "相手: さっきは断ったけど、友達は一緒に行きたいと言っています。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "同行者にも関心があるようです。",
+            "evidence": ["友達は一緒に行きたいと言っています"],
+            "invite_example": "よかったら一緒に行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "stop"
+
+
+def test_date_availability_does_not_reopen_a_firm_meeting_refusal():
+    conversation = (
+        "相手: カフェ巡りが好きです。\n"
+        "自分: 今度一緒に行きませんか？\n"
+        "相手: 会うつもりはありません。\n"
+        "自分: 分かりました。もう誘いません。\n"
+        "相手: 来週なら都合がつきます。\n"
+        "自分: そうなんですね。\n"
+        "相手: 新作のケーキを食べてみたいです。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "新作のケーキに関心があります。",
+            "evidence": ["新作のケーキを食べてみたいです"],
+            "invite_example": "よかったら一緒に行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "stop"
+
+
+def test_firm_refusal_in_a_date_message_survives_a_later_counterproposal():
+    conversation = (
+        "相手: 土曜は予定があって会えません。でも、あなたとは会うつもりはありません。\n"
+        "自分: 分かりました。無理に誘いません。\n"
+        "相手: 来週なら都合がつきます。\n"
+        "自分: そうなんですね。\n"
+        "相手: 新作のケーキを食べてみたいです。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "新作のケーキに関心があります。",
+            "evidence": ["新作のケーキを食べてみたいです"],
+            "invite_example": "よかったら一緒に行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "stop"
+
+
+def test_earlier_firm_refusal_in_same_message_is_not_downgraded_to_date_unavailability():
+    conversation = (
+        "相手: あなたとは会うつもりはありません。でも土曜は予定があって会えません。\n"
+        "自分: 分かりました。無理に誘いません。\n"
+        "相手: 来週なら都合がつきます。\n"
+        "自分: そうなんですね。\n"
+        "相手: 新作のケーキを食べてみたいです。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "新作のケーキに関心があります。",
+            "evidence": ["新作のケーキを食べてみたいです"],
+            "invite_example": "よかったら一緒に行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "stop"
+
+
+def test_later_refusal_overrides_date_counterproposal_in_same_message():
+    conversation = (
+        "相手: 土曜は予定があって会えません。\n"
+        "自分: 分かりました。無理に誘いません。\n"
+        "相手: 来週なら都合がつきますが、やっぱり会うのはやめます。"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "continue",
+            "rationale": "相手が来週なら都合がつくと言っています。",
+            "evidence": ["来週なら都合がつきます"],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "stop"
+
+
 @pytest.mark.parametrize(
     "tentative_or_negative_reassurance",
     [
@@ -411,6 +739,9 @@ def test_explicitly_resolved_prior_safety_concern_does_not_block_later_interest(
         "安全面ではまだ安心したとは言えません",
         "安全面の心配はなくなったわけではありません",
         "安全面の不安はなくなったとは言えないです",
+        "会うことに不安はないと思います",
+        "会うのは怖くないでしょう",
+        "怖くない気がします",
         "安全面の不安はなくなったかも",
         "安全面の不安はなくなったかな",
         "安全面は大丈夫ですか？",
@@ -629,8 +960,15 @@ def test_strategy_never_treats_self_message_as_interest_evidence():
     assert result is None
 
 
-def test_third_party_reported_interest_does_not_authorize_an_invitation():
-    statement = "友達が『一緒に行きたい』って言ってた"
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "友達が『一緒に行きたい』って言ってた",
+        "妹があなたと一緒に行きたいと言ってました",
+        "先輩が一緒に行きたいと話していました",
+    ],
+)
+def test_third_party_reported_interest_does_not_authorize_an_invitation(statement):
     raw = _raw_strategy(
         {
             "action": "invite",
@@ -865,14 +1203,34 @@ def test_first_person_counterproposal_is_not_blocked_by_unrelated_friend_availab
     assert not any("誘い" in violation for violation in violations)
 
 
-def test_third_party_date_does_not_authorize_scheduling_on_that_date_for_self():
+@pytest.mark.parametrize(
+    "third_party_availability",
+    [
+        "友達が土曜は難しいけど日曜なら大丈夫って言ってました。",
+        "妹が土曜は難しいけど日曜なら大丈夫って言ってました。",
+    ],
+)
+def test_third_party_date_does_not_authorize_scheduling_on_that_date_for_self(
+    third_party_availability,
+):
     violations = validate_candidate_replies(
         ["日曜ならどうですか？"],
         1,
-        counterpart_message=(
-            "友達が土曜は難しいけど日曜なら大丈夫って言ってました。"
-            "私は来週なら会えます。"
-        ),
+        counterpart_message=f"{third_party_availability}私は来週なら会えます。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_reported_third_party_interest_does_not_authorize_date_scheduling():
+    statement = "友達がぜひ行きたいと話していたそうです。"
+    violations = validate_candidate_replies(
+        ["日曜はどうですか？"],
+        1,
+        counterpart_message=statement,
+        conversation_messages=[{"sender": "contact", "content": statement}],
         strategy_mode="tapple",
         tapple_action="continue",
     )
@@ -1281,6 +1639,367 @@ def test_tapple_allows_empathy_and_an_off_ramp_after_decline():
     )
 
     assert violations == []
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        [
+            {"sender": "contact", "content": "会うのはまだ少し迷っています。"},
+            {"sender": "self", "content": "急がなくて大丈夫です。"},
+            {"sender": "contact", "content": "そうですね。"},
+        ],
+        [
+            {"sender": "contact", "content": "直接会うのは安全面が不安です。"},
+            {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+            {"sender": "contact", "content": "そうですね。"},
+        ],
+        [
+            {"sender": "contact", "content": "直接会うのは安全面が不安です。"},
+            {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+            {"sender": "contact", "content": "お化け屋敷は怖くないです。"},
+        ],
+        [
+            {"sender": "contact", "content": "直接会うのは安全面が不安です。"},
+            {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+            {"sender": "contact", "content": "会うのは怖くないですし、安全面が気になります。"},
+        ],
+        [
+            {"sender": "contact", "content": "会うつもりはありません。"},
+            {"sender": "self", "content": "分かりました。もう誘いません。"},
+            {"sender": "contact", "content": "そうですね。"},
+        ],
+    ],
+    ids=[
+        "prior-hesitation",
+        "prior-safety-concern",
+        "unrelated-fear-denial",
+        "contradictory-safety-concern",
+        "prior-decline",
+    ],
+)
+def test_tapple_carries_unresolved_meeting_boundary_into_reply_validation(history):
+    violations = validate_candidate_replies(
+        ["わかりました。考え直してもらえるとうれしいです。"],
+        1,
+        counterpart_message=history[-1]["content"],
+        chat_history_text="相手: 会うことへの懸念があります\n自分: 急がなくて大丈夫です\n相手: そうですね。",
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="wait",
+    )
+
+    assert any("考え直す" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "pressure_reply",
+    [
+        "わかりました。一度だけ会ってくれませんか？",
+        "一回だけ、会うことを考えてくれませんか？",
+        "もう一度だけチャンスをください。",
+        "最後に一度だけお願いします。",
+        "断られたのは分かっていますが、少しだけ会ってほしいです。",
+        "今回だけ会ってくれませんか？",
+        "そう言わずに会ってもらえませんか？",
+        "もう少し考えてくれませんか？",
+        "ちょっとだけ会うことを考えてもらえませんか？",
+        "考え直していただけると幸いです。",
+    ],
+)
+def test_tapple_blocks_one_more_chance_pressure_after_historical_decline(pressure_reply):
+    history = [
+        {"sender": "contact", "content": "会うつもりはありません。"},
+        {"sender": "self", "content": "分かりました。もう誘いません。"},
+        {"sender": "contact", "content": "そうですね。"},
+    ]
+
+    violations = validate_candidate_replies(
+        [pressure_reply],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="stop",
+    )
+
+    assert any("考え直す" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "boundary_message",
+    [
+        "直接会うのは安全面が不安です。",
+        "会うのは少し迷っています。",
+    ],
+)
+def test_tapple_invite_action_cannot_override_unresolved_historical_boundary(
+    boundary_message,
+):
+    history = [
+        {"sender": "contact", "content": boundary_message},
+        {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+        {"sender": "contact", "content": "そうですね。"},
+    ]
+
+    violations = validate_candidate_replies(
+        ["そうなんですね。よかったら来週カフェに行きませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert any("誘い" in violation or "断り" in violation for violation in violations)
+
+
+def test_tapple_positive_interest_does_not_clear_unresolved_safety_concern_for_scheduling():
+    history = [
+        {"sender": "contact", "content": "直接会うのは安全面が不安です。"},
+        {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+        {"sender": "contact", "content": "ぜひ一緒に行きたいです。"},
+    ]
+
+    violations = validate_candidate_replies(
+        ["よかったです。来週カフェでお茶しませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation or "断り" in violation for violation in violations)
+
+
+def test_tapple_third_party_interest_does_not_clear_contact_hesitation():
+    history = [
+        {"sender": "contact", "content": "会うのはまだ少し迷っています。"},
+        {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+        {"sender": "contact", "content": "友達は一緒に行きたいと言っています。"},
+    ]
+
+    violations = validate_candidate_replies(
+        ["よかったら来週カフェに行きませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert any("誘い" in violation or "断り" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "友達に会いたいです。",
+        "友達と会いたいです。",
+        "友達から『会いたいです』と言われました。",
+        "友達から『会いたいです』と言っていました。",
+        "友達から『会いたいです』って言ってました。",
+        "友達から『会いたいです』と話していました。",
+        "友達は『あなたに会いたいです』と言っていました。",
+        "友達は『あなたに会いたいです』って言ってました。",
+    ],
+)
+def test_tapple_wish_to_meet_third_party_does_not_clear_contact_hesitation(statement):
+    history = [
+        {"sender": "contact", "content": "会うのはまだ少し迷っています。"},
+        {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+        {"sender": "contact", "content": statement},
+    ]
+
+    violations = validate_candidate_replies(
+        ["よかったら来週カフェに行きませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert any("誘い" in violation or "断り" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "友達は一緒に行きたいと言っていますが、私はあなたと会いたいです。",
+        "友達はいるけど、私はあなたと会いたいです。",
+        "友達は『あなたに会いたいです』と言っていましたが、私はあなたと会いたいです。",
+        "妹の話ですが、私はあなたと一緒に行きたいです。",
+        "親切な人で、私もあなたと一緒に行きたいです。",
+    ],
+)
+def test_tapple_first_person_interest_can_clear_hesitation_alongside_third_party_interest(
+    statement,
+):
+    history = [
+        {"sender": "contact", "content": "会うのはまだ少し迷っています。"},
+        {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+        {
+            "sender": "contact",
+            "content": statement,
+        },
+    ]
+
+    violations = validate_candidate_replies(
+        ["嬉しいです。よかったら来週カフェに行きませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert not any("誘い" in violation or "断り" in violation for violation in violations)
+
+
+def test_tapple_safety_resolution_does_not_clear_later_standalone_fear():
+    history = [
+        {"sender": "contact", "content": "直接会うのは安全面が不安です。"},
+        {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+        {
+            "sender": "contact",
+            "content": "安全面の不安はありません。まだ不安です。",
+        },
+    ]
+
+    violations = validate_candidate_replies(
+        ["よかったら来週カフェに行きませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert any("誘い" in violation or "断り" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        "安全面の不安はなくなりました。",
+        "安全面の不安はありません。",
+        "会うことに不安はないです。",
+        "直接会うのは怖くありません。",
+        "安全面の不安はなくなりました。明日は雨でしょう。",
+    ],
+)
+def test_tapple_does_not_treat_resolved_safety_concern_as_current_pressure_context(
+    resolution,
+):
+    history = [
+        {"sender": "contact", "content": "直接会うのは安全面が不安です。"},
+        {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+        {"sender": "contact", "content": f"{resolution}ぜひ一緒に行きたいです。"},
+    ]
+
+    violations = validate_candidate_replies(
+        ["わかりました。考え直してもらえるとうれしいです。"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("考え直す" in violation for violation in violations)
+
+
+def test_tapple_allows_supportive_reply_when_prior_safety_concern_is_unresolved():
+    history = [
+        {"sender": "contact", "content": "直接会うのは安全面が不安です。"},
+        {"sender": "self", "content": "無理に決めなくて大丈夫です。"},
+        {"sender": "contact", "content": "そうですね。"},
+    ]
+
+    violations = validate_candidate_replies(
+        ["分かりました。無理に会わなくて大丈夫です。"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="wait",
+    )
+
+    assert violations == []
+
+
+def test_production_generation_repairs_pressure_after_historical_hesitation(
+    client, monkeypatch
+):
+    from app import database
+
+    latest_contact = "そうですね。"
+    unsafe_reply = "わかりました。考え直してもらえるとうれしいです。"
+    safe_reply = "分かりました。無理に会わなくて大丈夫です。"
+    strategy = {
+        "action": "wait",
+        "rationale": "会うことへの迷いが残っています。",
+        "evidence": [latest_contact],
+        "invite_example": None,
+    }
+    responses = [
+        _raw_strategy(strategy, replies=[unsafe_reply]),
+        _raw_strategy(strategy, replies=[safe_reply]),
+    ]
+
+    class QueuedProvider:
+        name = "gemini"
+
+        def generate(self, **_kwargs):
+            return responses.pop(0)
+
+        def available_models(self):
+            return ["gemini-3.5-flash-lite"]
+
+    provider = QueuedProvider()
+    monkeypatch.setattr("app.routers.generation.factory.get_provider", lambda *_args: provider)
+    monkeypatch.setattr(
+        "app.routers.generation.get_ai_config",
+        lambda: {
+            "provider": "gemini",
+            "model": "gemini-3.5-flash-lite",
+            "api_key": "test-key",
+            "temperature": 0.2,
+            "max_tokens": 512,
+            "history_limit": 50,
+            "fallback_provider": "gemini",
+            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_api_key": "test-key",
+            "secondary_api_key": "",
+        },
+    )
+    monkeypatch.setattr("app.routers.generation.time.sleep", lambda *_args: None)
+    database.set_setting("ai_provider", "gemini")
+    database.set_setting("ai_model", "gemini-3.5-flash-lite")
+    database.set_setting("api_key_gemini", "test-key")
+
+    contact_id = client.post("/api/contacts", json={"name": "テストさん"}).json()["id"]
+    for sender, content in (
+        ("contact", "会うのはまだ少し迷っています。"),
+        ("self", "急がなくて大丈夫です。"),
+        ("contact", latest_contact),
+    ):
+        client.post(
+            f"/api/contacts/{contact_id}/messages",
+            json={"sender": sender, "content": content},
+        )
+
+    response = client.post(
+        "/api/generate",
+        json={"contact_id": contact_id, "candidates": 1, "strategy_mode": "tapple"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["replies"] == ["分かりました。\n無理に会わなくて大丈夫です。"]
+    assert response.json()["strategy"]["action"] == "wait"
+    assert responses == []
 
 
 def test_decline_forces_stop_even_if_model_says_invite():
@@ -2500,8 +3219,15 @@ def test_strategy_comes_from_the_repaired_output_when_repair_is_accepted(client,
         "今は会うのはちょっと考えたいです。",
     ],
 )
+@pytest.mark.parametrize(
+    "invalid_reply",
+    [
+        "わかった！でも来週カフェに行こうよ！",
+        "わかりました。考え直してもらえるとうれしいです。",
+    ],
+)
 def test_decline_reinvitation_is_repaired_before_a_reply_is_returned(
-    client, monkeypatch, decline
+    client, monkeypatch, decline, invalid_reply
 ):
     from app import database
 
@@ -2512,7 +3238,7 @@ def test_decline_reinvitation_is_repaired_before_a_reply_is_returned(
             "evidence": [decline],
             "invite_example": "駅前のカフェでお茶しませんか？",
         },
-        replies=["わかった！でも来週カフェに行こうよ！"],
+        replies=[invalid_reply],
     )
     repaired = _raw_strategy(
         {

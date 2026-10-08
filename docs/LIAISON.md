@@ -524,3 +524,11 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - 独立レビューで日付のない「ぜひ会いましょう」と丁寧語の「お会いしましょう」が再勧誘判定をすり抜ける問題を見つけた。REDテストで再現し、ベンチに失敗理由`reinvitation_not_allowed`が記録されることまで確認して修正した。修正後のfresh Python Reviewerは **PASS**
 - Tapple focused suite **337 passed**、backend全体 **844 passed / 2 warnings**。frontend production build、`compileall`、`git diff --check`も **PASS**。主3.5→主3.1→予備3.5→予備3.1のfallbackは既存mock suiteで検証済み
 - テストRED commits `2074291`、`53aa7e7`、`5ba125d`、シナリオ追加commit `777d05f`、実装commit `cf0e0d0`、`c854f16`、`36a54d8`。最新コードcommit `36a54d8`。GitHub main `a75ba76`は未変更。Gemini APIは呼び出しておらず、70ケース・Contact Bench・Tapple 8件の実生成と返信レビューは未実施。Step 18-R4は未完成
+
+## Step 18-R4 Tapple Iteration 26: 第三者の意向と本人の意思を分離（2026-10-09）
+
+- 第三者の希望や伝聞（友人・親族・同僚・先輩など）を、相手本人の会う意思や日程承諾として扱わない。根拠抜粋は元の発言全体と照合し、第三者の発言範囲と重なるものは招待根拠から除外する。同じ発言に本人の明確な意思が別に含まれる場合は、その部分を本人の意思として扱う
+- 明確な拒否の後でも、本人自身が改めて会いたいと明示すれば再開できる。話題への関心、第三者の意向、日程の都合だけでは拒否を解除しない。未解消の迷い・安全面の懸念がある間は、`invite`指定でも日程調整でも誘いを通さない。安全への不安を否定した後に「まだ不安」と続く発言も、解消済みと判定しない
+- 「今回だけ会って」「そう言わずに会って」「もう少し考えて」「考え直していただけると幸い」などの間接的な説得表現と、複数の日程理由を含む発言の拒否分類について回帰テストを追加した。引用・伝聞で明るい承諾に見えても、第三者の発言なら本人の承諾として扱わない
+- `python -m pytest backend/tests -q` **968 passed / 2 warnings**。第三者境界を含むTapple strategy tests **403 passed**。Gemini primary3.5→primary3.1→secondary3.5→secondary3.1のrate-limit切替テスト **45 passed**。frontend production build、Python compileall、benchmark `--help`、`git diff --check` **PASS**。独立Safety ReviewerとPython Reviewerはともに**PASS**
+- Gemini APIは未呼出し。朝の確認までは実キー疎通を保留する。実APIでの最新70ケース、Contact Bench 3/3、Tapple全11ケースの生成文と目視評価が残るため、最終判定は**未完成**。作業branchのWIPを更新し、upstream mainは変更しない

@@ -128,7 +128,12 @@ _TAPPLE_DECLINE_RE = re.compile(
     r"わけではない|わけじゃない|とは限らない|とは言えない)|"
     r"(?:会う|行く).{0,8}つもりは(?:ない|ありません)|"
     r"会う.{0,12}(?:難し(?!くない|いとは思わない|いと思わない|いとは思いません|いと思いません)|"
-    r"無理(?!ではない)|できな(?!くはない)|したくな|考えていな)|"
+    r"無理(?!ではない)|できな(?!くはない)|したくな|やめ(?:ます|たい|ておく|よう)|"
+    r"考えていな)|"
+    r"(?:会う|デート|お出かけ)(?:こと|の)?(?:は|を)(?:ちょっと)?"
+    r"ご?遠慮(?:します|したい(?:です)?|させてください|させていただきます|"
+    r"させてもらいます|ください|願います|いただけますか|いただけませんか|"
+    r"いただければと思います)|"
     r"(?:デート|お出かけ).{0,12}(?:難し|無理|できな|したくな)|"
     r"(?:会えない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません|かな|かも)|"
     r"会えません(?!か|わけではありません|とは言えません)|"
@@ -143,7 +148,7 @@ _TAPPLE_DECLINE_RE = re.compile(
     r"空いていません(?!か|わけではありません|とは言えません))|"
     r"(?:土曜|土曜日|日曜|日曜日|平日|週末|今週|来週|今月|来月|再来月|別の日|別日)"
     r".{0,12}(?:予定があって|予定があり|都合が悪|空いていない|空いてません|厳し)|"
-    r"今回は.{0,8}(?:やめ|遠慮)|"
+    r"今回は.{0,8}(?:やめ|遠慮(?!なく))|"
     r"ごめんなさい.{0,16}(?:会|行)|今は.{0,8}(?:難し|無理|できな))"
 )
 _TAPPLE_COUNTERPROPOSAL_RE = re.compile(
@@ -209,30 +214,78 @@ _TAPPLE_DISRESPECTFUL_REPLY_RE = re.compile(
 )
 
 
-def _unqualified_tapple_decline_match(text: str) -> re.Match[str] | None:
+def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
     declines = list(_TAPPLE_DECLINE_RE.finditer(text))
     if not declines:
-        return None
+        return []
     counterproposals = list(_TAPPLE_COUNTERPROPOSAL_RE.finditer(text))
-    return next(
-        (
-            decline
-            for decline in reversed(declines)
-            if not any(
-                counter.start() <= decline.start() < counter.end()
-                for counter in counterproposals
+    return [
+        decline
+        for decline in declines
+        if not any(
+            counter.start() <= decline.start() < counter.end()
+            for counter in counterproposals
+        )
+    ]
+
+
+_TAPPLE_DIRECT_COUNTERPROPOSAL_RE = re.compile(
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日)"
+    r".{0,8}(?:なら|は).{0,10}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)"
+)
+
+
+def _unresolved_tapple_decline_match(
+    conversation_messages: list[dict[str, Any]], last_contact_index: int
+) -> re.Match[str] | None:
+    unresolved: re.Match[str] | None = None
+    unresolved_is_date_specific = False
+    for message in conversation_messages[: last_contact_index + 1]:
+        if message.get("sender") != "contact":
+            continue
+        text = prompt.clean_chat_message_content(str(message.get("content") or ""))
+        decline_matches = _unqualified_tapple_decline_matches(text)
+        date_unavailability_matches = list(
+            _TAPPLE_DATE_UNAVAILABILITY_RE.finditer(text)
+        )
+        for decline_match in decline_matches:
+            is_date_specific = bool(
+                any(
+                    date_match.start() <= decline_match.start() < date_match.end()
+                    for date_match in date_unavailability_matches
+                )
             )
-        ),
-        None,
-    )
-
-
-def _has_unqualified_tapple_decline(text: str) -> bool:
-    return _unqualified_tapple_decline_match(text) is not None
+            if not is_date_specific or unresolved is None or unresolved_is_date_specific:
+                unresolved = decline_match
+                unresolved_is_date_specific = is_date_specific
+        if (
+            unresolved
+            and not decline_matches
+            and _has_first_person_tapple_invite_positive(text)
+            and not _has_tapple_explicit_hesitation(text)
+            and not _has_tapple_safety_concern(text)
+        ):
+            unresolved = None
+            unresolved_is_date_specific = False
+        elif (
+            unresolved
+            and unresolved_is_date_specific
+            and not decline_matches
+            and _TAPPLE_DIRECT_COUNTERPROPOSAL_RE.search(text)
+            and not _TAPPLE_THIRD_PARTY_COUNTERPROPOSAL_RE.search(text)
+            and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(text)
+            and not _has_tapple_explicit_hesitation(text)
+            and not _has_tapple_safety_concern(text)
+        ):
+            unresolved = None
+            unresolved_is_date_specific = False
+    return unresolved
 _TAPPLE_INVITE_POSITIVE_RE = re.compile(
     r"(?:一緒に.{0,8}(?:行きたい|行こう|行きましょう|会いたい|会おう|会いましょう)|"
     r"(?:今度|近いうち).{0,8}(?:一緒に行きたい|会いたい|会いましょう)|"
-    r"会いたい(?:です|！|$)|会いましょう|誘って(?:ください|ね|！|$))"
+    r"(?:会いたい|会ってみたい)(?:です|！|。|$)|会いましょう|誘って(?:ください|ね|！|$))"
 )
 _TAPPLE_ACTIVITY_INTEREST_RE = re.compile(
     r"(?:行ってみたい(?:です|！|。|$)|食べてみたい(?:です|！|。|$)|"
@@ -447,6 +500,7 @@ _TAPPLE_SAFETY_CONCERN_RE = re.compile(
     r"(?:少し|ちょっと|まだ)?(?:不安|怖|こわ|恐|心配|抵抗|ためら)|"
     r"(?:安全|安全性).{0,12}(?:かどうか|か).{0,12}(?:分から|わから|不明|判断できない)|"
     r"(?:安全面|安全性|安全).{0,10}(?:不安|心配|怖|こわ|恐)|"
+    r"(?:安全面|安全性|安全).{0,12}(?:気にな|確認したい|気掛かり)|"
     r"(?:不安|怖|こわ|恐|心配).{0,20}(?:安全|信頼|信用|身元|素性)|"
     r"(?:信頼|信用|信じられ).{0,12}(?:できるか|まだ|難し|不安|心配|わから|分から|怖|こわ|恐)|"
     r"(?:信頼|信用|信じられ)(?:できない|できるか不安)|"
@@ -540,15 +594,20 @@ _TAPPLE_SAFETY_RESOLUTION_RE = re.compile(
     r"安心(?:しました|した)|大丈夫です|問題ありません|問題ないです|心配ありません)|"
     r"(?:不安(?:は|が)?(?:なくなりました|なくなった|消えました|消えた|"
     r"和らぎました|和らいだ|解消しました|解消した)|安心(?:しました|した))"
-    r".{0,16}(?:会うこと|会うの|初対面|対面|安全面|安全))"
+    r".{0,16}(?:会うこと|会うの|初対面|対面|安全面|安全))|"
+    r"(?:(?:会うこと|会うの|直接会う|初対面|対面|安全面|安全).{0,12})"
+    r"(?:不安|心配|怖|こわ|恐)(?:く)?(?:は|が)?"
+    r"(?:ありません|ないです|ない|ございません)"
 )
 _TAPPLE_SAFETY_RESOLUTION_QUALIFIER_RE = re.compile(
-    r"(?:とは言え|わけでは|わけじゃ|かもしれ|かも|かな|みたい|気がする|そうにない|ていません|ていない|"
-    r"ないとは|ですか|でしょうか|？|\?|まだ.{0,8}(?:不安|心配|安心)|"
+    r"(?:とは言え|わけでは|わけじゃ|かもしれ|かも|かな|みたい|気がし(?:ます|た)?|そうにない|ていません|ていない|"
+    r"ないとは|と思(?:う|います|った|いました)|ですか|でしょう|？|\?|まだ.{0,8}(?:不安|心配|安心)|"
     r"(?:不安|心配).{0,8}(?:残|続|ある))"
 )
 _TAPPLE_SAFETY_CONTRADICTORY_TAIL_RE = re.compile(
-    r"(?:が|けど|けれど|でも|ものの).{0,20}(?:不安|心配|怖|恐|抵抗|迷|難し)"
+    r"(?:が|けど|けれど|でも|ものの).{0,20}(?:不安|心配|怖|恐|抵抗|迷|難し)|"
+    r"(?:[。.!！?？\n]|^).{0,10}(?:まだ|やっぱり|少し|ちょっと).{0,6}"
+    r"(?:不安|心配|怖|恐|抵抗|迷|難し)"
 )
 
 
@@ -576,17 +635,35 @@ def _has_unresolved_tapple_safety_or_hesitation(
         )
         if concern_after_resolution:
             unresolved_safety = True
-        elif (
-            resolution_match
-            and not _TAPPLE_SAFETY_RESOLUTION_QUALIFIER_RE.search(text)
-        ):
-            unresolved_safety = False
+        elif resolution_match:
+            clause_start = max(
+                (text.rfind(boundary, 0, resolution_match.start()) + 1
+                 for boundary in "。.!！?？\n"),
+                default=0,
+            )
+            clause_ends = [
+                text.find(boundary, resolution_match.end())
+                for boundary in "。.!！?？\n"
+                if text.find(boundary, resolution_match.end()) >= 0
+            ]
+            clause_end = min(clause_ends, default=len(text))
+            resolution_clause = text[clause_start:clause_end]
+            if not _TAPPLE_SAFETY_RESOLUTION_QUALIFIER_RE.search(resolution_clause):
+                unresolved_safety = False
         elif _has_tapple_safety_concern(text):
             unresolved_safety = True
 
+        has_first_person_invite_positive = any(
+            not any(
+                third_party.start() < positive.end()
+                and positive.start() < third_party.end()
+                for third_party in _TAPPLE_THIRD_PARTY_INTEREST_RE.finditer(text)
+            )
+            for positive in _TAPPLE_INVITE_POSITIVE_RE.finditer(text)
+        )
         if _has_tapple_explicit_hesitation(text):
             unresolved_hesitation = True
-        elif _TAPPLE_INVITE_POSITIVE_RE.search(text):
+        elif has_first_person_invite_positive:
             unresolved_hesitation = False
 
     return unresolved_safety or unresolved_hesitation
@@ -595,13 +672,64 @@ def _has_unresolved_tapple_safety_or_hesitation(
 def _has_tapple_post_acceptance_hedge(text: str) -> bool:
     accepted = _TAPPLE_ACCEPTED_INVITATION_RE.search(text)
     return bool(accepted and _TAPPLE_INVITE_HEDGE_RE.search(text[accepted.end() :]))
-_TAPPLE_THIRD_PARTY_INTEREST_RE = re.compile(
-    r"(?:友達|友人|同僚|家族|知人|別の人|他の人|ほかの人|彼氏|彼女).{0,40}"
-    r"(?:一緒に.{0,8}(?:行きたい|行こう|会いたい|会おう)|誘って(?:ください|ね)|会いましょう)|"
-    r"(?:行きたい|会いたい).{0,16}(?:って|と)(?:言って(?:た|いた|います)|聞いて(?:た|いた|います))"
+
+
+_TAPPLE_THIRD_PARTY_PERSON_PATTERN = (
+    r"(?:友達|友人|同僚|家族|兄弟|兄|姉|弟|妹|父|母|両親|親戚|"
+    r"いとこ|従兄弟|従姉妹|甥|姪|祖父|祖母|先輩|後輩|知人|別の人|他の人|ほかの人|"
+    r"彼氏|彼女)"
 )
+
+
+_TAPPLE_THIRD_PARTY_INTEREST_RE = re.compile(
+    _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"(?:が|は).{0,20}(?:会いたい|会ってみたい|一緒に行きたい|行きたい).{0,12}"
+    + r"(?:と言って|って言って|と話して|って話して|と聞|って聞|と言われ|って言われ)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"から.{0,16}"
+    + r"(?:会いたい|会ってみたい|一緒に行きたい|行きたい).{0,12}"
+    + r"(?:と言われ|って言われ|と聞|って聞|と伝えられ|と言って|って言って|と話して|って話して)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"(?:に|と)(?:あなた)?(?:会いたい|会ってみたい)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"(?:が|は|も)(?:(?:あなた|私)(?:に|と)(?:一緒に)?|一緒に|ぜひ)?"
+    + r"(?:会いたい|会ってみたい|会いたがって|行きたい|行きたがって|行こう|会おう)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"と(?:一緒に)?(?:行きたい|行こう|会いたい|会おう)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"を.{0,6}誘って(?:ください|ね)|"
+    + r"(?:行きたい|会いたい).{0,16}(?:って|と)(?:言って(?:た|いた|います)|聞いて(?:た|いた|います))"
+)
+
+
+def _has_first_person_tapple_intent_evidence(
+    text: str, evidence: str, intent_pattern: re.Pattern[str]
+) -> bool:
+    third_party_matches = list(_TAPPLE_THIRD_PARTY_INTEREST_RE.finditer(text))
+    evidence_start = 0
+    while (evidence_start := text.find(evidence, evidence_start)) >= 0:
+        for intent_match in intent_pattern.finditer(evidence):
+            match_start = evidence_start + intent_match.start()
+            match_end = evidence_start + intent_match.end()
+            if not any(
+                third_party.start() < match_end
+                and match_start < third_party.end()
+                for third_party in third_party_matches
+            ):
+                return True
+        evidence_start += 1
+    return False
+
+
+def _has_first_person_tapple_invite_positive(text: str) -> bool:
+    return _has_first_person_tapple_intent_evidence(
+        text, text, _TAPPLE_INVITE_POSITIVE_RE
+    )
+
+
 _TAPPLE_THIRD_PARTY_COUNTERPROPOSAL_RE = re.compile(
-    r"(?:友達|友人|同僚|家族|知人|彼氏|彼女|別の人|他の人|ほかの人).{0,40}"
+    _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r".{0,40}"
     r"(?P<date>土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日).{0,16}"
     r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
     r"都合がつきます|都合がつく|都合が合います|都合が合う)"
@@ -635,6 +763,24 @@ _TAPPLE_REINVITATION_RE = re.compile(
     r"(?:お会いしましょう|お会いしませんか|会いましょう|会いませんか|会おう(?:よ)?|"
     r"行きましょう|行きませんか|行こう(?:よ)?)"
     r"(?:[。！!？?]|$)"
+)
+_TAPPLE_RECONSIDERATION_PRESSURE_RE = re.compile(
+    r"(?:考え直|考えなお|もう一度.{0,8}考え).{0,12}"
+    r"(?:ほしい|もらえ|くれ|うれしい|嬉しい|ください|ませんか|どう)"
+    r"|(?:一度|一回)だけでも.{0,8}(?:会|会って|会えば)"
+    r"|(?:一度|一回)(?:だけ|だけでも)[、,\s]*"
+    r"(?:会(?:う|って|えば)|会う(?:こと|の).{0,8}(?:考え|検討))"
+    r"|(?:少し|今回|一度|一回|最後|もう一度|もう一回)だけ.{0,8}"
+    r"(?:会って|会うことを).{0,8}(?:ほしい|ください|くれ|もらえ)"
+    r"|(?:ちょっと|少し).{0,4}だけ.{0,8}(?:会って|会うことを).{0,8}"
+    r"(?:考え|検討).{0,12}(?:ください|くれ|もらえ|ほしい)"
+    r"|そう言わずに.{0,12}(?:会って|会うこと).{0,8}(?:ください|くれ|もらえ|ほしい)"
+    r"|もう少し.{0,8}(?:考え|検討).{0,12}(?:ください|くれ|もらえ|ほしい|ませんか)"
+    r"|考え直.{0,12}(?:いただけると|いただけますか|いただけませんか).{0,8}"
+    r"(?:幸い|嬉しい|うれしい)"
+    r"|(?:(?:もう一度|もう一回|最後に|一度|一回).{0,8}"
+    r"(?:チャンス|お願い).{0,8}(?:ください|くれ|もらえ|お願いします)?)"
+    r"|(?:チャンス|お願い).{0,8}(?:ください|くれませんか|お願いします)"
 )
 _TAPPLE_SCHEDULING_PROPOSAL_RE = re.compile(
     r"(?:今度|また|次|来月|再来月|今月|来年|来週|今週(?:末)?|週末|今日|明日|土曜(?:日)?|日曜(?:日)?|"
@@ -767,7 +913,9 @@ def _parse_tapple_strategy(
             str(conversation_messages[index].get("content") or "")
         )
     )
-    decline_match = _unqualified_tapple_decline_match(last_contact)
+    decline_match = _unresolved_tapple_decline_match(
+        conversation_messages, last_contact_index
+    )
     if decline_match:
         return TappleStrategy(
             action="stop",
@@ -780,9 +928,13 @@ def _parse_tapple_strategy(
         has_current_invitation_readiness = any(
             evidence in last_contact
             and (
-                _TAPPLE_INVITE_POSITIVE_RE.search(evidence)
+                _has_first_person_tapple_intent_evidence(
+                    last_contact, evidence, _TAPPLE_INVITE_POSITIVE_RE
+                )
                 or (
-                    _TAPPLE_ACTIVITY_INTEREST_RE.search(evidence)
+                    _has_first_person_tapple_intent_evidence(
+                        last_contact, evidence, _TAPPLE_ACTIVITY_INTEREST_RE
+                    )
                     and _has_recent_shared_tapple_activity(
                         conversation_messages, last_contact_index, last_contact
                     )
@@ -794,7 +946,6 @@ def _parse_tapple_strategy(
             and not _has_unresolved_tapple_safety_or_hesitation(
                 conversation_messages, last_contact_index
             )
-            and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(last_contact)
             for evidence in exact_evidence
         )
         if not has_current_invitation_readiness:
@@ -1852,6 +2003,7 @@ def validate_candidate_replies(
     chat_history_text: str = "",
     strategy_mode: str = "none",
     tapple_action: str | None = None,
+    conversation_messages: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     """返信案のHardバリデーションを行い、違反内容のリストを返す。空リストなら合格。
 
@@ -1882,8 +2034,24 @@ def validate_candidate_replies(
 
     if strategy_mode == "tapple":
         counterpart_text = counterpart_message or ""
+        boundary_messages = conversation_messages or (
+            [{"sender": "contact", "content": counterpart_text}]
+            if counterpart_text
+            else []
+        )
+        last_boundary_contact_index = next(
+            (
+                index
+                for index in range(len(boundary_messages) - 1, -1, -1)
+                if boundary_messages[index].get("sender") == "contact"
+            ),
+            -1,
+        )
         has_unqualified_decline = bool(
-            _has_unqualified_tapple_decline(counterpart_text)
+            last_boundary_contact_index >= 0
+            and _unresolved_tapple_decline_match(
+                boundary_messages, last_boundary_contact_index
+            )
         )
         counterproposal_match = _TAPPLE_COUNTERPROPOSAL_RE.search(counterpart_text)
         reported_third_party_text = re.split(
@@ -1932,9 +2100,16 @@ def validate_candidate_replies(
             reply_uses_self_proposed_date = bool(
                 self_proposed_date and self_proposed_date in rep
             )
+            unresolved_hesitation_or_safety = (
+                last_boundary_contact_index >= 0
+                and _has_unresolved_tapple_safety_or_hesitation(
+                    boundary_messages, last_boundary_contact_index
+                )
+            )
             scheduling_is_expected = (
                 tapple_action == "continue"
                 and not has_unqualified_decline
+                and not unresolved_hesitation_or_safety
                 and (
                     accepted_invitation_allows_scheduling
                     or (
@@ -1959,12 +2134,27 @@ def validate_candidate_replies(
                 violations.append(
                     f"案{i}に外部連絡先の交換や移動を促す表現があります。"
                     "連絡先交換を提案せず、タップル上で会話を続ける文面にしてください。"
-                )
+            )
             has_reinvitation = bool(_TAPPLE_REINVITATION_RE.search(rep))
             has_scheduling_proposal = bool(_TAPPLE_SCHEDULING_PROPOSAL_RE.search(rep))
+            has_unresolved_meeting_boundary = (
+                has_unqualified_decline or unresolved_hesitation_or_safety
+            )
+            invite_is_allowed = (
+                tapple_action == "invite"
+                and not has_unqualified_decline
+                and not unresolved_hesitation_or_safety
+            )
+            if (
+                has_unresolved_meeting_boundary
+                and _TAPPLE_RECONSIDERATION_PRESSURE_RE.search(rep)
+            ):
+                violations.append(
+                    f"案{i}が会うことへの断り・迷い・安全面の懸念に対して考え直すよう求めています。"
+                    "相手の意思を尊重し、説得せずに返してください。"
+                )
             if has_reinvitation and not (
-                (tapple_action == "invite" and not has_unqualified_decline)
-                or scheduling_is_expected
+                invite_is_allowed or scheduling_is_expected
             ):
                 violations.append(
                     f"案{i}に、会う誘いを返信文へ混ぜています。"
@@ -1972,8 +2162,7 @@ def validate_candidate_replies(
                     "相手が断っている場合は、誘い直しや説得をせずに返してください。"
                 )
             elif has_scheduling_proposal and not (
-                (tapple_action == "invite" and not has_unqualified_decline)
-                or scheduling_is_expected
+                invite_is_allowed or scheduling_is_expected
             ):
                 violations.append(
                     f"案{i}に、会う誘いを返信文へ混ぜています。"
@@ -4051,6 +4240,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             chat_history_text=ctx.get("chat_text", ""),
             strategy_mode=body.strategy_mode,
             tapple_action=tapple_strategy.action if tapple_strategy else None,
+            conversation_messages=ctx.get("chat_messages", []),
         )
 
         # Step 16 §22: 初回のみ、質問不要なのに全案質問つきなら soft repair を促す。
@@ -4134,6 +4324,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                 chat_history_text=ctx.get("chat_text", ""),
                 strategy_mode=body.strategy_mode,
                 tapple_action=repair_strategy.action if repair_strategy else None,
+                conversation_messages=ctx.get("chat_messages", []),
             )
             if (
                 repair_violations
@@ -4167,6 +4358,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                         chat_history_text=ctx.get("chat_text", ""),
                         strategy_mode=body.strategy_mode,
                         tapple_action=None,
+                        conversation_messages=ctx.get("chat_messages", []),
                     )
             if not repair_violations and repair_parsed and len(repair_parsed) == body.candidates:
                 final_parsed_replies = repair_parsed

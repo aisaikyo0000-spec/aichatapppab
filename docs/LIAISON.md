@@ -3,28 +3,28 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 Iteration 26 の検証結果を追記
+最終更新: 2026-10-09 / Step 18-R4 オフラインの受け入れ準備を更新
 
 ---
 
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（fork上。最新ローカルコードcommitは`14d7cb5`。今回の更新は未push）
+- 作業ブランチ: `codex/chat-quality-20261008`（最新コードcommitは`6eb82a6`。今回の作業前にforkで確認したcommitは`c510747`。このオフライン準備分はforkへpushする）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4 Iteration 26。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tapple境界修正に加え、ベンチ中のquota切替と直近の成功経路からの再開を追加。実API評価は未実施
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。ベンチ間でquota成功経路を引き継ぐ変更を追加し、テスト・レビュー中。実API評価は未実施
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を再開可能な時間帯に行う。完了条件がそろうまでStep 18-R4は合格としない
 
-## Step 18-R4 進捗（Iteration 26）
+## Step 18-R4 進捗（オフライン受け入れ準備）
 
-- ベンチの各ケースで毎回メイン3.5から試し直していたため、同一run内で直近に成功したモデル・アカウントを記録し、次のケースはその経路から再開するよう変更。3.5でquotaになればメイン3.1、続いて予備アカウントの3.5、3.1へ進む
+- ベンチの各ケースは同一run内の直近の成功経路から再開する。pipeline、Contact、Tappleは同じroute-stateファイルを使い、quotaで切り替わった経路を後続ベンチへ渡す。ファイルにはアカウント・モデルと、キー設定を照合するSHA-256 fingerprintだけを記録する。APIキー本体は保存せず、キー設定が変わった状態ファイルは無視する。runフォルダ名にもGUIDを含め、別runとの衝突を避ける
 - 接続確認は最大4回で、3.5メイン→3.1メイン→3.5予備→3.1予備の順。quota以外のエラーでは別モデル・アカウントへ切り替えない。APIキーはログ・artifactへ出力しない
 - アプリ本体にも予備アカウントへの切替があり、メイン3.5と3.1の両方がquotaの場合に予備3.5、続いて予備3.1を試す。既存の自動テストで4経路の順序と成功停止を確認
 - ローカル設定の安全確認では、provider=Gemini、標準3.5、予備モデル3.1、メイン・予備キーともに読み込み済み。キーの値は表示していない。実際にAPIが受け付けるかは朝の疎通確認まで未確定
 - 朝の実行手順を修正し、疎通で成功したモデルとアカウントを後続ベンチへ渡す。70ケースから返信例8件を表示して人が確認し、Contact/Tappleの返信artifactも確認してからPASSを入力する
-- 回帰: `python -m pytest backend/tests -q` → **849 passed**（FastAPI非推奨警告2件）。`frontend`の `npm run build`、`compileall`、ベンチCLIの `--help`、`git diff --check` → **PASS**。quota切替対象テストは **23 passed**
-- Python Reviewer: **PASS**。予備アカウントを含む順序、quota以外のエラーで切り替えないこと、後続ケースの再開位置を確認。別々に起動する3つのベンチ間では経路状態を共有しないため、後のベンチ開始時にquota済みの経路を一度試す可能性が残る
-- 実API呼び出し、最新70ケース、Contact Bench、Tapple実生成は未実施。quota状況は朝の疎通確認で判断する。Iteration 26の変更は検証済みコードcommit `14d7cb5` を含み、この時点では未push
+- route-state共有テストを追加し、修正前に失敗することを確認した。不正なUTF-8、キー設定の変更、fingerprintのない旧形式を含む状態ファイルは無視する。quota関連focused suiteは **27 passed**。全backend suiteは**853 passed / 2 warnings**。frontend build、compileall、3つのCLI `--help`、`git diff --check`はPASS。Tapple safety Reviewerとroute-state設定指紋Reviewerはともに**PASS**
+- 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全8シナリオを画面に表示する
+- ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。最新コードは独立レビュー後にforkへpushする
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）
 
@@ -379,11 +379,12 @@
 $ErrorActionPreference = 'Stop'
 $primaryKeyFile = 'C:\Users\poiuy\Desktop\sanma_python\claude\API\gemini2.md'
 $secondaryKeyFile = 'C:\Users\poiuy\Desktop\sanma_python\claude\API\gemini3.md'
-$runDir = Join-Path $env:TEMP ("aichatapp-live-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$runDir = Join-Path $env:TEMP ("aichatapp-live-" + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $runDir | Out-Null
 $pipelineOut = Join-Path $runDir 'pipeline.json'
 $contactOut = Join-Path $runDir 'contact.json'
 $tappleOut = Join-Path $runDir 'tapple.json'
+$quotaRouteState = Join-Path $runDir 'quota-route.json'
 $probeOutput = & python scripts/check_tapple_api_connectivity.py --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile 2>&1
 if ($LASTEXITCODE -ne 0) { throw "疎通に失敗したため追加呼び出しを止めます。$probeOutput" }
 $probeMatch = [regex]::Match(($probeOutput -join "`n"), 'PASS model=(\S+) account=(primary|secondary)')
@@ -398,7 +399,7 @@ if ($activeAccount -eq 'primary') {
     $secondaryKeyArgs = @()
 }
 Write-Output "評価開始: model=$activeModel account=$activeAccount"
-python scripts/run_pipeline_benchmark.py --out $pipelineOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs
+python scripts/run_pipeline_benchmark.py --out $pipelineOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
 if ($LASTEXITCODE -ne 0) { throw "70ケース評価が未完了です。artifact: $pipelineOut" }
 python scripts/verify_pipeline_benchmark.py --artifact $pipelineOut
 if ($LASTEXITCODE -ne 0) { throw '70件の網羅性、artifact指標、6つの閾値のいずれかが不合格です。' }
@@ -406,11 +407,11 @@ $pipelineArtifact = Get-Content -Raw $pipelineOut | ConvertFrom-Json
 $sampleIndices = @(0, 9, 19, 29, 39, 49, 59, 69) | Where-Object { $_ -lt $pipelineArtifact.cases.Count }
 $pipelineArtifact.cases[$sampleIndices] | Select-Object id, contact, candidates, issues | ConvertTo-Json -Depth 6
 if ((Read-Host '上の返信例とpipeline.jsonを確認し、文脈・事実性・自然さに問題がなければPASS') -cne 'PASS') { throw '実例の品質を確認できないためContact Benchを止めます。' }
-python scripts/run_contact_benchmark.py --out $contactOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs
+python scripts/run_contact_benchmark.py --out $contactOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
 if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。artifact: $contactOut" }
 Get-Content -Raw $contactOut
 if ((Read-Host '全9返信を読み、A/B/Cの文体差と文脈・自然さ・非コピー基準をすべて満たせばPASS') -cne 'PASS') { throw 'Contact Benchの品質基準が3/3に達していないためTapple評価を止めます。' }
-python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs
+python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
 if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が8/8でないか実行未完了です。artifact: $tappleOut" }
 Get-Content -Raw $tappleOut
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
@@ -424,6 +425,17 @@ if ($frontendBuildExit -ne 0) { throw 'frontend buildがPASSしていません�
 git diff --check
 if ($LASTEXITCODE -ne 0) { throw 'git diff --checkがPASSしていません。' }
 if ((Read-Host '最終diffを独立Python ReviewerとTapple safety ReviewerがPASSし、LIAISONと分析資料に実測値・判定・commitを記録済みならPASS') -cne 'PASS') { throw '全受け入れ条件が揃っていないためpushしません。' }
+git add docs/LIAISON.md docs/development/current-generation-analysis.md
+git commit -m "docs: record final Step 18-R4 acceptance results"
+if ($LASTEXITCODE -ne 0) { throw '受け入れ資料のcommitに失敗しました。' }
+if (git status --porcelain) { throw '未commit差分が残っています。確認前にpushしません。' }
+git push fork HEAD:codex/chat-quality-20261008
+if ($LASTEXITCODE -ne 0) { throw 'forkへのpushに失敗しました。' }
+git fetch fork codex/chat-quality-20261008
+$localSha = (git rev-parse HEAD).Trim()
+$remoteSha = ((git ls-remote fork refs/heads/codex/chat-quality-20261008) -split '\s+')[0]
+if ($localSha -ne $remoteSha) { throw "fork SHAが一致しません。local=$localSha remote=$remoteSha" }
+Write-Output "fork branch verified at $localSha"
 ```
 
 疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 8シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない

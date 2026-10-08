@@ -1,10 +1,14 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-09 オフライン受け入れ準備
+
+pipeline・Contact・Tappleの各ベンチが、同じrun専用`quota-route.json`で直近の成功アカウント・モデルを共有する。状態にはアカウントとモデルに加え、APIキー本体を含まないキー設定のSHA-256 fingerprintを記録する。別キー設定で読み込んだ状態は無視し、runフォルダ名にはGUIDを含める。追加したREDテストは修正前に再現した。不正なUTF-8やfingerprintのない旧形式の状態ファイルも無視する。README冒頭には旧仕様の記録であることを明記し、現行コードと分析資料、LIAISONへの参照を置いた。focused suiteは**27 passed**、backend全体は**853 passed / 2 warnings**。Tapple safety Reviewerとroute-state設定指紋Reviewerは**PASS**。実APIの疎通、最新70ケース、Contact Bench、Tapple実生成と文章確認はまだ行っていない。
+
 ## 2026-10-09 Tapple Iteration 26: quota経路の継続と朝の評価手順
 
-ベンチ各ケースの呼び出しで、前のケースが成功したモデル・アカウントから再開するようにした。quotaに当たった場合は、メイン3.5→メイン3.1→予備3.5→予備3.1の残りの経路を順に試す。アプリ本体もメイン3.5と3.1が両方quotaになった後、予備3.5、予備3.1へ進む。疎通確認はこの順で最大4回まで行い、quota以外のエラーでは切り替えない。経路状態は個々のベンチ実行内で保持する。pipeline、Contact、Tappleの別プロセス間では共有しないため、後続ベンチが制限済み経路を一度試す可能性がある。
+ベンチ各ケースの呼び出しで、前のケースが成功したモデル・アカウントから再開する。quotaに当たった場合は、メイン3.5→メイン3.1→予備3.5→予備3.1の残りの経路を順に試す。アプリ本体もメイン3.5と3.1が両方quotaになった後、予備3.5、予備3.1へ進む。疎通確認はこの順で最大4回まで行い、quota以外のエラーでは切り替えない。Iteration 26時点では経路状態を各ベンチ内だけで保持していたが、今回のオフライン準備でpipeline、Contact、Tapple間の共通route-stateを追加した。
 
-朝のPowerShell手順は疎通に成功したモデル・アカウントを後続ベンチへ渡し、70ケースからの返信例8件、Contact Bench全返信、Tapple全返信を画面に表示して確認できるようにした。ローカル設定はprovider=Gemini、標準3.5、予備3.1で、両キーが読み込み済みと確認した。キーの値は出力していないが、APIでの有効性は未確認。`python -m pytest backend/tests -q` は**849 passed**、frontend production build・`compileall`・CLI `--help`・`git diff --check`もPASS。Python Reviewerは**PASS**。APIは呼び出していないため、実生成評価と最新のquota状態は未確認。コードcommitは`14d7cb5`。Step 18-R4は継続中。
+朝のPowerShell手順は疎通に成功したモデル・アカウントを後続ベンチへ渡し、70ケースからの返信例8件、Contact Bench全返信、Tapple全返信を画面に表示して確認できるようにした。ローカル設定はprovider=Gemini、標準3.5、予備3.1で、両キーが読み込み済みと確認した。キーの値は出力していないが、APIでの有効性は未確認。Iteration 26時点の`python -m pytest backend/tests -q`は**849 passed**だった。共通route-state追加後は**851 passed / 2 warnings**で、frontend production build・`compileall`・CLI `--help`・`git diff --check`もPASS。Iteration 26時点のPython Reviewerは**PASS**。今回のroute-state変更はfresh review中。APIは呼び出していないため、実生成評価と最新のquota状態は未確認。Step 18-R4は継続中。
 
 ## 2026-10-09 Tapple Iteration 25: 迷い・安全懸念時の再勧誘ガード
 

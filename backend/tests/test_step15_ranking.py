@@ -86,6 +86,9 @@ def test_counterpart_not_copied():
     )
     assert "オウム返し" in sysp
     assert "温度感" in sysp
+    assert "20〜30%" not in sysp
+    assert "本人のGold実例" in sysp
+    assert "現在の会話内容" in sysp
 
 
 def test_closing_short_first():

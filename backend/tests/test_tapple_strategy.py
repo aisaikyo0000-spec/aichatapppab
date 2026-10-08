@@ -1061,6 +1061,24 @@ def test_unrelated_work_contrast_does_not_block_explicit_invite():
     assert result.invite_example is not None
 
 
+def test_unrelated_work_problem_does_not_block_explicit_invite():
+    statement = "仕事のことで悩んでいましたが、ぜひ一緒に行きたいです。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["ぜひ一緒に行きたいです"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example is not None
+
+
 def test_explicit_hesitation_before_positive_interest_blocks_invite():
     statement = "まだ迷っていますが、ぜひ一緒に行きたいです。"
     raw = _raw_strategy(
@@ -1203,6 +1221,18 @@ def test_unrelated_work_contrast_does_not_block_accepted_date_scheduling():
         ["ぜひ！日曜はどうですか？"],
         1,
         counterpart_message="今日は仕事が大変だけど、ぜひ一緒に行きたいです。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_unrelated_work_problem_does_not_block_date_scheduling():
+    violations = validate_candidate_replies(
+        ["ぜひ！日曜はどうですか？"],
+        1,
+        counterpart_message="仕事のことで悩んでいましたが、ぜひ一緒に行きたいです。",
         strategy_mode="tapple",
         tapple_action="continue",
     )

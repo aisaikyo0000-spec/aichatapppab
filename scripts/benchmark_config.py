@@ -109,6 +109,27 @@ def record_gemini_benchmark_success(
     return None
 
 
+def successful_gemini_benchmark_route(
+    config: dict[str, object], *, api_key: str, model: str
+) -> dict[str, str] | None:
+    """Describe a successful route without returning or persisting credentials."""
+    attempts = config.get("quota_attempts")
+    if not isinstance(attempts, list):
+        return None
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            continue
+        account = attempt.get("account")
+        if (
+            attempt.get("api_key") == api_key
+            and attempt.get("model") == model
+            and isinstance(account, str)
+            and account in {"primary", "secondary"}
+        ):
+            return {"account": account, "model": model}
+    return None
+
+
 def _quota_config_fingerprint(config: dict[str, object]) -> str | None:
     attempts = config.get("quota_attempts")
     if not isinstance(attempts, list):

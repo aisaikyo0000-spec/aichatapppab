@@ -49,6 +49,7 @@ from benchmark_config import (  # noqa: E402
     build_gemini_benchmark_config,
     load_gemini_benchmark_route,
     record_gemini_benchmark_success,
+    successful_gemini_benchmark_route,
 )
 from benchmark_response import benchmark_run_state, extract_api_error_code  # noqa: E402
 from app.ai.naturalness import evaluate_candidate_naturalness  # noqa: E402
@@ -148,6 +149,11 @@ def main() -> int:
             else:
                 if len(successful_attempts) > successful_before:
                     successful_key, successful_model = successful_attempts[-1]
+                    successful_route = successful_gemini_benchmark_route(
+                        ai_config, api_key=successful_key, model=successful_model
+                    )
+                    if successful_route is not None:
+                        entry["successful_route"] = successful_route
                     record_gemini_benchmark_success(
                         ai_config,
                         api_key=successful_key,

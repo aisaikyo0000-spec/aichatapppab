@@ -20,6 +20,7 @@ from benchmark_config import (
     build_gemini_benchmark_config,
     load_gemini_benchmark_route,
     record_gemini_benchmark_success,
+    successful_gemini_benchmark_route,
 )
 from benchmark_response import benchmark_run_state, extract_api_error_code
 
@@ -105,6 +106,7 @@ def seed_and_generate(
     for name in CONTACTS:
         cid = contact_ids[name]
         client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": probe})
+        successful_route = None
         successful_before = len(successful_attempts)
         r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
         if r.status_code != 200:
@@ -116,6 +118,11 @@ def seed_and_generate(
         else:
             if len(successful_attempts) > successful_before:
                 successful_key, successful_model = successful_attempts[-1]
+                successful_route = successful_gemini_benchmark_route(
+                    ai_config,
+                    api_key=successful_key,
+                    model=successful_model,
+                )
                 record_gemini_benchmark_success(
                     ai_config,
                     api_key=successful_key,
@@ -137,6 +144,7 @@ def seed_and_generate(
             out[name] = {
                 "replies": data["replies"],
                 "models_used": models,
+                "successful_route": successful_route,
                 "style_profile": {
                     "tier": profile["hierarchy_tier"],
                     "gold_samples": profile["same_contact_gold_samples"],

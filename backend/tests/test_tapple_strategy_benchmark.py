@@ -11,6 +11,8 @@ from run_tapple_strategy_benchmark import SCENARIOS, expectation_met
 def test_live_tapple_benchmark_covers_positive_ambiguous_and_declined_invites():
     assert {scenario["id"] for scenario in SCENARIOS} == {
         "explicit_interest",
+        "mutual_activity_interest",
+        "shared_activity_low_reciprocity",
         "accepted_invitation",
         "ambiguous_interest",
         "tentative_interest",
@@ -143,6 +145,7 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
     assert required_markers
     assert expectation_met(scenario, result)
 
+
     for natural_reply in (
         "そうですね。また話しましょう。",
         "また話したくなったら話しましょう。",
@@ -189,3 +192,25 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
     ):
         result["replies"] = [reply]
         assert not expectation_met(scenario, result), reply
+
+
+def test_shared_activity_low_reciprocity_waits_while_warm_reciprocal_case_invites():
+    scenarios = {scenario["id"]: scenario for scenario in SCENARIOS}
+    weak = scenarios["shared_activity_low_reciprocity"]
+    latest_contact = weak["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": "wait",
+            "rationale": "共通の話題はありますが、相手の反応がまだ短いため会話を続けます。",
+            "evidence": [latest_contact],
+            "invite_example": None,
+        },
+        "replies": ["パンケーキのお店、気になりますね。"],
+    }
+
+    assert expectation_met(weak, result)
+    assert weak["expected_action"] == "wait"
+    warm = scenarios["mutual_activity_interest"]
+    assert warm["expected_action"] == "invite"
+    assert len(warm["messages"]) >= 5
+    assert any("？" in message["content"] for message in warm["messages"])

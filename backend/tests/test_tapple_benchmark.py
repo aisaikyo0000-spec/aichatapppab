@@ -26,6 +26,8 @@ def test_qualified_non_refusal_is_not_an_unsupported_intent_marker(statement):
 def _valid_results():
     replies = {
         "explicit_interest": "いいですね、カフェ楽しみです！",
+        "mutual_activity_interest": "そのカフェよさそうですね。よかったら今度一緒に行きませんか？",
+        "shared_activity_low_reciprocity": "パンケーキのお店、気になりますね。",
         "accepted_invitation": "ありがとう、楽しみです！日程はいつがいいですか？",
         "ambiguous_interest": "カフェ気になりますね、どんなお店ですか？",
         "tentative_interest": "タイミングが合ったらぜひ、また話しましょう。",

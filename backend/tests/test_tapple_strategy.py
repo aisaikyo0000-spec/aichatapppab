@@ -70,6 +70,26 @@ def test_tapple_prompt_requests_evidence_grounded_separate_strategy():
     assert "返信候補ではありません" in messages[1]["content"]
     assert "安全面への不安" in messages[1]["content"]
     assert "相手を信頼できるか分からない" in messages[1]["content"]
+    assert "inviteは相手が同意したという意味ではなく" in messages[1]["content"]
+    assert "具体的な共通の活動や場所への関心" in messages[1]["content"]
+
+
+def test_ambiguous_interest_alone_does_not_authorize_an_invitation():
+    statement = "カフェいいですね！行ってみたいな。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "行きたいと言っています。",
+            "evidence": [statement],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
 
 
 def test_tapple_prompt_uses_declining_engagement_as_a_cue_without_using_reply_speed():
@@ -187,7 +207,9 @@ def test_strategy_can_suggest_a_low_pressure_invite_without_assuming_consent():
     conversation = (
         "相手: 最近カフェ巡りにはまっています。駅前のパンケーキのお店が気になっていて\n"
         "自分: 僕もカフェ好きです。パンケーキもよく食べます\n"
-        "相手: 写真を見たらおいしそうで、近いうちに行ってみたいです！"
+        "相手: 甘いものだと何が好きですか？\n"
+        "自分: パンケーキやプリンが好きです。新しいお店を探すのも楽しいですよね\n"
+        "相手: 駅前のパンケーキのお店、写真を見たらおいしそうで近いうちに行ってみたいです！"
     )
     raw = _raw_strategy(
         {
@@ -204,6 +226,225 @@ def test_strategy_can_suggest_a_low_pressure_invite_without_assuming_consent():
     assert result.action == "invite"
     assert result.invite_example is not None
     assert "会うことへの同意" in result.rationale
+
+
+def test_activity_interest_must_match_the_shared_activity_subject():
+    for latest in (
+        "カフェはよく行きます。新作の映画を見てみたいです！",
+        "パンケーキは好きですが、映画を見てみたいです！",
+        "パンケーキは好きとはいえ、映画を見てみたいです！",
+    ):
+        conversation = (
+            "相手: 最近カフェ巡りとパンケーキが好きです\n"
+            "自分: 僕もカフェとパンケーキが好きです\n"
+            f"相手: {latest}"
+        )
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "共通の話題があるので誘います。",
+                "evidence": ["映画を見てみたいです"],
+                "invite_example": "よかったら駅前のカフェに行きませんか？",
+            }
+        )
+
+        result = _parse_tapple_strategy(raw, conversation)
+
+        assert result is not None
+        assert result.action == "wait"
+
+
+def test_full_latest_message_hedge_blocks_invite_even_when_evidence_omits_it():
+    latest = "駅前のカフェに行ってみたいです。タイミングが合えばかな"
+    conversation = (
+        "相手: カフェ巡りが好きです\n"
+        "自分: 僕もカフェ好きです。駅前のお店が気になります\n"
+        f"相手: {latest}"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の話題があるので誘います。",
+            "evidence": ["行ってみたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+
+
+def test_sparse_acknowledgment_before_interest_does_not_count_as_warm_engagement():
+    conversation = (
+        "相手: カフェ巡りが好きです。パンケーキもよく食べます\n"
+        "自分: 僕もカフェ好きです。パンケーキもよく食べます\n"
+        "相手: そうなんですね\n"
+        "自分: 駅前のパンケーキのお店も気になってます\n"
+        "相手: 駅前のパンケーキのお店、写真を見たらおいしそうで近いうちに行ってみたいです！"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の話題があるので誘います。",
+            "evidence": ["近いうちに行ってみたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+
+
+def test_unrelated_recent_question_does_not_supply_shared_activity_engagement():
+    conversation = (
+        "相手: カフェ巡りが好きで、パンケーキもよく食べます\n"
+        "自分: 僕もカフェ好きです。パンケーキも食べます\n"
+        "相手: 休日は何をしているんですか？\n"
+        "自分: 最近は映画をよく見ます\n"
+        "相手: 駅前のパンケーキのお店、近いうちに行ってみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手の関心に合わせて誘います。",
+            "evidence": ["近いうちに行ってみたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+
+
+def test_generic_hontouni_does_not_count_as_shared_book_interest():
+    conversation = (
+        "相手: 本当に？\n"
+        "自分: 本当にそうですね\n"
+        "相手: 本当に行ってみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の話題があるので誘います。",
+            "evidence": ["本当に行ってみたいです"],
+            "invite_example": "よかったら人の多い書店に行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+
+
+@pytest.mark.parametrize(
+    "earlier_concern",
+    [
+        "初対面の人と会うのは安全面が少し不安です",
+        "実際に会うのはまだ少し迷っています",
+    ],
+)
+def test_unresolved_prior_safety_concern_or_hesitation_blocks_later_activity_interest(earlier_concern):
+    conversation = (
+        "相手: カフェ巡りが好きです。パンケーキのお店も気になっています\n"
+        "自分: 僕もカフェが好きで、パンケーキをよく食べます\n"
+        f"相手: {earlier_concern}\n"
+        "自分: 駅前は人通りの多い場所です\n"
+        "相手: 甘いものだと何が好きですか？\n"
+        "自分: パンケーキやプリンが好きです\n"
+        "相手: 駅前のパンケーキのお店、近いうちに行ってみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の話題があるので誘います。",
+            "evidence": ["近いうちに行ってみたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+
+
+def test_explicitly_resolved_prior_safety_concern_does_not_block_later_interest():
+    conversation = (
+        "相手: カフェ巡りが好きです。パンケーキのお店も気になっています\n"
+        "自分: 僕もカフェが好きで、パンケーキをよく食べます\n"
+        "相手: 初対面の人と会うのは安全面が少し不安です\n"
+        "自分: 人通りの多い駅前のお店なら安心できそうです\n"
+        "相手: 安全面の不安はなくなりました\n"
+        "自分: そう言ってもらえてよかったです\n"
+        "相手: 甘いものだと何が好きですか？\n"
+        "自分: パンケーキやプリンが好きです\n"
+        "相手: 駅前のパンケーキのお店、近いうちに行ってみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の話題があり、不安も解消したと確認できたため提案します。",
+            "evidence": ["近いうちに行ってみたいです"],
+            "invite_example": "よかったら駅前のカフェでパンケーキを食べませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "invite"
+
+
+@pytest.mark.parametrize(
+    "tentative_or_negative_reassurance",
+    [
+        "安心できそうにないです",
+        "不安がなくなっていません",
+        "安全面は大丈夫ではないです",
+        "安全面ではまだ安心したとは言えません",
+        "安全面の心配はなくなったわけではありません",
+        "安全面の不安はなくなったとは言えないです",
+        "安全面の不安はなくなったかも",
+        "安全面の不安はなくなったかな",
+        "安全面は大丈夫ですか？",
+        "安全面の不安はなくなりましたが、会うこと自体はまだ怖いです",
+        "安全面の不安はなくなりましたが、まだ怖いです",
+    ],
+)
+def test_tentative_or_negative_reassurance_does_not_clear_prior_safety_concern(
+    tentative_or_negative_reassurance,
+):
+    conversation = (
+        "相手: カフェ巡りが好きです。パンケーキのお店も気になっています\n"
+        "自分: 僕もカフェが好きで、パンケーキをよく食べます\n"
+        "相手: 初対面の人と会うのは安全面が少し不安です\n"
+        "自分: 人通りの多い駅前のお店なら安心できそうです\n"
+        f"相手: {tentative_or_negative_reassurance}\n"
+        "自分: パンケーキやプリンが好きです\n"
+        "相手: 甘いものだと何が好きですか？\n"
+        "自分: パンケーキやプリンが好きです\n"
+        "相手: 駅前のパンケーキのお店、近いうちに行ってみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の話題があるので誘います。",
+            "evidence": ["近いうちに行ってみたいです"],
+            "invite_example": "よかったら駅前のカフェでパンケーキを食べませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
 
 
 def test_tapple_benchmark_includes_a_receptive_but_not_yet_agreed_invitation_case():

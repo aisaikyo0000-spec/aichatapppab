@@ -3,7 +3,7 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 独立レビュー修正を記録
+最終更新: 2026-10-09 / Step 18-R4 Iteration 23のオフライン検証を記録
 
 ---
 
@@ -12,7 +12,9 @@
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
 - 作業ブランチ: `codex/chat-quality-20261008`（Tappleの最終コードcommitは`f2cc261`。Gemini別アカウント経路修正commit `38e6d4a`までforkとSHA一致を確認済み）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tappleの質問・催促・話題逸脱チェックと自然な会話終了の評価を修正し、今回の2アカウント切替修正も独立ReviewerがPASS。全backend **862 passed / 2 warnings**、frontend build、compileall、CLI `--help`、PowerShell AST parse、`git diff --check`もPASS。実API評価は未実施
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。今回、Tappleの誘い時期を「会う同意」と分け、温かい相互会話と反応の薄い会話を区別する回帰を追加した。全backend **885 passed / 2 warnings**、frontend build、compileall、`git diff --check`はPASS。Python Reviewerと独立安全Reviewerも修正後の差分をPASSと判定。最新70ケース、Contact Bench、Tapple実生成と全文レビューは未実施
+- Geminiの利用経路は主3.5→主3.1→予備3.5→予備3.1。rate limitのときだけ次の経路へ進む。両キー設定が別の値で読み込まれることと、4経路のテストを確認した。実APIは呼び出していない
+- ローカルHEADは `d706d04` と未commit差分、forkの作業ブランチは `2f1b5d4`。作業差分と今回の資料は独立レビュー・受け入れ確認後にforkへ反映する
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を朝の確認後に行う。完了条件がそろうまでStep 18-R4は合格としない
 
 ## Step 18-R4 進捗（オフライン受け入れ準備）
@@ -23,7 +25,7 @@
 - 実行環境の設定はprovider=Gemini、標準3.5 Flash Lite、fallback 3.1 Flash Lite。`GEMINI_API_KEY_FILE`はgemini2.md、`GEMINI_SECONDARY_API_KEY_FILE`はgemini3.mdを指し、両キーが別の値として読み込まれることを確認した。キーの値は表示していない。APIでの有効性は疎通確認まで未確定
 - 朝の実行手順を修正し、疎通で成功したモデルとアカウントを後続ベンチへ渡す。70ケースから返信例8件を表示して人が確認し、Contact/Tappleの返信artifactも確認してからPASSを入力する
 - route-state共有テストを追加し、修正前に失敗することを確認した。不正なUTF-8、キー設定の変更、fingerprintのない旧形式を含む状態ファイルは無視する。quota関連focused suiteは **27 passed**。全backend suiteは**853 passed / 2 warnings**。frontend build、compileall、3つのCLI `--help`、`git diff --check`、PowerShell受け入れ手順の構文検査はPASS。Tapple safety Reviewerとroute-state設定指紋Reviewerはともに**PASS**
-- 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全9シナリオを画面に表示する
+- 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全11シナリオを画面に表示する
 - 独立Tapple調査で、会話文から相手の信頼性や実際の安全性をAIが判定できるように読める点と、返信の温度低下時の対応が未検証である点を指摘された。招待提案にはAIの安全性判断の限界と本人の判断を促す注意を付け、短い返答・話題展開の減少が続く場合に追いかけず待つ9件目のシナリオを追加した
 - 70ケースの目視確認用出力は固定8件だけでなく、検証器が注意候補と本人確認分岐をすべて列挙する。注意候補は自動不合格ではなく、人が返信全体とartifactを照合するための目印
 - 独立レビューで検出されたTappleの9件目fixture漏れと不正UTF-8 artifactのtracebackを回帰テストで再現して修正。Tapple・検証器・モデルfallbackのfocused suiteは**373 passed**。全backend suiteは**858 passed / 2 warnings**、frontend build・compileall・`git diff --check`・PowerShell AST parseは**PASS**。新規のread-only Python Reviewerは修正後の差分に**PASS**
@@ -31,6 +33,13 @@
 - アプリ本体のquota切替順はメイン3.5→メイン3.1→予備3.5→予備3.1。次の経路へ進むのはrate limit時だけで、既存テストで4経路と成功時の停止を確認。gemini2.mdを主キー、gemini3.mdを予備キーとして読み込む設定は確認済みだが、APIの有効性は未確認。ユーザーの朝の疎通確認前にAPIは呼び出さない
 - 朝の評価手順で疎通確認が予備アカウントを選んだ場合にも、主キーを後続ベンチへ渡すよう修正した。これで予備3.5・3.1が両方rate limitになった場合、主3.5・3.1へ戻れる。各ベンチに`--active-account`を渡し、artifact上のアカウント名も実際のキーに合わせる。キー順序と表示ラベルのfocused suiteは**13 passed**。全backend suiteは**862 passed / 2 warnings**、frontend build、compileall、CLI `--help`、PowerShell AST parse、`git diff --check`もPASS。新規read-only Python Reviewerは**PASS**。実APIでの切替は未確認
 - ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。オフライン準備分は独立レビュー後にforkへpushし、SHA一致を確認する
+
+## Step 18-R4 Iteration 23: Tapple誘い時期と安全懸念の境界
+
+- `invite`は相手が会うことに同意した意味ではなく、利用者から低圧に誘うのが適切という判断に変更した。最近の相手発言に具体的な共通活動への関心があり、相手も同じ話題を広げている場合に限る。共通語が別の活動を指す文、一般的な「本当に」、無関係な質問、短い相づちでは誘わない
+- 温かい5発言の相互会話なら誘いを許し、同じ活動への関心があっても直前が短い相づちなら待つ11シナリオのペアを追加した。過去の安全不安・会うことへの迷いは、後の活動関心だけでは解除しない。明確な安全面の解消表明でのみ解除し、疑問形・否定・仮定・不安の再表明は未解消として扱う
+- Tapple focused suite **363 passed**、backend全体 **885 passed / 2 warnings**。主・予備Gemini経路focused suite **17 passed**。frontend production build、compileall、`git diff --check`はPASS。最新差分に対する新規Python Reviewerと独立安全Reviewerは**PASS**
+- これはオフライン回帰結果であり、Gemini実生成の文章品質を示すものではない。実API疎通、最新70ケース、Contact Bench、Tapple全11ケースの生成文レビューは未実施。Step 18-R4は未完成
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）
 
@@ -266,7 +275,7 @@
 - タップルの「おでかけ」機能と安全ガイドラインを尊重。初回は公共の場所を提案し、個室や人通りの少ない場所は避ける。電話番号・メール・LINE等の交換は公式ヘルプ上禁止のため、提案しない。誘いは話題との関連・具体性・断りやすさを備え、拒否・保留や反応減少に対して追撃・説得を促さない
 - 返信速度だけで好意を推定しない。公式アンケートは運営主体の調査で方法の詳細に限界があり、研究は他サービス/言語圏の小規模データ、X/Reddit/体験談は偏りがあるため一般化しない。調査リンクと改善案は別途報告
 - 出典監査で、X投稿の本文を確認できなかったため、調査根拠から外した。デートを提案する前に、相手が会うことに安心感を持ち、信頼できると感じているかを確かめる安全条件を改善案に追加する
-- 主な根拠: [タップル公式アンケート・AIメッセージアシスト](https://www.tapple.co.jp/news/1344/)、[おでかけ機能](https://support.tapple.me/hc/ja/articles/360007459053--%E3%81%8A%E3%81%A7%E3%81%8B%E3%81%91-%E6%A9%9F%E8%83%BD%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6)、[安心安全ガイドライン](https://static.tapple.me/policy/safety.html)、[個人情報交換の禁止](https://support.tapple.me/hc/ja/articles/360009709194-%E5%80%8B%E4%BA%BA%E6%83%85%E5%A0%B1%E3%81%AE%E4%BA%A4%E6%8F%9B%E3%81%AF%E3%81%84%E3%81%84%E3%81%AE%E3%81%A7%E3%81%99%E3%81%8B)、[Sharabi & Dykstra-DeVette (2019)](https://doi.org/10.1177/0265407518822780)、[Roca-Cuberes et al. (2023)](https://discovery.ucl.ac.uk/id/eprint/10170934/)、[返信速度とLINEに関する研究](https://www.jstage.jst.go.jp/article/jjesp/advpub/0/advpub_2114/_article/-char/en)。個人投稿例は[Redditの初回デート安全談義](https://www.reddit.com/r/Tinder/comments/16m5mgf/question_for_my_tinder_girlies_about_safety/)と[タップル利用体験談（広告記事）](https://meeeet.jp/tupple-experience-story)。いずれも統計根拠とは分けて扱う
+- 主な根拠: [タップル公式アンケート・AIメッセージアシスト](https://www.tapple.co.jp/news/1344/)、[おでかけ機能](https://support.tapple.me/hc/ja/articles/360007459053--%E3%81%8A%E3%81%A7%E3%81%8B%E3%81%91-%E6%A9%9F%E8%83%BD%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6)、[安心安全ガイドライン](https://static.tapple.me/policy/safety.html)、[個人情報交換の禁止](https://support.tapple.me/hc/ja/articles/360009709194-%E5%80%8B%E4%BA%BA%E6%83%85%E5%A0%B1%E3%81%AE%E4%BA%A4%E6%8F%9B%E3%81%AF%E3%81%84%E3%81%84%E3%81%AE%E3%81%A7%E3%81%99%E3%81%8B)、[Sharabi & Dykstra-DeVette (2019)](https://doi.org/10.1177/0265407518822780)、[Roca-Cuberes et al. (2023)](https://discovery.ucl.ac.uk/id/eprint/10170934/)、[返信速度とLINEに関する研究](https://www.jstage.jst.go.jp/article/jjesp/62/2/62_2114/_article/-char/en)。個人投稿例は[Redditの初回デート安全談義](https://www.reddit.com/r/Tinder/comments/16m5mgf/question_for_my_tinder_girlies_about_safety/)と[タップル利用体験談（広告記事）](https://meeeet.jp/tupple-experience-story)。いずれも統計根拠とは分けて扱う
 
 ## Step 18-R4 Iteration 32: Human / Conversation 指標の診断
 
@@ -424,7 +433,7 @@ if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。art
 Get-Content -Raw $contactOut
 if ((Read-Host '全9返信を読み、A/B/Cの文体差と文脈・自然さ・非コピー基準をすべて満たせばPASS') -cne 'PASS') { throw 'Contact Benchの品質基準が3/3に達していないためTapple評価を止めます。' }
 python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model $activeModel --env-file $activeKeyFile --active-account $activeAccount @secondaryKeyArgs --quota-route-state $quotaRouteState
-if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が9/9でないか実行未完了です。artifact: $tappleOut" }
+if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が11/11でないか実行未完了です。artifact: $tappleOut" }
 Get-Content -Raw $tappleOut
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
 python -m pytest backend/tests -q
@@ -450,7 +459,7 @@ if ($localSha -ne $remoteSha) { throw "fork SHAが一致しません。local=$lo
 Write-Output "fork branch verified at $localSha"
 ```
 
-疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 9シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
+疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 11シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
 
 Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run_status.complete`はA/B/Cの生成完了だけを示す。JSON内の9返信をすべて読み、どの連絡先にも送れる自然な返信になっていること、入力内容に答えて不要な質問や根拠のない事実を足していないこと、相手の語句をそのまま写していないことを確認する。さらにAは手入力Goldに沿って短く砕けた傾向、Bは自然な丁寧さと相対的に十分な文量、Cは中間の文量と丁寧・砕けた表現の混在が返信群に表れることを確認する。固定文字数やsignatureの差だけでは合格にせず、3者の実際の返信群すべてが条件を満たす場合だけ3/3とする。
 
@@ -462,7 +471,7 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 
 ## Step 18-R4 Iteration 36: 評価artifactの品質ゲート
 
-- Tapple Benchは期待戦略が9/9揃わない場合に終了コード3、シナリオ不足・重複・生成エラーの場合は終了コード2を返す。artifactの`complete`も9種類の一意なIDとエラーなしを要求する。Tapple返信文の自然さ・文脈・安全性は別途目視レビューする
+- Tapple Benchは期待戦略が11/11揃わない場合に終了コード3、シナリオ不足・重複・生成エラーの場合は終了コード2を返す。artifactの`complete`も11種類の一意なIDとエラーなしを要求する。Tapple返信文の自然さ・文脈・安全性は別途目視レビューする
 - `verify_pipeline_benchmark.py`を追加。リポジトリ内の正規70ケースIDの完全一致・一意性、候補3件または安全な利用者確認、全候補のissue/four-axisレコード、summaryと再計算値の一致、6閾値を検証する。任意のケース集合で正規ベンチを置き換えるCLIオプションは設けていない
 - Gemini 3.5/3.1 Flash Liteの429はプロバイダー内で再試行せず、上位のモデル・アカウント切替へ即時返す。他モデルの既存再試行動作は維持
 - 関連commit: Tapple品質ゲート `fddd813`→`3347108`→`011f384`→`940949c`→`9778dde`→`d5ac1ef`、正規70ケース検証器 `1ed1802`→`a25684d`→`786644c`→`325ccfe`→`3b01f3c`→`98f2e55`、quota時の即時切替 `dc81496`→`febd5da`

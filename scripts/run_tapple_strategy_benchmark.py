@@ -39,6 +39,33 @@ SCENARIOS = (
         "reply_must_contain_any": ["カフェ", "コーヒー", "嬉しい", "うれしい", "楽しみ", "いいですね"],
     },
     {
+        "id": "mutual_activity_interest",
+        "messages": [
+            {"sender": "contact", "content": "最近カフェ巡りにはまっています。駅前のパンケーキのお店が気になっていて"},
+            {"sender": "self", "content": "僕もカフェ好きです。パンケーキもよく食べます"},
+            {"sender": "contact", "content": "甘いものだと何が好きですか？"},
+            {"sender": "self", "content": "パンケーキやプリンが好きです。新しいお店を探すのも楽しいですよね"},
+            {"sender": "contact", "content": "駅前のパンケーキのお店、写真を見たらおいしそうで近いうちに行ってみたいです！"},
+        ],
+        "expected_action": "invite",
+        "allowed_actions": ["invite"],
+        "reply_must_contain_any": ["パンケーキ", "カフェ", "気になります", "おいしそう"],
+    },
+    {
+        "id": "shared_activity_low_reciprocity",
+        "messages": [
+            {"sender": "contact", "content": "カフェ巡りが好きです。パンケーキもよく食べます"},
+            {"sender": "self", "content": "僕もカフェ好きです。パンケーキもよく食べます"},
+            {"sender": "contact", "content": "そうなんですね"},
+            {"sender": "self", "content": "駅前のパンケーキのお店も気になってます"},
+            {"sender": "contact", "content": "駅前のパンケーキのお店、近いうちに行ってみたいです"},
+        ],
+        "expected_action": "wait",
+        "allowed_actions": ["wait"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["パンケーキ", "カフェ", "わかりました", "そうなんですね"],
+    },
+    {
         "id": "accepted_invitation",
         "messages": [
             {"sender": "contact", "content": "コーヒー好きです"},

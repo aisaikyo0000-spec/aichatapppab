@@ -234,6 +234,116 @@ _TAPPLE_INVITE_POSITIVE_RE = re.compile(
     r"(?:今度|近いうち).{0,8}(?:一緒に行きたい|会いたい|会いましょう)|"
     r"会いたい(?:です|！|$)|会いましょう|誘って(?:ください|ね|！|$))"
 )
+_TAPPLE_ACTIVITY_INTEREST_RE = re.compile(
+    r"(?:行ってみたい(?:です|！|。|$)|食べてみたい(?:です|！|。|$)|"
+    r"見てみたい(?:です|！|。|$)|試してみたい(?:です|！|。|$)|"
+    r"体験してみたい(?:です|！|。|$)|"
+    r"気になって(?:います|ます|る)(?:ね|！|。|$)|"
+    r"興味が(?:あります|ある)(?:ね|！|。|$)|また行きたい(?:です|！|。|$))"
+)
+_TAPPLE_SHARED_ACTIVITY_TERMS = (
+    "カフェ", "喫茶", "コーヒー", "紅茶", "パンケーキ", "スイーツ", "ケーキ",
+    "ランチ", "ディナー", "ごはん", "食事", "焼肉", "ラーメン", "映画", "ミステリー",
+    "展示", "美術館", "水族館", "動物園", "遊園地", "ライブ", "音楽", "旅行", "温泉",
+    "散歩", "公園", "スポーツ", "サッカー", "野球", "ゲーム", "読書", "小説", "文庫", "料理",
+)
+
+
+def _has_recent_shared_tapple_activity(
+    conversation_messages: list[dict[str, Any]],
+    last_contact_index: int,
+    last_contact_text: str,
+) -> bool:
+    interest_match = _TAPPLE_ACTIVITY_INTEREST_RE.search(last_contact_text)
+    if interest_match is None:
+        return False
+
+    clause_start = max(
+        last_contact_text.rfind(mark, 0, interest_match.start())
+        for mark in ("。", "！", "？", "!", "?", "\n")
+    ) + 1
+    clause_end_candidates = [
+        index
+        for mark in ("。", "！", "？", "!", "?", "\n")
+        if (index := last_contact_text.find(mark, interest_match.end())) >= 0
+    ]
+    interest_clause = last_contact_text[
+        clause_start : min(clause_end_candidates, default=len(last_contact_text))
+    ]
+    contrast_markers = (
+        "とは言っても", "とはいうものの", "とはいえ", "とは言え", "ですが",
+        "だけど", "けれど", "けど", "ものの", "一方で", "でも", "が、", "が,",
+    )
+    contrast_positions = [
+        (interest_clause.rfind(marker), marker)
+        for marker in contrast_markers
+        if interest_clause.rfind(marker) >= 0
+    ]
+    if contrast_positions:
+        contrast_position, marker = max(contrast_positions)
+        interest_clause = interest_clause[contrast_position + len(marker) :]
+
+    previous_contact = next(
+        (
+            (index, prompt.clean_chat_message_content(
+                str(conversation_messages[index].get("content") or "")
+            ))
+            for index in range(last_contact_index - 1, -1, -1)
+            if conversation_messages[index].get("sender") == "contact"
+            and prompt.clean_chat_message_content(
+                str(conversation_messages[index].get("content") or "")
+            )
+        ),
+        None,
+    )
+    if previous_contact is None:
+        return False
+    previous_contact_index, previous_contact_text = previous_contact
+    if not re.search(
+        r"(?:好き|気にな|楽しみ|行ってみたい|食べてみたい|見てみたい|"
+        r"はまって|おすすめ)",
+        previous_contact_text,
+    ) and not any(mark in previous_contact_text for mark in ("？", "?")):
+        return False
+
+    prior_self_texts = [
+        prompt.clean_chat_message_content(str(message.get("content") or ""))
+        for message in conversation_messages[previous_contact_index + 1 : last_contact_index]
+        if message.get("sender") == "self"
+    ]
+    prior_contact_texts = [
+        prompt.clean_chat_message_content(str(message.get("content") or ""))
+        for message in conversation_messages[: last_contact_index]
+        if message.get("sender") == "contact"
+    ]
+    for term in _TAPPLE_SHARED_ACTIVITY_TERMS:
+        if term not in interest_clause or not any(term in text for text in prior_contact_texts):
+            continue
+        if term in previous_contact_text and any(term in text for text in prior_self_texts):
+            return True
+        if (
+            any(mark in previous_contact_text for mark in ("？", "?"))
+            and any(term in text for text in prior_self_texts)
+        ):
+            return True
+    return False
+
+
+def _has_tapple_relevant_invite_hedge(text: str) -> bool:
+    activity_interest = _TAPPLE_ACTIVITY_INTEREST_RE.search(text)
+    if activity_interest:
+        conditional_before_interest = text[: activity_interest.start()]
+        if re.search(
+            r"(?:もし.{0,12}|(?:予定|都合|時間|タイミング|機会).{0,12})"
+            r"(?:たら|れば|かも|かな)",
+            conditional_before_interest,
+        ):
+            return True
+        return _TAPPLE_INVITE_HEDGE_RE.search(text[activity_interest.end() :]) is not None
+
+    return _has_tapple_post_acceptance_hedge(text)
+
+
 _TAPPLE_INVITE_HEDGE_RE = re.compile(
     r"(?:たら|れば|かも|かな|いつか|できたら|できれば|行けたら|会えたら|"
     r"行けない|会えない|難し|無理|今は|"
@@ -422,6 +532,66 @@ def _has_tapple_explicit_hesitation(text: str) -> bool:
     )
 
 
+_TAPPLE_SAFETY_RESOLUTION_RE = re.compile(
+    r"(?:(?:会うこと|会うの|初対面|対面|安全面|安全).{0,16}"
+    r"(?:不安(?:は|が)?(?:なくなりました|なくなった|消えました|消えた|"
+    r"和らぎました|和らいだ|解消しました|解消した)|"
+    r"心配(?:は|が)?(?:なくなりました|なくなった|消えました|消えた|解消しました|解消した)|"
+    r"安心(?:しました|した)|大丈夫です|問題ありません|問題ないです|心配ありません)|"
+    r"(?:不安(?:は|が)?(?:なくなりました|なくなった|消えました|消えた|"
+    r"和らぎました|和らいだ|解消しました|解消した)|安心(?:しました|した))"
+    r".{0,16}(?:会うこと|会うの|初対面|対面|安全面|安全))"
+)
+_TAPPLE_SAFETY_RESOLUTION_QUALIFIER_RE = re.compile(
+    r"(?:とは言え|わけでは|わけじゃ|かもしれ|かも|かな|みたい|気がする|そうにない|ていません|ていない|"
+    r"ないとは|ですか|でしょうか|？|\?|まだ.{0,8}(?:不安|心配|安心)|"
+    r"(?:不安|心配).{0,8}(?:残|続|ある))"
+)
+_TAPPLE_SAFETY_CONTRADICTORY_TAIL_RE = re.compile(
+    r"(?:が|けど|けれど|でも|ものの).{0,20}(?:不安|心配|怖|恐|抵抗|迷|難し)"
+)
+
+
+def _has_unresolved_tapple_safety_or_hesitation(
+    conversation_messages: list[dict[str, Any]], last_contact_index: int
+) -> bool:
+    unresolved_safety = False
+    unresolved_hesitation = False
+    for message in conversation_messages[: last_contact_index + 1]:
+        if message.get("sender") != "contact":
+            continue
+        text = prompt.clean_chat_message_content(str(message.get("content") or ""))
+        resolution_match = _TAPPLE_SAFETY_RESOLUTION_RE.search(text)
+        text_without_resolution = (
+            text[: resolution_match.start()] + text[resolution_match.end() :]
+            if resolution_match
+            else text
+        )
+        concern_after_resolution = bool(
+            resolution_match
+            and (
+                _has_tapple_safety_concern(text_without_resolution)
+                or _TAPPLE_SAFETY_CONTRADICTORY_TAIL_RE.search(text_without_resolution)
+            )
+        )
+        if concern_after_resolution:
+            unresolved_safety = True
+        elif (
+            resolution_match
+            and not _TAPPLE_SAFETY_RESOLUTION_QUALIFIER_RE.search(text)
+        ):
+            unresolved_safety = False
+        elif _has_tapple_safety_concern(text):
+            unresolved_safety = True
+
+        if _has_tapple_explicit_hesitation(text):
+            unresolved_hesitation = True
+        elif _TAPPLE_INVITE_POSITIVE_RE.search(text):
+            unresolved_hesitation = False
+
+    return unresolved_safety or unresolved_hesitation
+
+
 def _has_tapple_post_acceptance_hedge(text: str) -> bool:
     accepted = _TAPPLE_ACCEPTED_INVITATION_RE.search(text)
     return bool(accepted and _TAPPLE_INVITE_HEDGE_RE.search(text[accepted.end() :]))
@@ -589,6 +759,14 @@ def _parse_tapple_strategy(
         return None
 
     last_contact = contact_messages[-1]
+    last_contact_index = next(
+        index
+        for index in range(len(conversation_messages) - 1, -1, -1)
+        if conversation_messages[index].get("sender") == "contact"
+        and prompt.clean_chat_message_content(
+            str(conversation_messages[index].get("content") or "")
+        )
+    )
     decline_match = _unqualified_tapple_decline_match(last_contact)
     if decline_match:
         return TappleStrategy(
@@ -599,19 +777,30 @@ def _parse_tapple_strategy(
         )
 
     if proposed.action == "invite":
-        has_current_explicit_interest = any(
+        has_current_invitation_readiness = any(
             evidence in last_contact
-            and _TAPPLE_INVITE_POSITIVE_RE.search(evidence)
-            and not _TAPPLE_INVITE_HEDGE_RE.search(evidence)
+            and (
+                _TAPPLE_INVITE_POSITIVE_RE.search(evidence)
+                or (
+                    _TAPPLE_ACTIVITY_INTEREST_RE.search(evidence)
+                    and _has_recent_shared_tapple_activity(
+                        conversation_messages, last_contact_index, last_contact
+                    )
+                )
+            )
+            and not _has_tapple_relevant_invite_hedge(last_contact)
             and not _has_tapple_explicit_hesitation(last_contact)
             and not _has_tapple_safety_concern(last_contact)
+            and not _has_unresolved_tapple_safety_or_hesitation(
+                conversation_messages, last_contact_index
+            )
             and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(last_contact)
             for evidence in exact_evidence
         )
-        if not has_current_explicit_interest:
+        if not has_current_invitation_readiness:
             return TappleStrategy(
                 action="wait",
-                rationale="直近の発言に明確な参加意思が見当たらないため、今は誘わず会話を続けるか反応を待ちます。返信の速さや曖昧な相づちは同意として扱いません。",
+                rationale="会う提案につながる具体的な関心が確認できないため、今は誘わず会話を続けるか反応を待ちます。返信の速さや曖昧な相づちは誘う根拠にしません。",
                 evidence=exact_evidence,
                 invite_example=None,
             )
@@ -624,6 +813,7 @@ def _parse_tapple_strategy(
             safe_example = None
         safety_notice = (
             "AIは相手の信頼性や実際の安全性を判断できません。"
+            "この提案は相手の同意を意味しません。相手が迷ったり断ったりしたら誘い直さないでください。"
             "自分が信頼でき、安全に会えると感じる場合に限り、この案を検討してください。"
         )
         rationale_limit = max(0, 500 - len(safety_notice) - 1)

@@ -96,7 +96,7 @@ def load_gemini_benchmark_route(
     """Resume from a prior benchmark's account/model if that route still exists."""
     try:
         route = json.loads(route_state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(route, dict):
         return None

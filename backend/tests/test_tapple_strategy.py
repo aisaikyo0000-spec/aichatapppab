@@ -1124,6 +1124,7 @@ def test_thinking_about_meeting_logistics_is_not_hesitation():
         "会う日の候補で迷っています。ぜひ一緒に行きたいです。",
         "会う日がいつか迷っています。ぜひ一緒に行きたいです。",
         "会う日をどちらにするか悩んでいます。ぜひ一緒に行きたいです。",
+        "一緒に行きたいけど、会う日の候補で迷っています。",
     ):
         raw = _raw_strategy(
             {
@@ -1291,6 +1292,27 @@ def test_unrelated_work_problem_does_not_block_date_scheduling():
         ["ぜひ！日曜はどうですか？"],
         1,
         counterpart_message="仕事のことで悩んでいましたが、ぜひ一緒に行きたいです。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "counterpart_message",
+    [
+        "ぜひ一緒に行きたいけど、仕事のことで悩んでいます。",
+        "一緒に行きたいけど、会う日の候補で迷っています。",
+    ],
+)
+def test_post_acceptance_unrelated_or_date_choice_concern_allows_scheduling(
+    counterpart_message,
+):
+    violations = validate_candidate_replies(
+        ["日曜はどうですか？"],
+        1,
+        counterpart_message=counterpart_message,
         strategy_mode="tapple",
         tapple_action="continue",
     )

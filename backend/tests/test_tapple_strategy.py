@@ -1048,9 +1048,11 @@ def test_invite_gate_checks_full_message_when_evidence_quotes_only_interest():
     [
         "ぜひ一緒に行きたいですが、身元が分からず不安です。",
         "ぜひ一緒に行きたいですが、相手のことをよく知らなくて不安です。",
+        "ぜひ一緒に行きたいですが、安全かどうか分からないです。",
+        "ぜひ一緒に行きたいですが、安全か分からず迷っています。",
     ],
 )
-def test_invite_gate_blocks_identity_and_familiarity_safety_concerns(statement):
+def test_invite_gate_blocks_safety_and_familiarity_concerns(statement):
     raw = _raw_strategy(
         {
             "action": "invite",

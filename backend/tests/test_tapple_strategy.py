@@ -2479,6 +2479,8 @@ def test_first_meeting_wary_interest_blocks_invite_strategy_and_reply():
         "ぜひ一緒に行きたいですが、初対面は不安です。",
         "ぜひ一緒に行きたいですが、初対面なので不安です。",
         "ぜひ一緒に行きたいですが、初対面は怖いです。",
+        "ぜひ一緒に行きたいです。初対面だし、警戒しないとですよね。",
+        "警戒しないとね。ぜひ一緒に行きたいです。",
     ],
 )
 def test_first_meeting_wary_variants_block_invite(statement):
@@ -2514,6 +2516,9 @@ def test_first_meeting_wary_variants_block_invite(statement):
         "初対面でも警戒しないタイプです。ぜひ一緒に行きたいです。",
         "初対面では不安ではありません。ぜひ一緒に行きたいです。",
         "初対面でも怖くありません。ぜひ一緒に行きたいです。",
+        "初対面なので警戒する必要はありません。ぜひ一緒に行きたいです。",
+        "初対面なので警戒することはありません。ぜひ一緒に行きたいです。",
+        "初対面でも怖いとは思いません。ぜひ一緒に行きたいです。",
     ],
 )
 def test_denied_first_meeting_wary_concern_does_not_block_invite(statement):

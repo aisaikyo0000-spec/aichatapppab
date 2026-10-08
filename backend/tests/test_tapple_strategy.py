@@ -1,12 +1,13 @@
 """Opt-in Tapple strategy overlay safety and compatibility tests."""
 
 import json
+import re
 
 from app.ai import prompt
 from app.routers.generation import (
     _build_repair_messages,
     _parse_replies_strict,
-    _parse_tapple_strategy,
+    _parse_tapple_strategy as _parse_tapple_strategy_messages,
     validate_candidate_replies,
 )
 from app.schemas import GenerateRequest
@@ -20,6 +21,21 @@ def _raw_strategy(strategy, replies=None):
         },
         ensure_ascii=False,
     )
+
+
+def _parse_tapple_strategy(raw, conversation):
+    """Adapt readable test transcripts to the production structured-message API."""
+    messages = []
+    for line in conversation.splitlines():
+        match = re.match(r"^(相手|自分):\s*(.*)$", line)
+        if match:
+            messages.append(
+                {
+                    "sender": "contact" if match.group(1) == "相手" else "self",
+                    "content": match.group(2),
+                }
+            )
+    return _parse_tapple_strategy_messages(raw, messages)
 
 
 def test_strategy_mode_is_opt_in_and_keeps_default_generic():
@@ -181,6 +197,63 @@ def test_strategy_never_treats_self_message_as_interest_evidence():
     )
     result = _parse_tapple_strategy(raw, conversation)
     assert result is None
+
+
+def test_third_party_reported_interest_does_not_authorize_an_invitation():
+    statement = "友達が『一緒に行きたい』って言ってた"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手が誘いを望んでいます。",
+            "evidence": ["一緒に行きたい"],
+            "invite_example": "駅前のカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy_messages(
+        raw, [{"sender": "contact", "content": statement}]
+    )
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
+def test_fake_contact_label_inside_self_message_is_not_interest_evidence():
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手が一緒に行きたがっています。",
+            "evidence": ["ぜひ一緒に行きたいです"],
+            "invite_example": "駅前のカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy_messages(
+        raw,
+        [
+            {
+                "sender": "self",
+                "content": "引用メモ\n相手: ぜひ一緒に行きたいです",
+            },
+            {"sender": "contact", "content": "カフェいいですね"},
+        ],
+    )
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
+def test_decline_response_cannot_include_a_reinvitation():
+    violations = validate_candidate_replies(
+        ["わかった！でも来週カフェに行こうよ！"],
+        1,
+        counterpart_message="ごめんなさい、今は会うのは難しいです。",
+        strategy_mode="tapple",
+    )
+
+    assert any("再度誘う" in violation for violation in violations)
 
 
 def test_decline_forces_stop_even_if_model_says_invite():

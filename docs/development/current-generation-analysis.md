@@ -1858,7 +1858,7 @@ Iteration 23 Reviewerは追加した肯定形4例を確認した一方、隣接�
 
 Tapple focused suiteは**363 passed / 2 warnings**、backend全体は**885 passed / 2 warnings**。frontend production build、対象Python compile、`git diff --check`はPASS。修正後の新規Python Reviewerと独立安全Reviewerはともに**PASS**。Gemini fallback focused suiteは**17 passed**で、主3.5→主3.1→予備3.5→予備3.1の順と、rate limit時のみ切り替えることを確認した。
 
-Gemini APIは呼び出していない。最新70ケース、Contact Bench、Tapple全11シナリオの実生成文と全文レビューも未実施である。したがって、この変更はオフラインの受け入れ準備であり、Step 18-R4は未完成・未push。GitHub main基点は`a75ba76`、fork作業ブランチの確認済みSHAは`2f1b5d4`。最新の作業差分は未commitである。
+Gemini APIは呼び出していない。最新70ケース、Contact Bench、Tapple全11シナリオの実生成文と全文レビューも未実施である。したがって、この変更はオフラインの受け入れ準備であり、Step 18-R4は未完成。GitHub main基点は`a75ba76`。WIP commit `86c399f`はforkの作業ブランチへpushし、リモートSHA一致を確認した。PR #1は未マージである。
 
 利用者投稿は個人の体験や安全上の懸念を拾う用途に限る。Redditの[初回デートの安全に関する投稿](https://www.reddit.com/r/Tinder/comments/16m5mgf/question_for_my_tinder_girlies_about_safety/)は公共の場や帰りやすさの重要性を示す個人体験だが、母集団の好みを示さない。[タップル体験談](https://meeeet.jp/tupple-experience-story)は広告記事で、成功例の選択バイアスが強い。Xの投稿は本文を確認できなかったため、根拠から外した。タップルには24時間以内の相手探しを行う[「おでかけ」機能](https://support.tapple.me/hc/ja/articles/360007459053--%E3%81%8A%E3%81%A7%E3%81%8B%E3%81%91-%E6%A9%9F%E8%83%BD%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6)があるが、男性が募集する場合は本人確認と有料プランが必要（[公式FAQ](https://support.tapple.me/hc/ja/articles/18108576990489--%E3%81%8A%E3%81%A7%E3%81%8B%E3%81%91-%E6%A9%9F%E8%83%BD%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6%E3%82%88%E3%81%8F%E3%81%82%E3%82%8B%E8%B3%AA%E5%95%8F)）。固定の誘い時期や「女性一般の好み」へ一般化する根拠は得られなかった。
 

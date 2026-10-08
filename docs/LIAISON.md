@@ -14,7 +14,7 @@
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
 - 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。今回、Tappleの誘い時期を「会う同意」と分け、温かい相互会話と反応の薄い会話を区別する回帰を追加した。全backend **885 passed / 2 warnings**、frontend build、compileall、`git diff --check`はPASS。Python Reviewerと独立安全Reviewerも修正後の差分をPASSと判定。最新70ケース、Contact Bench、Tapple実生成と全文レビューは未実施
 - Geminiの利用経路は主3.5→主3.1→予備3.5→予備3.1。rate limitのときだけ次の経路へ進む。両キー設定が別の値で読み込まれることと、4経路のテストを確認した。実APIは呼び出していない
-- ローカルHEADは `d706d04` と未commit差分、forkの作業ブランチは `2f1b5d4`。作業差分と今回の資料は独立レビュー・受け入れ確認後にforkへ反映する
+- Iteration 23のオフライン変更はcommit `86c399f`としてfork作業ブランチへpush済み。GitHub側も`86c399f603fe46fa859fb601da467501a6bf75a9`で一致を確認した。これはWIPで、PR #1は未マージ。Step 18-R4の完了を意味しない
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を朝の確認後に行う。完了条件がそろうまでStep 18-R4は合格としない
 
 ## Step 18-R4 進捗（オフライン受け入れ準備）

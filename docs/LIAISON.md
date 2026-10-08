@@ -10,7 +10,7 @@
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（最新コードcommitは`6eb82a6`。今回の作業前にforkで確認したcommitは`c510747`。このオフライン準備分はforkへpushする）
+- 作業ブランチ: `codex/chat-quality-20261008`（最新コードcommitは`6eb82a6`。オフライン準備分はforkへpushし、`b572241`まで反映したことを確認済み）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
 - 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。ベンチ間でquota成功経路を引き継ぐ変更を追加し、テスト・レビュー中。実API評価は未実施
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を再開可能な時間帯に行う。完了条件がそろうまでStep 18-R4は合格としない
@@ -24,7 +24,7 @@
 - 朝の実行手順を修正し、疎通で成功したモデルとアカウントを後続ベンチへ渡す。70ケースから返信例8件を表示して人が確認し、Contact/Tappleの返信artifactも確認してからPASSを入力する
 - route-state共有テストを追加し、修正前に失敗することを確認した。不正なUTF-8、キー設定の変更、fingerprintのない旧形式を含む状態ファイルは無視する。quota関連focused suiteは **27 passed**。全backend suiteは**853 passed / 2 warnings**。frontend build、compileall、3つのCLI `--help`、`git diff --check`はPASS。Tapple safety Reviewerとroute-state設定指紋Reviewerはともに**PASS**
 - 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全8シナリオを画面に表示する
-- ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。最新コードは独立レビュー後にforkへpushする
+- ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。コードと資料は独立レビュー後にforkへpushし、SHA一致も確認した
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）
 

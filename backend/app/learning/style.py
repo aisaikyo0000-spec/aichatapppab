@@ -322,13 +322,34 @@ def _blend_style_profiles(base: StyleProfile, local: StyleProfile, weight: float
         if name == "sample_count":
             blended[name] = sample_count
         elif name == "frequent_emojis":
-            blended[name] = local_values[name] if weight >= 0.6 else base_values[name]
+            if not base.sample_count:
+                blended[name] = local_values[name]
+            elif not local.sample_count or weight <= 0:
+                blended[name] = base_values[name]
+            else:
+                blended[name] = _blend_ranked_emojis(
+                    base_values[name], local_values[name], weight
+                )
         elif name == "first_person":
             blended[name] = base_values[name]
         else:
             value = base_values[name] * (1 - weight) + local_values[name] * weight
             blended[name] = round(value) if isinstance(base_values[name], int) else round(value, 2)
     return StyleProfile(**blended)
+
+
+def _blend_ranked_emojis(base: list[str], local: list[str], weight: float) -> list[str]:
+    """Merge ranked emoji preferences so newer signals enter without replacing all history."""
+    scores: dict[str, float] = {}
+    stable_order: dict[str, int] = {}
+    for preferences, source_weight in ((base, 1 - weight), (local, weight)):
+        for rank, emoji in enumerate(preferences):
+            if emoji not in scores:
+                scores[emoji] = 0.0
+                stable_order[emoji] = len(stable_order)
+            scores[emoji] += source_weight / (rank + 1)
+
+    return sorted(scores, key=lambda emoji: (-scores[emoji], stable_order[emoji]))[:5]
 
 
 def infer_contact_tone(hierarchical: dict[str, Any], requested_tone: str = "") -> str:

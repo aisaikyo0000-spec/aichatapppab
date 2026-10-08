@@ -7,13 +7,14 @@
 
 ## 2026-10-09 最新状況
 
-- GitHub `main`確認時のSHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。製品コード最新は`2382a64`。今回作業の起点となる更新前push済みHEADは`25a6da5`。PR #1はOpenで未マージ。
+- GitHub `main`確認時のSHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。製品コード最新は`2382a64`。今回のContact Adaptation統合テスト・資料更新commitは`b8e570c`で、push後のfork SHA一致を確認済み。PR #1はOpenで未マージ。
 - Tapple安全レビューで、否定が重なる警戒表現を見逃す問題と、仕事・試験・天候など無関係な不安を会う不安として扱う問題を順に発見。REDテスト追加後に修正し、Tapple suiteは**563 passed**、backend全体は**1,143 passed / 2 warnings**。独立安全ReviewerとPython Reviewerは両方**PASS**。Python側の追加重点テストは**600 passed**。`ruff`と`mypy`は環境になく未実行。
 - ベンチ応答が候補文と利用者向け質問を同時に返す不正形を、runner・verifierで失敗扱いにした。手動レビューartifactに代表ケースの返信本文も入れる。ベンチ評価ロジックを変えず、既存fixtureを維持した。
 - quota切替focused suiteは**45 passed**。順序は主3.5→主3.1→別アカウント3.5→別アカウント3.1で、`rate_limit`の場合だけ次へ進む。設定上の別キーはgemini3.mdから読む。APIキーの値は表示・保存していない。
 - frontend production build、Python `compileall`、`git diff --check`はPASS。Gemini APIは呼び出していない。利用制限と朝の再開確認を待っており、実API疎通・70ケース・Contact Bench・Tapple実生成文の評価は未完了。
 - [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)を追加。公式調査は自己申告の傾向として扱い、学術研究と利用者の逸話は一般化し過ぎず、固定メッセージ数や返信速度で誘う時期を決めない方針を記録した。公式の2026年富士急ハイランド共同調査も追加し、自己選択・回顧回答で因果を示さない限界を明記した。
 - Contact Bench用API-free統合テストを追加。同じprobeをA/B/Cの実生成経路に流し、各相手のGold 6件・same-contact層・Gold文のprompt反映と、戻り値の固定mock返信で口調・文量が相手別に異なることを検証した。backend全体は**1,144 passed / 2 warnings**、frontend production buildは**PASS**、compileallとdiff checkも**PASS**。
+- Iteration: Step 18-R4 Contact Adaptationのオフライン受入準備。focused Contact Bench test **3 passed**。Python Reviewerとrunbook/history Reviewerはともに**PASS**。Gemini APIは未呼出し。
 - 過去のContact Bench 3/3 artifactは2026-10-09のGold重複修正前のため現行受入証拠にしない。固定mock統合テストは実Geminiの自然さや文面品質を示さない。今回差分のPython Reviewerとrunbook/history Reviewerは**PASS**。最新70ケース、Contact Bench実生成3/3、Tapple全11シナリオと全文レビューが未完了のため、Step 18-R4は未完成。Step 19へは進まない。
 
 ---

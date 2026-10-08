@@ -1,5 +1,14 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-09 Step 18-R4 オフライン Iteration 29
+
+- Contact Adaptationでは、対象相手のGoldが少ないときに別相手のSilverプロフィールでGoldを上書きする経路を塞いだ。対象相手のGold優先を保ち、データ不足時は既存のglobal fallbackを使う回帰テストを追加した。
+- Tappleでは、ボルダリングなど辞書にない活動関心を文脈から抽出する際、任意の漢字連続を趣味として扱わないようにした。「美味しいカレー／料理／ラーメン」のような形容語の重複から活動を誤認しないテストも追加した。
+- 対象活動への最近の明示的な苦手意識は、別話題の自己発言だけでは解除しない。後から同じ活動への肯定を明示した場合にだけ再評価する。Tappleベンチへ`unlisted_shared_hobby`を追加し、計**14シナリオ**に同期した。
+- 独立Reviewerは、ひとつの本人メッセージ内で活動への肯定後に苦手意識を述べると、句ごとにリセットされた位置を比較して後の苦手意識が見落とされる不具合を検出した。再現テストは修正前に`invite`を返してFAIL。イベント位置を文全体の絶対位置へ揃えて修正し、同一メッセージ内の後発苦手意識は招待を止める一方、後の明示的な好意や別メッセージの履歴も回帰確認した。
+- `python -m pytest backend/tests -q`: **1,185 passed / 2 warnings**。Contact/Step 18/Tapple focused suiteは**669 passed / 2 warnings**、frontend production build、Python `compileall`、`git diff --check`もPASS。新しいread-only Reviewerは**PASS**。Gemini APIは呼び出していない。
+- 実API疎通、最新70ケース、Contact Bench全9返信の人手評価、Tapple全14シナリオの実生成・返信確認は未実施。Step 18-R4は未完成である。
+
 ## 2026-10-09 最新レビュー追記
 
 - API応答に候補返信と利用者向け確認質問が同時に入る不正形式を、ベンチ実行時と成果物検証時の両方で不合格にする。手動レビュー用artifactには、代表ケースの返信本文も記録する。

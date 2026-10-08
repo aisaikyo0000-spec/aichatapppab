@@ -3,17 +3,17 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 Tapple活動関心境界を更新
+最終更新: 2026-10-09 / Step 18-R4 Contact・Tapple境界を更新
 
 ## 2026-10-09 最新状況
 
-- GitHub `main`の基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`、最新コードcommitは`3f80fee`、資料commitは`4a7f6a0`。forkへpushし、remote SHA `4a7f6a028a0bb3cc880d46f5ef0da58c6dddb95c`との一致を確認した。PR #1はOpenで未マージ。
-- Step 18-R4のオフライン作業として、Tappleの最近の活動への明示的な苦手意識を招待判定に反映した。直接的な誘いにも適用し、別の趣味への苦手意識や未経験、限定的な苦手さ、否定を和らげる表現、後から同じ活動への関心を示した表現を区別する回帰テストを追加。Tapple実生成ベンチは13シナリオになった。
-- `python -m pytest backend/tests -q`: **1,174 passed / 2 warnings**。Tapple strategy suite **593 passed**、strategy/artifact/benchmark focused suite **631 passed**。frontend production build、Python `compileall`、`git diff --check`もPASS。警告は既存のFastAPI `on_event`非推奨通知。
-- 独立Python Reviewerは、別の活動への関心が対象活動への苦手意識を解除してしまう境界も発見した。13番目のシナリオとパーサー回帰テストを追加して修正し、資料も13へ更新した。fresh Python Reviewerはコード、ベンチ、資料、fallbackの順序を確認して**PASS**。Gemini APIは呼び出していない。
+- GitHub `main`の基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。今回のオフラインコードcommitは`ef12671`、fork remoteはpush前の`aa2a249`。今回分はまだ未push。PR #1はOpenで未マージ。
+- Step 18-R4のオフライン作業として、少数の本人Goldを相手別Silverが上書きしないようにし、既知語彙にない趣味の抽出と最近の明示的な苦手意識を扱う境界を補った。語彙抽出で「美味しい」などの形容語を趣味として拾わない回帰も追加。Tapple実生成ベンチは**14シナリオ**になった。
+- `python -m pytest backend/tests -q`: **1,185 passed / 2 warnings**。Contact/Step 18/Tapple focused suite **669 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。警告は既存のFastAPI `on_event`非推奨通知。
+- fresh Reviewerは、同じ自己メッセージ内で肯定の後に苦手意識が続くと順序判定が逆転する不具合を指摘した。旧挙動を再現するテストは修正前にFAILし、イベント位置を会話全体の絶対位置に統一。新しいread-only Reviewerは実装・テスト・14件ベンチを確認して**PASS**。Gemini APIは呼び出していない。
 - Geminiの順序は主アカウント3.5→主3.1→別アカウント3.5→別アカウント3.1。次へ進むのは`rate_limit`時だけ。主3.5と3.1の両方が制限されたら別アカウントへ切り替える。APIキーの値は表示・保存していない。
 - [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)では公式調査を自己申告の傾向として扱い、学術研究・利用者の逸話の一般化を避けている。過去のContact Bench 3/3 artifactはGold重複修正前のため現行受入証拠にしない。
-- 実API疎通、最新70ケース、Contact Benchの全9返信と3/3人手確認、Tapple 13シナリオの実生成・全返信レビューが未実施。Step 18-R4は未完成で、Step 19へ進まない。
+- 実API疎通、最新70ケース、Contact Benchの全9返信と3/3人手確認、Tapple 14シナリオの実生成・全返信レビューが未実施。Step 18-R4は未完成で、Step 19へ進まない。
 
 ---
 
@@ -53,7 +53,7 @@
 - 実行環境の設定はprovider=Gemini、標準3.5 Flash Lite、fallback 3.1 Flash Lite。`GEMINI_API_KEY_FILE`はgemini2.md、`GEMINI_SECONDARY_API_KEY_FILE`はgemini3.mdを指し、両キーが別の値として読み込まれることを確認した。キーの値は表示していない。APIでの有効性は疎通確認まで未確定
 - 朝の実行手順を修正し、疎通で成功したモデルとアカウントを後続ベンチへ渡す。70ケースから返信例8件を表示して人が確認し、Contact/Tappleの返信artifactも確認してからPASSを入力する
 - route-state共有テストを追加し、修正前に失敗することを確認した。不正なUTF-8、キー設定の変更、fingerprintのない旧形式を含む状態ファイルは無視する。quota関連focused suiteは **27 passed**。全backend suiteは**853 passed / 2 warnings**。frontend build、compileall、3つのCLI `--help`、`git diff --check`、PowerShell受け入れ手順の構文検査はPASS。Tapple safety Reviewerとroute-state設定指紋Reviewerはともに**PASS**
-- 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全13シナリオを画面に表示する
+- 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全14シナリオを画面に表示する
 - 独立Tapple調査で、会話文から相手の信頼性や実際の安全性をAIが判定できるように読める点と、返信の温度低下時の対応が未検証である点を指摘された。招待提案にはAIの安全性判断の限界と本人の判断を促す注意を付け、短い返答・話題展開の減少が続く場合に追いかけず待つ9件目のシナリオを追加した
 - 70ケースの目視確認用出力は固定8件だけでなく、検証器が注意候補と本人確認分岐をすべて列挙する。注意候補は自動不合格ではなく、人が返信全体とartifactを照合するための目印
 - 独立レビューで検出されたTappleの9件目fixture漏れと不正UTF-8 artifactのtracebackを回帰テストで再現して修正。Tapple・検証器・モデルfallbackのfocused suiteは**373 passed**。全backend suiteは**858 passed / 2 warnings**、frontend build・compileall・`git diff --check`・PowerShell AST parseは**PASS**。新規のread-only Python Reviewerは修正後の差分に**PASS**
@@ -484,7 +484,7 @@ if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。art
 Get-Content -Raw $contactOut
 if ((Read-Host '全9返信を読み、A/B/Cの文体差と文脈・自然さ・非コピー基準をすべて満たせばPASS') -cne 'PASS') { throw 'Contact Benchの品質基準が3/3に達していないためTapple評価を止めます。' }
 python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model $activeModel --env-file $activeKeyFile --active-account $activeAccount @secondaryKeyArgs --quota-route-state $quotaRouteState
-if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が13/13でないか実行未完了です。artifact: $tappleOut" }
+if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が14/14でないか実行未完了です。artifact: $tappleOut" }
 Get-Content -Raw $tappleOut
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
 python -m pytest backend/tests -q
@@ -510,7 +510,7 @@ if ($localSha -ne $remoteSha) { throw "fork SHAが一致しません。local=$lo
 Write-Output "fork branch verified at $localSha"
 ```
 
-疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 13シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
+疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 14シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
 
 Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run_status.complete`はA/B/Cの生成完了だけを示す。JSON内の9返信をすべて読み、どの連絡先にも送れる自然な返信になっていること、入力内容に答えて不要な質問や根拠のない事実を足していないこと、相手の語句をそのまま写していないことを確認する。さらにAは手入力Goldに沿って短く砕けた傾向、Bは自然な丁寧さと相対的に十分な文量、Cは中間の文量と丁寧・砕けた表現の混在が返信群に表れることを確認する。固定文字数やsignatureの差だけでは合格にせず、3者の実際の返信群すべてが条件を満たす場合だけ3/3とする。
 

@@ -138,6 +138,20 @@ _TAPPLE_INVITE_HEDGE_RE = re.compile(
     r"(?:たら|れば|かも|かな|いつか|できたら|できれば|行けたら|会えたら|"
     r"行けない|会えない|難し|無理|今は|まだ|けど|けれど)"
 )
+_TAPPLE_THIRD_PARTY_INTEREST_RE = re.compile(
+    r"(?:友達|友人|同僚|家族|知人|別の人|他の人|ほかの人|彼氏|彼女).{0,40}"
+    r"(?:一緒に.{0,8}(?:行きたい|行こう|会いたい|会おう)|誘って(?:ください|ね)|会いましょう)|"
+    r"(?:行きたい|会いたい).{0,16}(?:って|と)(?:言って(?:た|いた|います)|聞いて(?:た|いた|います))"
+)
+_TAPPLE_REINVITATION_RE = re.compile(
+    r"(?:(?:今度|また|次|来週|今週(?:末)?|週末|今日|明日|いつか|改めて|"
+    r"落ち着いたら|都合が合えば|タイミングが合えば|よかったら|もしよければ).{0,20})?"
+    r"(?:一緒に|二人で|カフェ|喫茶店|ご飯|ごはん|食事|デート|お出かけ|お茶|映画|"
+    r"会(?:う|えたら|いたら|いたい|わない|える)|行けたら|行きたい)"
+    r".{0,16}(?:行きませんか|行きましょう|行こう(?:よ)?|会いませんか|会いましょう|"
+    r"会おう(?:よ)?|会わない|しませんか|しましょう|しよう(?:よ)?|どう(?:ですか|かな)?|"
+    r"嬉しい|うれしい|楽しみ|いいね|良ければ|よければ|たいな|できたら|できれば)"
+)
 _TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|飲食店|公共の場所|人通りのある場所|人の多い場所|商業施設|フードコート|駅前|公園)")
 _TAPPLE_PRIVATE_PLACE_RE = re.compile(
     r"(?:自宅|お?うち(?:で|に|へ|集合|待ち合わせ|飲み)|お?家(?:で|に|へ|集合|待ち合わせ|飲み)|ホテル|個室)"
@@ -162,7 +176,9 @@ def _is_tapple_contact_exchange_request(text: str) -> bool:
     )
 
 
-def _parse_tapple_strategy(raw: str, conversation: str) -> TappleStrategy | None:
+def _parse_tapple_strategy(
+    raw: str, conversation_messages: list[dict[str, Any]]
+) -> TappleStrategy | None:
     """Parse only evidence-grounded strategy metadata; never gate reply generation."""
     try:
         payload = json.loads(_strip_code_fence(raw))
@@ -172,22 +188,22 @@ def _parse_tapple_strategy(raw: str, conversation: str) -> TappleStrategy | None
     except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
         return None
 
-    contact_lines = [
-        match.group(1).strip()
-        for line in conversation.splitlines()
-        if (match := re.match(r"^\s*相手\s*:\s*(.*)$", line))
-        and match.group(1).strip()
+    contact_messages = [
+        prompt.clean_chat_message_content(str(message.get("content") or ""))
+        for message in conversation_messages
+        if message.get("sender") == "contact"
+        and prompt.clean_chat_message_content(str(message.get("content") or ""))
     ]
-    if not contact_lines:
+    if not contact_messages:
         return None
     exact_evidence = [
         evidence for evidence in proposed.evidence
-        if evidence and any(evidence in line for line in contact_lines)
+        if evidence and any(evidence in message for message in contact_messages)
     ]
     if len(exact_evidence) != len(proposed.evidence):
         return None
 
-    last_contact = contact_lines[-1]
+    last_contact = contact_messages[-1]
     decline_match = _TAPPLE_DECLINE_RE.search(last_contact)
     if decline_match:
         return TappleStrategy(
@@ -202,6 +218,7 @@ def _parse_tapple_strategy(raw: str, conversation: str) -> TappleStrategy | None
             evidence in last_contact
             and _TAPPLE_INVITE_POSITIVE_RE.search(evidence)
             and not _TAPPLE_INVITE_HEDGE_RE.search(evidence)
+            and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(last_contact)
             for evidence in exact_evidence
         )
         if not has_current_explicit_interest:
@@ -1249,6 +1266,7 @@ def validate_candidate_replies(
     known_self_fact_timestamps: list[str | None] | None = None,
     chat_history_text: str = "",
     strategy_mode: str = "none",
+    tapple_action: str | None = None,
 ) -> list[str]:
     """返信案のHardバリデーションを行い、違反内容のリストを返す。空リストなら合格。
 
@@ -1283,6 +1301,18 @@ def validate_candidate_replies(
                 violations.append(
                     f"案{i}に外部連絡先の交換や移動を促す表現があります。"
                     "連絡先交換を提案せず、タップル上で会話を続ける文面にしてください。"
+                )
+            if (
+                _TAPPLE_REINVITATION_RE.search(rep)
+                and (
+                    tapple_action != "invite"
+                    or _TAPPLE_DECLINE_RE.search(counterpart_message or "")
+                )
+            ):
+                violations.append(
+                    f"案{i}に、会う誘いを返信文へ混ぜています。"
+                    "誘い方は返信候補ではなく戦略欄で提案してください。"
+                    "相手が断っている場合は、誘い直しや説得をせずに返してください。"
                 )
 
     # [AI_QUESTION] タグの混入チェック
@@ -2710,6 +2740,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         "custom_knowledge": custom_knowledge,
         "system_prompt": system_prompt,
         "chat_text": chat_text,
+        "chat_messages": [dict(message) for message in messages],
         "last_contact_msg": last_contact_msg,
         "last_contact_msg_id": last_contact_msg_id,
         "last_self_msg": last_self_msg,
@@ -3299,6 +3330,12 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                 for r in parsed_replies
             ]
 
+        tapple_strategy = (
+            _parse_tapple_strategy(raw, ctx.get("chat_messages", []))
+            if body.strategy_mode == "tapple"
+            else None
+        )
+
         violations = validate_candidate_replies(
             parsed_replies,
             body.candidates,
@@ -3312,6 +3349,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
             chat_history_text=ctx.get("chat_text", ""),
             strategy_mode=body.strategy_mode,
+            tapple_action=tapple_strategy.action if tapple_strategy else None,
         )
 
         # Step 16 §22: 初回のみ、質問不要なのに全案質問つきなら soft repair を促す。
@@ -3374,6 +3412,11 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                     ensure_has_question(r, condition=body.condition, contact_name=contact_name)
                     for r in repair_parsed
                 ]
+            repair_strategy = (
+                _parse_tapple_strategy(repair_raw, ctx.get("chat_messages", []))
+                if body.strategy_mode == "tapple"
+                else None
+            )
             repair_strategy_matches_replies = True
 
             repair_violations = validate_candidate_replies(
@@ -3389,6 +3432,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                 known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
                 chat_history_text=ctx.get("chat_text", ""),
                 strategy_mode=body.strategy_mode,
+                tapple_action=repair_strategy.action if repair_strategy else None,
             )
             if (
                 repair_violations
@@ -3421,6 +3465,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                         known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
                         chat_history_text=ctx.get("chat_text", ""),
                         strategy_mode=body.strategy_mode,
+                        tapple_action=None,
                     )
             if not repair_violations and repair_parsed and len(repair_parsed) == body.candidates:
                 final_parsed_replies = repair_parsed
@@ -3583,7 +3628,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         # Strategy metadata is advisory and independently validated; a malformed
         # or absent strategy never invalidates otherwise usable reply candidates.
         strategy = (
-            _parse_tapple_strategy(final_strategy_raw, chat_text)
+            _parse_tapple_strategy(final_strategy_raw, ctx.get("chat_messages", []))
             if final_strategy_raw is not None
             else None
         )

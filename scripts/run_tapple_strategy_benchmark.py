@@ -23,11 +23,25 @@ SCENARIOS = (
     {
         "id": "explicit_interest",
         "messages": [
-            {"sender": "self", "content": "コーヒー好きなんですね。来週、気になっているカフェに一緒に行きませんか？"},
-            {"sender": "contact", "content": "ぜひ一緒に行きたいです！"},
+            {"sender": "contact", "content": "コーヒー好きです。駅前に気になるカフェがあるんです"},
+            {"sender": "self", "content": "どんなお店か気になります"},
+            {"sender": "contact", "content": "今度一緒に行きたいです！"},
         ],
         "expected_action": "invite",
         "allowed_actions": ["invite"],
+        "reply_must_contain_any": ["カフェ", "コーヒー", "嬉しい", "うれしい", "楽しみ", "いいですね"],
+    },
+    {
+        "id": "accepted_invitation",
+        "messages": [
+            {"sender": "contact", "content": "コーヒー好きです"},
+            {"sender": "self", "content": "今度、駅前のカフェに一緒に行きませんか？"},
+            {"sender": "contact", "content": "ぜひ一緒に行きたいです！"},
+        ],
+        "expected_action": "continue",
+        "allowed_actions": ["continue"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["楽しみ", "嬉しい", "うれしい", "ありがとう", "日程", "予定", "いつ", "都合", "いいですね"],
     },
     {
         "id": "ambiguous_interest",
@@ -36,37 +50,155 @@ SCENARIOS = (
             {"sender": "contact", "content": "カフェいいですね！行ってみたいな。"},
         ],
         "allowed_actions": ["continue", "clarify", "wait"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["カフェ", "コーヒー", "気になります", "どんな", "おすすめ", "いいですね"],
+    },
+    {
+        "id": "tentative_interest",
+        "messages": [
+            {"sender": "contact", "content": "カフェ好きです"},
+            {"sender": "self", "content": "今度一緒に行きませんか？"},
+            {"sender": "contact", "content": "いつか行けたらいいですね"},
+        ],
+        "expected_action": "wait",
+        "allowed_actions": ["wait"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["タイミング", "また", "わかりました", "大丈夫", "無理", "カフェ"],
+    },
+    {
+        "id": "counterproposal",
+        "messages": [
+            {"sender": "contact", "content": "カフェ行きたいです"},
+            {"sender": "self", "content": "土曜日に駅前のカフェに行きませんか？"},
+            {"sender": "contact", "content": "土曜は難しいですが、日曜なら大丈夫です！"},
+        ],
+        "expected_action": "continue",
+        "allowed_actions": ["continue"],
+        "reply_must_contain_any": ["日曜", "日曜日"],
     },
     {
         "id": "decline",
         "messages": [
-            {"sender": "self", "content": "よかったら今度、駅前のカフェに行きませんか？"},
+            {"sender": "contact", "content": "カフェ好きです"},
+            {"sender": "self", "content": "今度、駅前のカフェに行きませんか？"},
             {"sender": "contact", "content": "ごめんなさい、今は会うのは難しいです。"},
+            {"sender": "self", "content": "わかりました"},
+            {"sender": "contact", "content": "今回は会うのは遠慮します"},
         ],
         "expected_action": "stop",
         "allowed_actions": ["stop"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["わかりました", "ありがとう", "大丈夫", "無理しない", "承知", "気にしない"],
     },
 )
 
 
-def expectation_met(scenario: dict, action: str | None) -> bool:
-    return bool(action) and action in scenario.get("allowed_actions", [])
+def _evaluate_result(scenario: dict, result: dict) -> list[str]:
+    if not isinstance(result, dict):
+        return ["invalid_result_record"]
+    failures = []
+    strategy = result.get("strategy")
+    action = strategy.get("action") if isinstance(strategy, dict) else None
+    if action not in scenario.get("allowed_actions", []):
+        failures.append("unexpected_action")
+    if scenario.get("expected_action") and action != scenario["expected_action"]:
+        failures.append("wrong_expected_action")
+
+    if not isinstance(strategy, dict) or not isinstance(strategy.get("rationale"), str) or not strategy["rationale"].strip():
+        failures.append("missing_rationale")
+
+    contact_messages = [
+        message.get("content", "")
+        for message in scenario.get("messages", [])
+        if message.get("sender") == "contact"
+        and isinstance(message.get("content"), str)
+    ]
+    latest_contact = contact_messages[-1] if contact_messages else ""
+    evidence = strategy.get("evidence") if isinstance(strategy, dict) else None
+    if (
+        not isinstance(evidence, list)
+        or not evidence
+        or any(
+            not isinstance(item, str)
+            or not item.strip()
+            or item not in latest_contact
+            for item in evidence
+        )
+    ):
+        failures.append("invalid_evidence")
+
+    replies = result.get("replies")
+    if (
+        not isinstance(replies, list)
+        or len(replies) != 1
+        or not isinstance(replies[0], str)
+        or not replies[0].strip()
+    ):
+        failures.append("missing_or_invalid_reply")
+        replies = []
+    for reply in replies:
+        if generation._is_tapple_contact_exchange_request(reply):
+            failures.append("external_contact_request")
+        if scenario.get("no_reinvitation") and generation._TAPPLE_REINVITATION_RE.search(reply):
+            failures.append("reinvitation_not_allowed")
+        required_reply_markers = scenario.get("reply_must_contain_any", [])
+        if required_reply_markers and not any(marker in reply for marker in required_reply_markers):
+            failures.append("reply_not_contextual")
+
+    invite_example = strategy.get("invite_example") if isinstance(strategy, dict) else None
+    if action == "invite":
+        if not isinstance(invite_example, str) or not invite_example.strip():
+            failures.append("missing_invitation_example")
+        elif (
+            not generation._TAPPLE_PUBLIC_PLACE_RE.search(invite_example)
+            or generation._TAPPLE_PRIVATE_PLACE_RE.search(invite_example)
+            or generation._is_tapple_contact_exchange_request(invite_example)
+        ):
+            failures.append("unsafe_invitation_example")
+    elif invite_example is not None:
+        failures.append("invitation_example_without_invite_action")
+
+    return sorted(set(failures))
+
+
+def expectation_met(scenario: dict, result: dict) -> bool:
+    return not _evaluate_result(scenario, result)
 
 
 def summarize_expectations(results: list[dict], *, complete: bool) -> dict:
-    expected_ids = [scenario["id"] for scenario in SCENARIOS]
-    results_by_id = {result.get("id"): result for result in results}
-    run_state = benchmark_run_state(results, len(expected_ids))
+    scenarios_by_id = {scenario["id"]: scenario for scenario in SCENARIOS}
+    expected_ids = list(scenarios_by_id)
+    safe_results = [
+        result if isinstance(result, dict) else {"error": "invalid_result_record"}
+        for result in results
+    ]
+    results_by_id = {
+        result["id"]: result
+        for result in safe_results
+        if isinstance(result.get("id"), str)
+    }
+    result_ids = [result.get("id") for result in safe_results]
+    valid_unique_ids = (
+        all(isinstance(result_id, str) for result_id in result_ids)
+        and len(set(result_ids)) == len(result_ids)
+    )
+    run_state = benchmark_run_state(safe_results, len(expected_ids))
     scenario_coverage_complete = (
         len(results) == len(expected_ids)
+        and valid_unique_ids
         and len(results_by_id) == len(expected_ids)
         and set(results_by_id) == set(expected_ids)
     )
-    failures = [
-        scenario_id
-        for scenario_id in expected_ids
-        if results_by_id.get(scenario_id, {}).get("expectation_met") is not True
-    ]
+    failures = []
+    failure_reasons = {}
+    for scenario_id in expected_ids:
+        result = results_by_id.get(scenario_id, {})
+        reasons = _evaluate_result(scenarios_by_id[scenario_id], result)
+        if "error" in result:
+            reasons.append("generation_error")
+        if reasons:
+            failures.append(scenario_id)
+            failure_reasons[scenario_id] = sorted(set(reasons))
     expectations_met = len(expected_ids) - len(failures)
     run_complete = complete and run_state["complete"] and scenario_coverage_complete
     quality_pass = run_complete and not failures
@@ -83,6 +215,7 @@ def summarize_expectations(results: list[dict], *, complete: bool) -> dict:
         "expectations_met": expectations_met,
         "expectation_total": len(expected_ids),
         "expectation_failures": failures,
+        "expectation_failure_reasons": failure_reasons,
         "quality_pass": quality_pass,
         "stopped_reason": stopped_reason,
         "exit_code": exit_code,
@@ -179,8 +312,8 @@ def main() -> int:
                     data = response.json()
                     result["replies"] = data.get("replies", [])
                     result["strategy"] = data.get("strategy")
-                    action = (result["strategy"] or {}).get("action")
-                    result["expectation_met"] = expectation_met(scenario, action)
+                    result["expectation_failure_reasons"] = _evaluate_result(scenario, result)
+                    result["expectation_met"] = not result["expectation_failure_reasons"]
                     history_ids = data.get("history_ids", [])
                     if history_ids:
                         conn = database.get_conn()

@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from scripts.run_tapple_strategy_benchmark import (
     SCENARIOS,
@@ -8,6 +9,14 @@ from scripts.run_tapple_strategy_benchmark import (
 
 
 def _valid_results():
+    replies = {
+        "explicit_interest": "いいですね、カフェ楽しみです！",
+        "accepted_invitation": "ありがとう、楽しみです！日程はいつがいいですか？",
+        "ambiguous_interest": "カフェ気になりますね、どんなお店ですか？",
+        "tentative_interest": "タイミングが合ったらぜひ、また話しましょう。",
+        "counterproposal": "日曜なら大丈夫です、ありがとう！",
+        "decline": "わかりました、無理しないでください。",
+    }
     results = []
     for scenario in SCENARIOS:
         last_contact = next(
@@ -21,7 +30,7 @@ def _valid_results():
                 "id": scenario["id"],
                 "expectation_met": True,
                 "messages": scenario["messages"],
-                "replies": ["そうなんですね、いいですね！"],
+                "replies": [replies[scenario["id"]]],
                 "strategy": {
                     "action": action,
                     "rationale": "相手の発言に合わせた次の進め方です。",
@@ -41,7 +50,7 @@ def test_tapple_benchmark_passes_only_when_all_scenarios_have_evidence_and_repli
     summary = summarize_expectations(results, complete=True)
 
     assert summary["quality_pass"] is True
-    assert summary["expectations_met"] == 3
+    assert summary["expectations_met"] == len(SCENARIOS)
     assert summary["expectation_failures"] == []
     assert summary["exit_code"] == 0
 
@@ -91,7 +100,7 @@ def test_tapple_artifact_does_not_claim_completion_for_duplicate_scenario_ids(tm
     _write_artifact(artifact_path, results, complete=True)
 
     summary = json.loads(artifact_path.read_text(encoding="utf-8"))["summary"]
-    assert summary["total"] == 3
+    assert summary["total"] == len(SCENARIOS)
     assert summary["complete"] is False
     assert summary["quality_pass"] is False
     assert summary["exit_code"] == 2
@@ -165,3 +174,30 @@ def test_tapple_benchmark_rejects_missing_reply_or_unverifiable_evidence():
     assert summary["quality_pass"] is False
     assert results[0]["id"] in summary["expectation_failures"]
     assert results[1]["id"] in summary["expectation_failures"]
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [None, "not-an-object", {"id": []}],
+    ids=["null-result", "string-result", "unhashable-id"],
+)
+def test_tapple_benchmark_fails_closed_on_malformed_result_records(malformed_result):
+    results = _valid_results()
+    results[0] = malformed_result
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["complete"] is False
+    assert summary["quality_pass"] is False
+    assert summary["exit_code"] == 2
+
+
+def test_tapple_benchmark_requires_evidence_from_the_latest_contact_message():
+    results = _valid_results()
+    counterproposal = next(result for result in results if result["id"] == "counterproposal")
+    counterproposal["strategy"]["evidence"] = ["カフェ行きたいです"]
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert "counterproposal" in summary["expectation_failures"]

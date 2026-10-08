@@ -33,6 +33,7 @@ def get_settings():
         "fallback_model": cfg.get("fallback_model", ""),
         "has_fallback_api_key": bool(cfg.get("fallback_api_key")),
         "fallback_api_key_env": bool(cfg.get("fallback_api_key_from_env")),
+        "has_secondary_api_key": bool(cfg.get("secondary_api_key")),
         "providers": factory.list_providers(),
     }
 

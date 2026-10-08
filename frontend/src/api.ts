@@ -124,6 +124,7 @@ export const api = {
       original_generated?: string
       tone?: string
       mode?: 'normal' | 'followup'
+      strategy_mode?: 'none' | 'tapple'
     },
     signal?: AbortSignal,
   ) =>

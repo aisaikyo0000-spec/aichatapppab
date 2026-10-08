@@ -6,10 +6,12 @@ API Keyはプロバイダごとに解決する（DB保存 または .env環境�
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from .. import config as app_config
 from ..database import get_conn, get_setting
+from .credentials import read_gemini_api_key
 
 # プロバイダごとのAPI Key環境変数名
 _PROVIDER_ENV_KEYS: dict[str, str] = {
@@ -53,6 +55,22 @@ def _env_api_key(provider: str) -> str:
     if dotenv_val:
         return dotenv_val
     return os.getenv(env_name, "").strip()
+
+
+def _secondary_gemini_api_key() -> str:
+    """Read the optional second-account key from an env value or key file."""
+    key_file = _read_dotenv("GEMINI_SECONDARY_API_KEY_FILE") or os.getenv(
+        "GEMINI_SECONDARY_API_KEY_FILE", ""
+    ).strip()
+    if key_file:
+        path = Path(key_file.strip().strip('"').strip("'")).expanduser()
+        if not path.is_absolute():
+            path = app_config.PROJECT_ROOT / path
+        return read_gemini_api_key(path)
+
+    return _read_dotenv("GEMINI_SECONDARY_API_KEY") or os.getenv(
+        "GEMINI_SECONDARY_API_KEY", ""
+    ).strip()
 
 
 def _read_dotenv(name: str) -> str:
@@ -110,6 +128,8 @@ def get_ai_config() -> dict[str, Any]:
         fallback_api_key = _env_api_key(fallback_provider)
         fallback_api_key_from_env = bool(fallback_api_key)
 
+    secondary_api_key = _secondary_gemini_api_key() if provider.lower() == "gemini" else ""
+
     return {
         "provider": provider,
         "model": model,
@@ -123,6 +143,7 @@ def get_ai_config() -> dict[str, Any]:
         "fallback_model": fallback_model,
         "fallback_api_key": fallback_api_key,
         "fallback_api_key_from_env": fallback_api_key_from_env,
+        "secondary_api_key": secondary_api_key,
     }
 
 

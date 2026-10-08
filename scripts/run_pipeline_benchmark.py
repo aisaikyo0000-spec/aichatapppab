@@ -36,15 +36,15 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.routers import generation  # noqa: E402
-from compare_before_after import detect_issues, summarize_issues  # noqa: E402
-
-
-def _read_key() -> str:
-    for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if s.startswith("GEMINI_API_KEY"):
-            return s.partition("=")[2].strip()
-    return ""
+from compare_before_after import (  # noqa: E402
+    build_case_prompt,
+    classify_ai_like,
+    detect_issues,
+    four_axis_scores,
+    summarize_issues,
+)
+from api_key_file import read_gemini_api_key  # noqa: E402
+from app.ai.naturalness import evaluate_candidate_naturalness  # noqa: E402
 
 
 def main() -> int:
@@ -53,20 +53,39 @@ def main() -> int:
     parser.add_argument("--cases", default=str(ROOT / "backend" / "tests" / "step10_benchmark_inputs.json"))
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int, default=-1)
+    parser.add_argument("--case-ids", default="",
+                        help="特定ケースIDをカンマ区切りで指定。--start/--endより優先")
     parser.add_argument("--model", default="gemini-3.5-flash-lite")
+    parser.add_argument("--env-file", default=str(ROOT / ".env"), help="API key file (value is never printed)")
+    parser.add_argument("--delay-seconds", type=float, default=6.0,
+                        help="各ケース間の待機秒数。Geminiの短時間リクエスト上限を考慮する")
     args = parser.parse_args()
 
-    key = _read_key()
+    key = read_gemini_api_key(Path(args.env_file))
     if not key:
         print("GEMINI_API_KEY missing")
         return 1
-    generation.get_ai_config = lambda: {
+    ai_config = {
         "provider": "gemini", "model": args.model, "api_key": key,
         "temperature": 0.8, "max_tokens": 512, "history_limit": 50,
     }
+    if args.model == "gemini-3.5-flash-lite":
+        ai_config.update({
+            "fallback_provider": "gemini",
+            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_api_key": key,
+        })
+    generation.get_ai_config = lambda: ai_config
 
     cases = json.loads(Path(args.cases).read_text(encoding="utf-8"))
-    subset = cases[args.start : args.end if args.end >= 0 else len(cases)]
+    if args.case_ids.strip():
+        wanted_ids = {case_id.strip() for case_id in args.case_ids.split(",") if case_id.strip()}
+        subset = [case for case in cases if str(case.get("id", "")) in wanted_ids]
+        missing_ids = wanted_ids - {str(case.get("id", "")) for case in subset}
+        if missing_ids:
+            parser.error(f"指定されたcase idが見つかりません: {', '.join(sorted(missing_ids))}")
+    else:
+        subset = cases[args.start : args.end if args.end >= 0 else len(cases)]
     client = TestClient(app)
 
     # Step 17 §4: LLM呼出回数を数える（1回より多ければ repair 経路が発動）
@@ -109,9 +128,32 @@ def main() -> int:
             else:
                 data = r.json()
                 entry["candidates"] = data["replies"]
+                if data.get("question"):
+                    entry["safe_user_question"] = data["question"]
+                if len(entry["candidates"]) != 3 and not entry.get("safe_user_question"):
+                    entry["error"] = "incomplete_candidate_set"
+                history_ids = data.get("history_ids", [])
+                conn = database.get_conn()
+                try:
+                    entry["models_used"] = [row["model"] for row in conn.execute(
+                        f"SELECT DISTINCT model FROM generation_history WHERE id IN ({','.join('?' for _ in history_ids)})",
+                        history_ids,
+                    ).fetchall()] if history_ids else []
+                finally:
+                    conn.close()
                 entry["final_scores"] = data.get("final_scores")
                 entry["naturalness_scores"] = data.get("naturalness_scores")
                 entry["issues"] = [detect_issues(c, case["contact"]) for c in data["replies"]]
+                _, _, ledger = build_case_prompt(case)
+                naturalness = [
+                    evaluate_candidate_naturalness(reply, case["contact"], ledger, [])
+                    for reply in data["replies"]
+                ]
+                entry["four_axis"] = [four_axis_scores(item) for item in naturalness]
+                entry["ai_like_patterns"] = [
+                    classify_ai_like(reply, case["contact"], case.get("intent", "report"))
+                    for reply in data["replies"]
+                ]
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}"
         entry["llm_calls"] = call_counter["n"] - calls_before
@@ -119,14 +161,30 @@ def main() -> int:
             # Step 17 §4-5: repair 前（1回目 raw）と repair 後（2回目以降 raw）を記録
             entry["repair_raws"] = raw_capture["raws"][calls_before:]
         results.append(entry)
-        time.sleep(1)
+        Path(args.out).write_text(
+            json.dumps({"total_so_far": len(results), "cases": results}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        time.sleep(max(0.0, args.delay_seconds))
     all_issues = [iss for e in results for iss in e.get("issues", [])]
     repaired = sum(1 for e in results if e.get("llm_calls", 1) > 1)
+    axis_keys = ("context_fit", "human_chat_fit", "conversation_fit")
+    axis_avg = {}
+    for axis in axis_keys:
+        values = [
+            candidate[axis]
+            for result in results
+            for candidate in result.get("four_axis", [])
+            if candidate.get(axis) is not None
+        ]
+        axis_avg[axis] = round(sum(values) / len(values), 3) if values else None
     summary = {
         "total": len(results),
         "errors": sum(1 for e in results if "error" in e),
         "repaired_cases": repaired,
+        "safe_user_question_cases": sum(1 for e in results if e.get("safe_user_question")),
         "issues": summarize_issues(all_issues),
+        "four_axis_avg": axis_avg,
     }
     Path(args.out).write_text(
         json.dumps({"summary": summary, "cases": results}, ensure_ascii=False, indent=2),

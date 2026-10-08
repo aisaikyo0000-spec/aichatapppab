@@ -1,15 +1,15 @@
 """階層的スタイルプロファイル学習モジュール（Hierarchical Style Profile v3.1）。
 
 Priority順序:
-1. same_contact_recent_manual_gold (最優先: 直近の同じ相手への手入力Gold)
-2. same_contact_all_manual_gold (同じ相手の全手入力Gold)
-3. same_contact_sent_silver (同じ相手の送信Silver)
-4. global_manual_gold (他相手も含めた全手入力Gold)
-5. global_profile (ベースライン)
+1. 同一相手の手入力GoldをGlobal Goldへ段階的に反映
+2. Global manual Gold
+3. 同一相手のsent Silver（Global Goldが不足する場合のみ）
+4. phase / global profile
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import dataclasses
 import statistics
 import re
 from typing import Any, Literal
@@ -51,9 +51,9 @@ def _split_sentences(text: str) -> list[str]:
 
 def _classify_tone_exclusive(text: str) -> Literal["keigo", "hybrid", "tame"]:
     """メッセージ単体を keigo / hybrid / tame の3値に排他的判定する。"""
-    has_desu_masu = bool(re.search(r"(?:です|ます|でした|ました|ですね|ですか|でしょうか|ますよ)(?:[！!？?\s]|$)", text))
-    has_casual_tokens = bool(re.search(r"(?:笑|w|ー|〜|っ|だね|だよ|よね|じゃん|かも|かな)(?:[！!？?\s]|$)", text))
-    has_plain_tame = bool(re.search(r"(?:だね|だよ|行こう|しよう|楽しそう|いいな|まじ|ほんと|そうなんだ)(?:[！!？?\s]|$)", text))
+    has_desu_masu = bool(re.search(r"(?:です|ます|でした|ました|ですね|ですか|でしょうか|ますよ)(?:[。！!？?\s]|$)", text))
+    has_casual_tokens = bool(re.search(r"(?:笑|w|ー|〜|っ|だね|だよ|よね|じゃん|かも|かな)(?:[。！!？?\s]|$)", text))
+    has_plain_tame = bool(re.search(r"(?:だね|だよ|行こう|しよう|楽しそう|いいな|まじ|ほんと|そうなんだ)(?:[。！!？?\s]|$)", text))
 
     if has_desu_masu and has_casual_tokens:
         return "hybrid"
@@ -224,28 +224,40 @@ def compute_hierarchical_profile(
     gold_prof = compute_style_metrics(gold_texts)
     same_contact_recent_gold_prof = compute_style_metrics(same_contact_recent_gold_texts)
     same_contact_all_gold_prof = compute_style_metrics(same_contact_gold_texts)
+    recent_evidence_weight = (
+        min(0.5, (same_contact_all_gold_prof.sample_count - 5) / (same_contact_all_gold_prof.sample_count + 5))
+        if same_contact_all_gold_prof.sample_count > 5 else 0.0
+    )
+    same_contact_blended_gold_prof = _blend_style_profiles(
+        same_contact_all_gold_prof,
+        same_contact_recent_gold_prof,
+        recent_evidence_weight,
+        same_contact_all_gold_prof.sample_count,
+    )
     contact_prof = compute_style_metrics(contact_texts)
     phase_prof = compute_style_metrics(phase_texts)
     recent_prof = compute_style_metrics(recent_texts)
 
-    # 優先順位の厳格化:
-    # 1. same_contact_recent_manual_gold (1件以上あれば最優先)
-    # 2. same_contact_all_manual_gold (1件以上あれば優先)
-    # 3. same_contact_sent_silver (1件以上あれば)
-    # 4. global_manual_gold (5件以上あれば)
-    # 5. global_profile
-    if same_contact_recent_gold_prof.sample_count >= 1:
-        active_prof = same_contact_recent_gold_prof
+    # 3件未満のsame-contact Goldでは局所適応せず、確認済みGoldだけを安全なfallbackにする。
+    # Goldが1件でもある間は、送信済みSilverを含むphase/global styleへ置き換えない。
+    # 十分な件数のGoldは局所履歴で置き換えず、Global Goldへ件数に応じて混ぜる。
+    same_contact_gold_prof_count = same_contact_all_gold_prof.sample_count
+    if same_contact_gold_prof_count >= 3:
+        local_weight = min(0.75, same_contact_gold_prof_count / (same_contact_gold_prof_count + 5))
+        active_prof = _blend_style_profiles(gold_prof, same_contact_blended_gold_prof, local_weight, same_contact_gold_prof_count)
         hierarchy_tier = "same_contact_recent_manual_gold"
-    elif same_contact_all_gold_prof.sample_count >= 1:
-        active_prof = same_contact_all_gold_prof
-        hierarchy_tier = "same_contact_all_manual_gold"
-    elif contact_prof.sample_count >= 3:
-        active_prof = contact_prof
-        hierarchy_tier = "contact_specific"
     elif gold_prof.sample_count >= 5:
         active_prof = gold_prof
         hierarchy_tier = "global_manual_gold"
+    elif gold_prof.sample_count:
+        active_prof = gold_prof
+        hierarchy_tier = "sparse_manual_gold_fallback"
+    elif (
+        not same_contact_gold_prof_count
+        and len(same_contact_silver_texts) >= 3
+    ):
+        active_prof = compute_style_metrics(same_contact_silver_texts)
+        hierarchy_tier = "same_contact_sent_silver"
     elif phase_prof.sample_count >= 5:
         active_prof = phase_prof
         hierarchy_tier = "phase_specific"
@@ -260,6 +272,12 @@ def compute_hierarchical_profile(
         "gold_profile": gold_prof,
         "same_contact_recent_gold_profile": same_contact_recent_gold_prof,
         "same_contact_all_gold_profile": same_contact_all_gold_prof,
+        "same_contact_blended_gold_profile": same_contact_blended_gold_prof,
+        "contact_recency_weight": recent_evidence_weight,
+        "contact_adaptation_weight": (
+            min(0.75, same_contact_all_gold_prof.sample_count / (same_contact_all_gold_prof.sample_count + 5))
+            if same_contact_all_gold_prof.sample_count >= 3 else 0.0
+        ),
         "contact_profile": contact_prof,
         "phase_profile": phase_prof,
         "recent_profile": recent_prof,
@@ -270,32 +288,81 @@ def compute_hierarchical_profile(
     }
 
 
+def _blend_style_profiles(base: StyleProfile, local: StyleProfile, weight: float, sample_count: int) -> StyleProfile:
+    """Blend local evidence into the global Gold prior without an abrupt style switch."""
+    weight = max(0.0, min(0.75, weight))
+    base_values = dataclasses.asdict(base)
+    local_values = dataclasses.asdict(local)
+    blended: dict[str, Any] = {}
+    for item in dataclasses.fields(StyleProfile):
+        name = item.name
+        if name == "sample_count":
+            blended[name] = sample_count
+        elif name == "frequent_emojis":
+            blended[name] = local_values[name] if weight >= 0.6 else base_values[name]
+        elif name == "first_person":
+            blended[name] = base_values[name]
+        else:
+            value = base_values[name] * (1 - weight) + local_values[name] * weight
+            blended[name] = round(value) if isinstance(base_values[name], int) else round(value, 2)
+    return StyleProfile(**blended)
+
+
+def infer_contact_tone(hierarchical: dict[str, Any], requested_tone: str = "") -> str:
+    """Apply a hard automatic tone only when same-contact Gold is consistently one-sided."""
+    if requested_tone:
+        return requested_tone
+    if hierarchical.get("same_contact_gold_samples", 0) < 3:
+        return ""
+
+    profile: StyleProfile = hierarchical["same_contact_blended_gold_profile"]
+    if profile.tame_ratio >= 0.75:
+        return "tame"
+    if profile.keigo_ratio >= 0.75:
+        return "keigo"
+    # A mixed Gold distribution is a soft preference, not a hard tone lock.
+    # The learned examples and relationship summary preserve that variation.
+    return ""
+
+
 def to_learned_policy_prompt(hierarchical: dict[str, Any]) -> str:
     """階層プロファイルからプロンプト用ポリシーブロックを生成する。"""
     p: StyleProfile = hierarchical.get("active_profile", StyleProfile())
     tier = hierarchical.get("hierarchy_tier", "global")
     sample_count = p.sample_count
 
-    # トーン判定の要約
-    if p.hybrid_ratio >= 0.5:
-        tone_desc = f"丁寧な敬語をベースに『笑』やフランクな語尾を交えるハイブリッド調（ハイブリッド率{int(p.hybrid_ratio*100)}%）"
-    elif p.keigo_ratio >= 0.5:
-        tone_desc = f"丁寧な会話敬語ベース（敬語率{int(p.keigo_ratio*100)}%）"
+    # 少数比率でも一方に決めつけず、混在傾向をそのまま表す。
+    if p.keigo_ratio >= 0.65:
+        tone_desc = f"丁寧な会話敬語が中心（敬語率{int(p.keigo_ratio*100)}%）"
+    elif p.tame_ratio >= 0.65:
+        tone_desc = f"親しみやすいカジュアル口調が中心（タメ口率{int(p.tame_ratio*100)}%）"
+    elif p.hybrid_ratio >= 0.45:
+        tone_desc = f"丁寧さと砕けた語尾が混ざる会話調（混合率{int(p.hybrid_ratio*100)}%）"
     else:
-        tone_desc = f"親しみやすいカジュアル口調（タメ口率{int(p.tame_ratio*100)}%）"
+        tone_desc = (
+            "丁寧な表現と砕けた表現が混在する会話調"
+            f"（敬語{int(p.keigo_ratio*100)}%・混合{int(p.hybrid_ratio*100)}%・タメ口{int(p.tame_ratio*100)}%）"
+        )
 
     punct_desc = "句点『。』はほぼ使わず" if p.period_ratio < 0.2 else "適度に句点『。』を使用し"
     laugh_desc = f"『笑』の使用率約{int(p.laugh_ratio*100)}%"
     q_desc = f"質問で終える割合 約{int(p.question_ratio*100)}%（質問なし返信 約{int(p.question_free_ratio*100)}%）"
     emoji_desc = f"1通あたり平均{p.emoji_avg_count}個（頻出: {' '.join(p.frequent_emojis)}）"
+    contact_adaptation = ""
+    if tier == "same_contact_recent_manual_gold":
+        contact_adaptation = (
+            f"- 同一相手Gold: {hierarchical.get('same_contact_gold_samples', 0)}件の本人手入力傾向を"
+            f"Global Goldへ段階的に反映（重み{hierarchical.get('contact_adaptation_weight', 0):.2f}）。\n"
+        )
 
     return (
         f"【LEARNED USER RESPONSE POLICY】\n【USER LEARNED STYLE PROFILE】（採用階層: {tier} / 学習サンプル数: {sample_count}件）\n"
         f"ユーザー本人が実際に送信してきたメッセージ実績から抽出した文体・構造ポリシーです。\n"
+        f"{contact_adaptation}"
         f"- 口調・トーン: {tone_desc}\n"
         f"- 文量・構成: 1通あたり中央値{p.char_median}文字（IQR: {p.char_p25}〜{p.char_p75}文字）、中央値{p.line_median}行・{p.sent_median}文\n"
         f"- 記号・絵文字: {punct_desc}、『！』を多用。{laugh_desc}。絵文字は{emoji_desc}\n"
-        f"- 会話構造: 相手の発言への自然な反応を最優先し、必要な場合だけ質問・深掘り・自己開示を行う。質問しない返信・短い返信も正常。説明的な長文より、実績にある短い相槌・一言反応を優先すること。{q_desc}。一人称は『{p.first_person}』、相手の呼称は『〇〇さん』\n"
+        f"- 会話構造: 相手の発言への自然な反応を最優先し、必要な場合だけ質問・深掘り・自己開示を行う。質問しない返信・短い返信も正常。説明的な長文より、実績にある短い相槌・一言反応を優先すること。{q_desc}。一人称は『{p.first_person}』。相手の名前が履歴や設定で確認でき、呼ぶのが自然な場合だけ名前を使い、未確認の名前や呼びかけは作らない。\n"
         f"- 禁止表現（実績ゼロの機械的AI表現）: 『〜とのこと』『〜と拝見』や、『ほかに』『ほかにも』『〜以外』『〇〇もいいですけど』等の話題逃げ・並列質問は本人の手入力実績に一切存在しないため完全禁止。\n"
         f"- 基本姿勢: 固定された画一ルールではなく、本人の実際の実績スタイル・テンポを最上位の正解として反映すること"
     )
@@ -326,18 +393,20 @@ def build_relationship_summary(contact_id: int | None) -> str:
         return ""
     gold_pairs = corpus.extract_same_contact_manual_gold_pairs(contact_id, limit=10)
     texts = [p.self_turn.text for p in gold_pairs if not p.excluded]
-    if not texts:
+    if len(texts) < 3:
         return ""
     n = len(texts)
-    prof = compute_style_metrics(texts)
+    hierarchy = compute_hierarchical_profile(contact_id)
+    prof: StyleProfile = hierarchy["same_contact_blended_gold_profile"]
+    global_gold: StyleProfile = hierarchy["gold_profile"]
 
     # フォーマル度（観測のみ）
-    if prof.tame_ratio >= 0.6:
+    if prof.tame_ratio >= 0.75:
         formality = "砕けた"
-    elif prof.keigo_ratio >= 0.6:
+    elif prof.keigo_ratio >= 0.75:
         formality = "丁寧"
     else:
-        formality = "普通"
+        formality = "丁寧さと砕け具合が混在"
     # 温度感（笑・絵文字・感嘆符の観測値から。名前による固定なし）
     warm_score = prof.laugh_ratio + min(prof.emoji_avg_count, 2.0) / 2.0 + prof.exclamation_ratio
     if warm_score >= 1.2:
@@ -349,12 +418,13 @@ def build_relationship_summary(contact_id: int | None) -> str:
     else:
         warmth = "普通"
     # 文量（中央値・行数）
-    if prof.char_median <= 20:
-        brevity = "短め"
-    elif prof.char_median <= 50:
-        brevity = "普通"
+    length_delta = prof.char_median - global_gold.char_median
+    if length_delta >= 5:
+        brevity = "Global Goldより相対的に長め"
+    elif length_delta <= -5:
+        brevity = "Global Goldより相対的に短め"
     else:
-        brevity = "長め"
+        brevity = "Global Goldと同程度"
     # 質問率（観測のみ。高いから毎回質問するわけではない）
     if prof.question_ratio >= 0.5:
         q_desc = "質問多め"
@@ -362,10 +432,17 @@ def build_relationship_summary(contact_id: int | None) -> str:
         q_desc = "質問少なめ"
     else:
         q_desc = "質問普通"
-    confidence = f"（この相手への手入力実績{n}件より）" if n >= 3 else f"（実績{n}件のみのため参考程度）"
+    confidence = f"（この相手の手入力Gold {n}件をGlobal Goldに段階的に反映）"
+    tone_guidance = (
+        f"丁寧・混合・砕けた文体の実績比率は{int(prof.keigo_ratio * 100)}%・{int(prof.hybrid_ratio * 100)}%・{int(prof.tame_ratio * 100)}%。"
+        "混在も本人らしさとして保ち、相手への共感や労いなど文脈に自然に合う場面では、3案の少なくとも1案は敬語だけで終始させず、Goldにある会話調の距離感（例:『大変だったね』『ゆっくり休んでね』）を反映する。"
+        "事務連絡や深刻な話題など砕けると不自然な場面では無理に崩さず、同じ丁寧さの言い換えだけで3案を埋めない。"
+        if formality == "丁寧さと砕け具合が混在" else ""
+    )
     return (
         f"＜この相手への返信距離感＞{confidence}\n"
         f"- 距離感: {formality}・{warmth}（笑い{'多め' if prof.laugh_ratio >= 0.3 else '少なめ'}・{brevity}・{q_desc}）。"
-        f"文量目安: {prof.char_p25}〜{prof.char_p75}字程度・{prof.line_p25}〜{prof.line_p75}行。"
-        f"この距離感・温度感・文量を目安に返信すること。"
+        f"同一相手Goldの文量中央値は{prof.char_median}字、Global Goldは{global_gold.char_median}字。"
+        f"{tone_guidance}返信の長さはこの差も参考にしつつ、現在の会話内容に合う範囲で決めること。"
+        f"本人のGold実例と現在の会話内容を優先し、質問や文量をこの傾向だけで決めないこと。"
     )

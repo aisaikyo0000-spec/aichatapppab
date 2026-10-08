@@ -472,11 +472,13 @@ def build_system_prompt(
     counterpart_style: str = "",
     learned_preferences: str = "",
     same_contact_gold_block: str = "",
+    same_contact_gold_samples: int = 0,
     counterpart_length_tier: str = "",
     counterpart_length_chars: int = 0,
 ) -> str:
     """8ブロック構成のシステムプロンプトを組み立てる（Conversation-Learned Reply System v3.8）。"""
-    contact_name = contact.get("name") or "相手"
+    raw_contact_name = (contact.get("name") or "").strip()
+    contact_name = "" if raw_contact_name in {"相手", "相手さん", "未設定", "不明"} else raw_contact_name
     raw_profile = (contact.get("profile") or "").strip()
     contact_profile = clean_contact_profile(raw_profile)
     season_name, season_restriction = get_current_season_info(current_datetime)
@@ -553,7 +555,7 @@ def build_system_prompt(
         "（Step 7 追記）相手メッセージが短文（short区分）の場合、相槌・共感・一言程度の短い候補を必ず1案以上含めること。3案は可能な場合に異なる会話戦略（短反応 / 少し展開 / 少し詳しい反応）を持たせること。ただし意味のある違いがない場合は無理に違わせないこと（不自然な差別化は不正）。\n"
         "（Step 8 追記）質問は「相手が質問している」または「会話上情報を聞くことが自然」な場合に限定すること。「会話を続けた方がよい」という理由だけでは質問しないこと。NO QUESTION（質問なしの相槌・共感・短反応・一言・労いだけで終える）は正式な戦略として許可する。例: 相手「今日疲れた」→「おつかれさまです」「それは疲れますね」「ゆっくり休んでください」の3案でも成立する。\n"
         "（Step 14-R 追記）おやすみ・またね・了解・ありがとう等の会話終了・受領時は短い返答で終え、新しい質問・話題を追加しないこと。\n"
-        "（Step 17-R 追記）書き出しの共感・相槌を毎回同じ定型表現で始めないこと。3案の文頭表現は互いに異なるものにし、共感表現は Gold 実績と文脈から自然に選ぶこと。特に短い相づち・挨拶・受領（まあね/へー/そっか/了解 等）への返信は、共感の定型文で始めず同じテンポの自然な短い応答（笑い・相槌・一言）で返すこと。共感・労い・気遣いを1つの返信に積み重ねすぎないこと（必要な反応だけで成立させる。相談・長文への返信はこの限りではない）。相手の発言と会話履歴から自然に導けない新しい話題・質問を勝手に追加しないこと（自然な連想・相づち・既出の話題までは禁止しない）。\n"
+        "（Step 17-R 追記）書き出しの共感・相槌を毎回同じ定型表現で始めないこと。3案の文頭表現は互いに異なるものにし、共感表現は Gold 実績と文脈から自然に選ぶこと。特に短い相づち・挨拶・受領への返信は、相手の語をそのまま一語返しにせず、本人Goldに沿った短い反応を返すこと。共感・労い・気遣いを1つの返信に積み重ねすぎないこと（必要な反応だけで成立させる。相談・長文への返信はこの限りではない）。相手の発言と会話履歴から自然に導けない新しい話題・質問を勝手に追加しないこと（自然な連想・相づち・既出の話題までは禁止しない）。\n"
         "（Step 17-R2 追記）自然に異なる候補が作れる場合だけ3案を差別化すること。短い相づち・終了・受領（まあね/へー/そっか/了解/ありがとう/おつ 等）では3案が似ても問題ない。方向の違いを質問の有無で作らないこと（質問は必要な場合だけに入れ、3案の差別化のために質問を追加しない）。同じ同意・共感を語尾や同意語だけ変えた言い換え3連（同じ意味を3回言うこと）は、返信の幅が広い場合に避けること。ただし短い相づち・終了・受領など返信の幅が狭い場合は自然な範囲の類似を許容し、本人 Gold が短い言い換えを多用する場合は本人らしさを優先すること。\n"
         "（Step 17-R6 追記）相手がすでに話した内容を改めて質問形で聞き返さないこと。相手の短い一言に原因を尋ねる質問を付けないこと。相手の質問・報告に答える際は回答だけで終え、確定した内容への確認質問や回答後の逆質問を付け足さないこと。質問は必要・自然・文脈上意味がある場合のみに入れること（Step 17-R5 の具体例列挙はモデルが例文をコピーするため撤廃し、行動レベルのみ残す）。疑問文の文末の疑問符は1つにすること（？？のような重ね付けはしない。Step 17-R6 loop）。1つの返信に含める疑問符は1つまでとすること（複数の質問を1つの返信に入れない。Step 17-R6 loop2）。\n"
     )
@@ -572,12 +574,10 @@ def build_system_prompt(
 
     followup_name_rule = (
         (
-            f"1. 相手の呼称: 名前が確認できる場合だけ『{contact_name}さん』と呼ぶ。名前を使わない自然な文にしてよく、呼びかけを無理に足さない。\n"
-            if contact.get("name")
-            else "1. 相手の呼称: 名前が未設定なら名前で呼びかけない。仮の名前や敬称を作らない。\n"
+            f"1. 相手の呼称: 相手の名前を呼ぶ時は必ず「さん」付け（呼び捨て・あだ名禁止）。"
+            f"名前が確認できる場合だけ『{contact_name}さん』と呼べる。呼びかけを無理に足さない。\n"
         )
-        if mode == "followup"
-        else f"1. 相手の呼称: 相手の名前を呼ぶ時は必ず「さん」付け（呼び捨て・あだ名禁止）。相手を呼ぶ際は必ず『{contact_name}さん』とする。\n"
+        if contact_name else "1. 相手の呼称: 名前が未設定または未確認なら名前で呼びかけない。「さん」付けは確認済みの名前にのみ使い、仮の名前や敬称を作らない。\n"
     )
 
     b2_hard = (
@@ -588,8 +588,8 @@ def build_system_prompt(
         "4. 会話履歴の既出情報重複禁止: 相手が写真コメント等で既に答えた内容や、過去にすでに聞いたことを再質問したり、既に話した自己開示を初めてのように繰り返さない。\n"
         "5. 不自然なカタカナ語の禁止: 『リフレッシュ』等の不自然なカタカナ語は使用しないこと。\n"
         "6. MULTI-TOPIC RULE: 相手が複数の話題を出している場合はメインの話題に絞って自然に展開すること。\n"
-        "7. 未知事項の逆質問: 本人の未確認の経験を尋ねる場合（行った・食べた・試したこと等）、本人情報・会話履歴で答えが確認できないなら、返信案を作らずアプリ利用者への確認として [AI_QUESTION]質問内容[/AI_QUESTION] のみを出力すること。"
-        "アプリ利用者への確認文をチャット相手に送る返信案へ混ぜないこと。"
+        "7. 本人の未確認の経験を尋ねる場合（行った・食べた・試したこと等）、好み（犬派か猫派か、映画が好きか等）、予定・空き状況、生活習慣（起床時刻等）を聞かれ、本人情報・本人側の会話履歴に答えがない場合は、返信案を作らずアプリ利用者への確認として [AI_QUESTION]質問内容[/AI_QUESTION] のみを出力すること。"
+        "一般的な反応や相手の好みへの感想を、本人の経験・好みの回答として扱わないこと。アプリ利用者への確認文をチャット相手に送る返信案へ混ぜないこと。"
         "ただし『あれどうなった？』『それって何のこと？』のように会話上の参照先が不明な状況確認は別ケース。これは本人の経験を尋ねる依頼ではないため、アプリ利用者へ質問せず、相手に送る短い確認文を通常のJSON返信候補として作る。このケースでは [AI_QUESTION] を出力しない。\n"
         f"{line_break_rule}"
         "9. 質問は任意: 質問を含めるかどうかは会話状況次第であり、質問なしの短い返信（例: 「それはきついな」「いいな」）も正式な正常系として扱うこと。相手が明確な質問をしている場合は必ず回答すること（例: 「明日何時にする？」→「14時くらいで大丈夫」）。既出質問の繰り返しは禁止。\n"
@@ -618,6 +618,8 @@ def build_system_prompt(
         "- 不明なことを知っている前提で返答しないこと。推測を事実として文章化しないこと。\n"
         "- 自然な感情反応（例: 「大変ですね」「おつかれさまです」）は許可する。具体的事実の追加はしない。\n"
         "- 未知の情報を聞く場合は、断定ではなく質問として尋ねること。\n"
+        "- 「眠い」に「眠いですよね」だけのような、相手の状態を同じ言葉で言い換えただけの返事にしない。短い労いや気遣いなど、会話上の反応を添える。\n"
+        "- 助詞を省略して不自然な文にしない。送信前に文全体が自然な日本語か確認する。\n"
         "- 自分の事実は CHAT HISTORY・Gold 実績に確認できる場合のみ使うこと（例: 履歴にない「自分も最近映画見ました」は禁止）。\n"
         "- 事実と感想を混同しないこと。相手の発言の要約・分析・説明を長々と返さないこと。"
     )
@@ -633,19 +635,11 @@ def build_system_prompt(
         )
 
     # Block 3: CHAT HISTORY / CONTACT & CHAT HISTORY (事実ソース)
-    counterpart_label = (
-        f"{contact_name}さん"
-        if contact.get("name") or mode != "followup"
-        else "相手"
-    )
+    counterpart_label = f"{contact_name}さん" if contact_name else "相手"
     counterpart_title = (
         f"相手（{counterpart_label}）" if counterpart_label != "相手" else "相手"
     )
-    contact_info = (
-        f"相手のお名前: {contact_name}さん"
-        if contact.get("name") or mode != "followup"
-        else "相手のお名前: 未設定（名前で呼びかけない）"
-    )
+    contact_info = f"相手のお名前: {contact_name}さん" if contact_name else "相手のお名前: 未設定（名前で呼びかけない）"
     if contact_profile:
         contact_info += f"\n相手のプロフィール（※補助参考情報）:\n{contact_profile}"
 
@@ -747,18 +741,32 @@ def build_system_prompt(
         length_lines.append("※文字数のHard Limit ではない。回答に必要な長さは許容する。")
     length_text = "\n".join(length_lines)
     cp_summary = counterpart_style_block.strip() or counterpart_style.strip()
-    if cp_summary:
+    if same_contact_gold_samples >= 3 and cp_summary:
         b7_counterpart = (
             f"【COUNTERPART STYLE ADAPTATION】\n【COUNTERPART WRITING STYLE】{counterpart_title}への適応\n"
             f"{cp_summary}\n"
-            "- 相手発言のオウム返し・コピー禁止。自分のスタイルを土台にしつつ適応させること。\n"
+            "- 返信の要否・内容・長さは現在の会話内容を最優先すること。本人のGold実例とGlobalの本人文体を土台にし、相手の温度感は補助情報にとどめる。\n"
+            "- 相手発言のオウム返し・コピー禁止。相手の語句・語尾・口調を模倣せず、距離感を合わせるためだけに質問や説明を追加しないこと。\n"
+            "- 相手が短文中心の場合、説明的な長文にせず短く返すこと。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
+        )
+    elif same_contact_gold_samples >= 3:
+        b7_counterpart = (
+            f"【COUNTERPART STYLE ADAPTATION】\n【COUNTERPART WRITING STYLE】{counterpart_title}への適応\n"
+            "- 返信の要否・内容・長さは現在の会話内容を最優先すること。本人のGold実例を最優先し、Globalの本人文体を土台にする。相手の温度感は補助情報にとどめる。\n"
+            "- 相手発言のオウム返し・コピー禁止。相手の文体は補助情報にとどめ、語句・語尾・口調を模倣しない。適応のためだけに質問や説明を追加しないこと。\n"
+            "- 相手が短文中心の場合、説明的な長文にせず短く返すこと。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
+        )
+    elif cp_summary:
+        b7_counterpart = (
+            f"【COUNTERPART STYLE ADAPTATION】\n【COUNTERPART WRITING STYLE】{counterpart_title}への適応\n"
+            f"{cp_summary}\n"
+            "- 相手発言のオウム返し・コピー禁止。自分のスタイルを土台にしつつ、相手の温度感・文量に20〜30%程度自然に適応させること。\n"
             "- 相手が短文中心の場合、説明的な長文にせず短く返すこと。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
         )
     else:
         b7_counterpart = (
             f"【COUNTERPART STYLE ADAPTATION】\n【COUNTERPART WRITING STYLE】{counterpart_title}への適応\n"
-            "- 自分のスタイルを土台にしつつ、相手の温度感・文量に20〜30%程度自然に適応させること。\n"
-            "- 相手発言のオウム返し・コピー禁止。\n"
+            "- 相手発言のオウム返し・コピー禁止。自分のスタイルを土台にしつつ、相手の温度感・文量に20〜30%程度自然に適応させること。\n"
             "- 相手が短文中心の場合、説明的な長文にせず短く返すこと。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
         )
     if length_text:
@@ -836,6 +844,7 @@ def build_initial_generation_messages(
     chat_history_text: str = "",
     candidates: int = 3,
     mode: str = "normal",
+    strategy_mode: str = "none",
 ) -> list[dict[str, str]]:
     """初回返信生成用のメッセージリストを組み立てる（全履歴の二重投入を廃止）。"""
     if mode == "followup":
@@ -852,6 +861,7 @@ def build_initial_generation_messages(
             "会話を続けるためだけの質問や、返信負担になる質問は避けてください。確認済みの話題に自然につながり、短く答えやすい質問は必要な場合に限って使ってかまいません。質問なしの短い反応も正当な選択肢です。質問の有無だけで候補を差別化せず、同じ話題を質問表現だけ変えて複数案にしないでください。質問を含む案は必要性が高い場合も原則1案までを目安にし、残りは短い反応や感想で構いません。\n"
             "プロフィールに嗜好が書かれているだけなら、所有・飼育・経験・利用の有無を質問で確認しないでください。プロフィール情報には短い感想として触れられます。回答時点の日時だけを根拠に、履歴にない出来事の完了・経過を推測しないでください。未来・過去の時点や期間が会話で明示されていないなら、現在述べられている状況だけに応じ、出来事がすでに終わったとは仮定しないでください。過去形で近況を尋ねる場合は、その出来事の期間が実際に経過したと会話履歴から確認できるときに限ってください。自分の希望や予定も、履歴などに根拠がなければ作らないでください。\n"
             "3案はそのまま送れる自然な文にし、確認できる内容が少ない場合は、質問や自己開示を無理に足さず短く返してください。長さは会話に合わせ、短い一文だけで自然に成立するならそのまま返してください。\n"
+            "相手の『眠い』『疲れた』など一言の状態共有には、状態の言い換えではなく、短い労いや気遣いを一文だけ返してください。原因や勤務状況を推測せず、質問や助言を重ねないでください。\n"
             f"{_SILENT_SELF_CHECK}"
             f'出力は必ず JSON形式の {{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}} のみとし、説明・前置き・解説は一切出力しないでください。'
         )
@@ -861,9 +871,32 @@ def build_initial_generation_messages(
             "『〜とのこと』『〜と拝見』等の機械的AI表現や他人行儀な敬語、過度な季節の話題は完全禁止です。『ほかにも』『ほかに』『他に』『〜以外』『〇〇もいいですけど』等の話題切り替え・並列質問は禁止し、相手が出した話題そのものに触れて自然に話を広げること（感想・共感・関連付けを優先し、質問は情報が本当に必要な場合だけにすること）。『何か』は漢字にせず平仮名『なにか』としてください。\n"
             "質問・自己開示・話題拡張は毎回必須ではありません。相手の発言が短い場合は短い返信（例: 「それはきついな」「いいな」）も正式な正常系として許可します。相手が明確な質問をしている場合は回答を含めてください。\n"
             "説明文ではなく、その会話で実際に送るメッセージとして作成すること。相手の発言の要約・分析・言い換えではなく、自分の言葉での反応にすること。相手の発言に出てきた話題の言葉は、自然な場合にそのままの言葉で触れること（使うこと自体を返信条件にしない。例: 相手「明日仕事なんだ」→「おつかれ」で成立し、「仕事」を必ず入れる必要はない。相手「キャンプ行きたいな」→「キャンプいいですね！」のように自然な場合は使う。グッズ・自然等の関連語を足しすぎない）。短い返信にも話題の言葉を1語入れると自然で文脈にも合う（例: 相手「昨日映画見てきた」→「映画いいですね！」。長い説明は不要）。ただし相手の文全体を言い換えて返すことはしない（話題の言葉＋自分の反応で返す。例: 相手「新しいドラマ見始めた」→「ドラマいいですね！」。「新しいドラマ見始めたんですね」のような文全体の言い換え返しはしない）（Step 17-R4・R5・18-R2）。\n"
+            "報告への返信では、事実を「〜なんですね」と確認し直す形を定番の書き出しにせず、内容を聞いた自分の感想・共感・ねぎらいを先に返してください。同じ事実を言い換えて再掲するだけの候補を作らないでください。\n"
             "架空の自己開示・事実捏造の禁止を厳守し、1つの返信を分割せず各案が単独で送信できる独立した完成品として3案作成してください。\n"
             f"{_SILENT_SELF_CHECK}"
             f'出力は必ず JSON形式の {{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}} （または逆質問時の [AI_QUESTION]...[/AI_QUESTION]）のみとし、説明・前置き・解説は一切出力しないでください。各返信は必ずダブルクォートで囲み、クォートの欠落・日本語括弧「」・＝の混用をしないこと（Step 17-R2）。'
+        )
+    if strategy_mode == "tapple" and candidates != 3:
+        user_instruction = user_instruction.replace("3案", f"{candidates}案")
+        user_instruction = user_instruction.replace(
+            '{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}',
+            '{"replies": [' + ", ".join(
+                f'"案{i + 1}の返信文章"' for i in range(candidates)
+            ) + ']}'
+        )
+    if strategy_mode == "tapple":
+        reply_slots = ",".join(f'"案{i + 1}"' for i in range(candidates))
+        user_instruction += (
+            "\n\n【タップル会話戦略】返信候補とは別に、会話の次の方針を構造化して付けてください。"
+            "strategy.action は continue / clarify / invite / wait / stop のいずれかです。"
+            "判断根拠はCHAT HISTORYにある相手の発言だけに限定し、evidenceにはその発言からの完全一致の短い抜粋を1〜4件入れてください。"
+            "返信速度、短い相づち、曖昧な好意だけをデートへの同意と解釈せず、明確な参加意思が相手の発言にある場合だけ invite を選んでください。"
+            "断り・拒否があれば stop とし、押し直す提案をしないでください。迷い・曖昧さ・返答待ちは wait または continue にしてください。"
+            "invite_exampleは方針を説明するための例に限り、repliesの返信候補に誘い文を混ぜないでください。例を出す場合は人目のある公共の場所を選び、連絡先交換を提案しないでください。"
+            "会話上の根拠が足りない場合はstrategyを省略してください。"
+            f"返信候補は必ず{candidates}件だけ作ってください。\n"
+            f'出力形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop","rationale":"根拠に基づく短い説明","evidence":["会話からの完全一致抜粋"],"invite_example":null}}}}'
+            "。戦略カードの内容は会話方針の参考情報であり、そのまま送信する返信候補ではありません。"
         )
     return [
         {"role": "system", "content": system_prompt},
@@ -878,6 +911,8 @@ def build_revision_messages(
     condition: str,
     original_generated: str,
     revision_instruction: str,
+    strategy_mode: str = "none",
+    candidates: int = 3,
 ) -> list[dict[str, str]]:
     """修正して再生成するためのメッセージリストを組み立てる。"""
     _override_note = (
@@ -888,10 +923,12 @@ def build_revision_messages(
     revised_system = f"{system_prompt}{_override_note}"
 
     if revision_instruction.strip():
-        directive_text = f"前回の返信案を以下の指示に従って修正し、3案再生成してください:\n修正指示: {revision_instruction.strip()}"
+        revision_count = candidates if strategy_mode == "tapple" else 3
+        directive_text = f"前回の返信案を以下の指示に従って修正し、{revision_count}案再生成してください:\n修正指示: {revision_instruction.strip()}"
     else:
+        revision_count = candidates if strategy_mode == "tapple" else 3
         directive_text = (
-            f"前回の返信案（{original_generated.strip() or '前回案'}）とは異なる切り口・会話展開で3案再生成してください。\n"
+            f"前回の返信案（{original_generated.strip() or '前回案'}）とは異なる切り口・会話展開で{revision_count}案再生成してください。\n"
             "単に言い換える（単語や語尾を少し変えるだけ）ことは厳禁です。\n"
             "会話の戦略・切り口そのものを大きく変更した新しい3案を作成してください。"
         )
@@ -902,6 +939,24 @@ def build_revision_messages(
         "※絶対ルールを厳守してください。前回の返信案と内容・表現が重複しないよう書き換えてください。\n\n"
         f'出力は必ず JSON形式の {{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}} で出力してください。'
     )
+
+    if strategy_mode == "tapple":
+        user_content = user_content.replace("3案", f"{candidates}案")
+        user_content = user_content.replace(
+            '{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}',
+            '{"replies": [' + ", ".join(
+                f'"案{i + 1}の返信文章"' for i in range(candidates)
+            ) + ']}'
+        )
+        reply_slots = ",".join(f'"案{i + 1}"' for i in range(candidates))
+        user_content += (
+            "\n\n【タップル会話戦略】返信候補とは別に、CHAT HISTORYの相手発言だけを根拠に"
+            "continue / clarify / invite / wait / stop の方針をstrategyとして追加してください。"
+            "evidenceは会話からの完全一致抜粋のみ。明確な参加意思がない限りinviteにせず、返信速度や曖昧な相づちは根拠にしないでください。"
+            "断りがあればstop。invite_exampleは方針説明用で、repliesに誘い文を混ぜず、人目のある公共の場所だけを例にし、連絡先交換を勧めないでください。"
+            f"返信候補は必ず{candidates}件だけ作ってください。"
+            f'形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop","rationale":"説明","evidence":["完全一致抜粋"],"invite_example":null}}}}'
+        )
 
     return [
         {"role": "system", "content": revised_system},

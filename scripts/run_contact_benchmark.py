@@ -3,6 +3,7 @@ import argparse
 import json
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -11,62 +12,99 @@ from fastapi.testclient import TestClient
 from app import config, database
 from app.main import app
 from app.ai import factory
+from app.learning import style
 from app.routers import generation
-
-
-def _read_key() -> str:
-    m = re.search(r"GEMINI_API_KEY=(\S+)", Path(".env").read_text(encoding="utf-8"))
-    return m.group(1) if m else ""
+from api_key_file import read_gemini_api_key
 
 
 CONTACTS = {
     # A: short/tame/laugh-heavy
     "A": [
-        ("今日暇だった", "おつかれ笑"),
-        ("眠い", "わかる笑"),
-        ("雨降ってきた", "ほんとそれ笑"),
-        ("おつ", "おつおつ笑"),
-        ("まじ", "まじか笑"),
+        ("今週ずっと忙しくて疲れた", "おつかれ笑"),
+        ("昨日映画見てきた", "映画いいね笑"),
+        ("カフェ行ってきたよ", "いいな笑"),
+        ("コンビニで新作スイーツ見つけた", "新作気になる笑"),
+        ("天気いいね", "ほんとだね笑"),
+        ("週末はゆっくりできそう", "いいじゃん笑"),
     ],
     # B: polite/long/no-emoji
     "B": [
-        ("今日はありがとうございました", "こちらこそありがとうございました！とても楽しかったです！"),
-        ("明日はよろしくお願いします", "こちらこそよろしくお願いいたします！準備を進めておきます！"),
-        ("資料を送付しました", "資料を確認いたしました！ありがとうございます！"),
-        ("会議は来週です", "承知いたしました！来週よろしくお願いいたします！"),
-        ("お疲れ様でした", "お疲れ様でした！本日はありがとうございました！"),
+        ("今週ずっと忙しくて疲れた", "お仕事お疲れ様です！ゆっくり休んでくださいね。"),
+        ("昨日映画見てきた", "映画いいですね！どんな作品を見たんですか？"),
+        ("カフェ行ってきたよ", "カフェに行かれたんですね！いい時間を過ごせましたか？"),
+        ("コンビニで新作スイーツ見つけた", "新作スイーツ気になりますね！美味しそうですね。"),
+        ("天気いいね", "今日は過ごしやすい天気ですね！"),
+        ("週末はゆっくりできそう", "ゆっくり過ごせそうでよかったです！何か予定はありますか？"),
     ],
-    # C: medium/hybrid
+    # C: medium length, with polite and casual replies mixed
     "C": [
-        ("昨日映画見てきた", "映画いいですね！何を見たんですか？"),
-        ("明日休みなんだ", "お休みなんですね！ゆっくり休んでくださいね。"),
-        ("コンビニで新作スイーツ見つけた", "新作気になりますね！美味しそうです。"),
-        ("来週引っ越しするんだ", "引っ越しなんですね！大変そうですね。"),
-        ("最近ランニング始めた", "ランニングいいですね！すごいです。"),
+        ("今週ずっと忙しくて疲れた", "それは大変だったね、今日はゆっくり休んでね"),
+        ("昨日映画見てきた", "映画いいですね、楽しそう！"),
+        ("カフェ行ってきたよ", "カフェいいな、ゆっくりできそう"),
+        ("コンビニで新作スイーツ見つけた", "それ気になる！どんな味だろう"),
+        ("天気いいね", "ほんとだね、気持ちよさそう！"),
+        ("週末はゆっくりできそう", "よかったですね！ゆっくりできそう"),
     ],
 }
 
-PROBE = "今日疲れた"
+PROBE = "仕事で疲れた"
 
 
-def seed_and_generate(client, key, model):
-    generation.get_ai_config = lambda: {
+def seed_and_generate(client, key, model, delay_seconds, probe):
+    ai_config = {
         "provider": "gemini", "model": model, "api_key": key,
         "temperature": 0.8, "max_tokens": 512, "history_limit": 50,
     }
-    out = {}
+    if model == "gemini-3.5-flash-lite":
+        ai_config.update({
+            "fallback_provider": "gemini",
+            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_api_key": key,
+        })
+    generation.get_ai_config = lambda: ai_config
+    contact_ids = {}
     for name, pairs in CONTACTS.items():
         cid = client.post("/api/contacts", json={"name": f"{name}さん", "profile": ""}).json()["id"]
-        for cm, sm in pairs:
-            client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": cm})
-            client.post(f"/api/contacts/{cid}/messages", json={"sender": "self", "content": sm})
-        client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": PROBE})
+        for contact_message, self_message in pairs:
+            client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": contact_message})
+            client.post(f"/api/contacts/{cid}/messages", json={"sender": "self", "content": self_message})
+        contact_ids[name] = cid
+
+    out = {}
+    for name in CONTACTS:
+        cid = contact_ids[name]
+        client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": probe})
         r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
         if r.status_code != 200:
             out[name] = {"error": f"HTTP {r.status_code}"}
         else:
-            out[name] = {"replies": r.json()["replies"]}
-        time.sleep(2)
+            data = r.json()
+            history_ids = data.get("history_ids", [])
+            conn = database.get_conn()
+            try:
+                models = [row["model"] for row in conn.execute(
+                    f"SELECT DISTINCT model FROM generation_history WHERE id IN ({','.join('?' for _ in history_ids)})",
+                    history_ids,
+                ).fetchall()] if history_ids else []
+            finally:
+                conn.close()
+            profile = style.compute_hierarchical_profile(cid)
+            learned = profile["active_profile"]
+            out[name] = {
+                "replies": data["replies"],
+                "models_used": models,
+                "style_profile": {
+                    "tier": profile["hierarchy_tier"],
+                    "gold_samples": profile["same_contact_gold_samples"],
+                    "adaptation_weight": profile["contact_adaptation_weight"],
+                    "length_median": learned.char_median,
+                    "keigo_ratio": learned.keigo_ratio,
+                    "hybrid_ratio": learned.hybrid_ratio,
+                    "tame_ratio": learned.tame_ratio,
+                    "laugh_ratio": learned.laugh_ratio,
+                },
+            }
+        time.sleep(max(0.0, delay_seconds))
     return out
 
 
@@ -80,18 +118,26 @@ def style_sig(text):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--model", default="gemini-3.1-flash-lite")
-    ap.add_argument("--db", default="C:/Users/proje/AppData/Local/Temp/opencode/contactbench.db")
+    ap.add_argument("--model", default="gemini-3.5-flash-lite")
+    ap.add_argument("--env-file", default=str(Path(__file__).resolve().parents[1] / ".env"),
+                    help="API key file (value is never printed)")
+    ap.add_argument("--db", help="Optional new/empty database path; existing files are never removed")
+    ap.add_argument("--delay-seconds", type=float, default=6.0)
+    ap.add_argument("--probe", default=PROBE, help="Shared incoming message used for A/B/C")
     args = ap.parse_args()
-    key = _read_key()
+    key = read_gemini_api_key(Path(args.env_file))
     if not key:
         print("GEMINI_API_KEY missing")
         return 1
-    Path(args.db).unlink(missing_ok=True)
-    config.DB_PATH = args.db
+    db_path = Path(args.db) if args.db else Path(tempfile.mkdtemp(prefix="contactbench_")) / "contactbench.db"
+    if db_path.exists() and db_path.stat().st_size:
+        print(f"Refusing to overwrite non-empty benchmark database: {db_path}")
+        return 2
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    config.DB_PATH = db_path
     database.init_db()
     client = TestClient(app)
-    out = seed_and_generate(client, key, args.model)
+    out = seed_and_generate(client, key, args.model, args.delay_seconds, args.probe)
     # discrimination: each reply closer to own Gold than to others?
     gold_sig = {n: [style_sig(sm) for _, sm in pairs] for n, pairs in CONTACTS.items()}
     report = {}
@@ -99,7 +145,11 @@ def main():
         if "error" in res:
             report[name] = res
             continue
-        entry = {"replies": res["replies"], "sigs": [style_sig(c) for c in res["replies"]]}
+        entry = {
+            "replies": res["replies"],
+            "sigs": [style_sig(c) for c in res["replies"]],
+            "style_profile": res["style_profile"],
+        }
         # avg laugh/len vs own Gold avg laugh/len
         own = gold_sig[name]
         own_laugh = sum(g["laugh"] for g in own) / len(own)
@@ -109,10 +159,12 @@ def main():
         entry["own_gold"] = {"laugh": round(own_laugh, 2), "len": round(own_len, 1)}
         entry["reply_avg"] = {"laugh": round(rep_laugh, 2), "len": round(rep_len, 1)}
         report[name] = entry
+    report["probe"] = args.probe
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"Wrote {args.out}")
     print(json.dumps({n: {"own": r.get("own_gold"), "rep": r.get("reply_avg"),
-                          "replies": r.get("replies")} for n, r in report.items()},
+                          "replies": r.get("replies")} for n, r in report.items()
+                      if isinstance(r, dict)},
                      ensure_ascii=False, indent=1)[:2000])
     return 0
 

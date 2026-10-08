@@ -3,6 +3,7 @@
 Hard Validation, Repair, 返信ペア構築, 全件スタイル集計, Few-shot検索, プレビューAPI連携を検証。
 """
 import json
+from datetime import datetime
 import pytest
 from fastapi import HTTPException
 
@@ -47,6 +48,19 @@ def test_strict_parse_replies():
         "おすすめの作品ありますか？"
     )
     assert generation._parse_replies_strict(three_lines_single_reply, 3) == []
+
+
+def test_keigo_tone_validation_accepts_polite_sentence_endings():
+    assert generation.validate_tone_strict(
+        ["いいですね！", "楽しそうですね。", "いいですよ！", "本当に気持ちのいい気候ですよね！"],
+        "keigo",
+    ) == []
+    assert generation.validate_tone_strict(["それいいじゃん！", "そうだね"], "keigo")
+
+
+def test_tame_tone_validation_detects_polite_clause_before_laughter():
+    assert generation.validate_tone_strict(["それはおつかれさまです笑"], "tame")
+    assert generation.validate_tone_strict(["おつかれさま笑"], "tame") == []
 
 
 def test_hard_validator_detects_violations():
@@ -401,6 +415,506 @@ def test_normal_validator_rejects_unsupported_current_experience_claim():
     assert any("案1に本人の経験を確認できる情報がありません" in e for e in violations)
 
 
+def test_normal_validator_rejects_unverified_transient_self_disclosure():
+    violations = generation.validate_candidate_replies(
+        ["僕は今日バタバタしてました笑"], expected_candidates=1, mode="normal",
+        counterpart_message="今日暇だった", known_self_facts=[], chat_history_text="",
+    )
+    assert any("本人の近況を確認できる情報がありません" in e for e in violations)
+
+
+def test_normal_validator_requires_confirmation_for_unknown_personal_preference():
+    violations = generation.validate_candidate_replies(
+        ["犬派です！", "映画好きですよ！", "犬も猫も好きです"], expected_candidates=3,
+        mode="normal", counterpart_message="犬派？猫派？", known_self_facts=[],
+    )
+    assert sum("本人の好みを確認できる情報がありません" in e for e in violations) == 3
+
+
+def test_normal_validator_matches_preference_claims_to_the_supported_user_fact():
+    assert generation.validate_candidate_replies(
+        ["猫派です！"], expected_candidates=1, mode="normal",
+        counterpart_message="犬派？猫派？", known_self_facts=["自分は猫派です"],
+    ) == []
+    violations = generation.validate_candidate_replies(
+        ["犬派です！"], expected_candidates=1, mode="normal",
+        counterpart_message="犬派？猫派？", known_self_facts=["自分は猫が好きです"],
+    )
+    assert any("本人の好みを確認できる情報がありません" in e for e in violations)
+
+    negative_fact_violations = generation.validate_candidate_replies(
+        ["猫好きです！"], expected_candidates=1, mode="normal",
+        counterpart_message="猫好き？", known_self_facts=["猫が苦手です"],
+    )
+    assert any("本人の好みを確認できる情報がありません" in e for e in negative_fact_violations)
+    negative_polarity = generation.validate_candidate_replies(
+        ["猫派です！"], expected_candidates=1, mode="normal",
+        counterpart_message="猫派？", known_self_facts=["猫派じゃないです"],
+    )
+    assert any("本人の好みを確認できる情報がありません" in e for e in negative_polarity)
+
+    unsupported_both = generation.validate_candidate_replies(
+        ["どっちも好きです！"], expected_candidates=1, mode="normal",
+        counterpart_message="犬派？猫派？", known_self_facts=["猫が好きです"],
+    )
+    assert any("本人の好みを確認できる情報がありません" in e for e in unsupported_both)
+    unpunctuated_preference = generation.validate_candidate_replies(
+        ["犬派です！"], expected_candidates=1, mode="normal",
+        counterpart_message="犬派なの", known_self_facts=[],
+    )
+    assert any("本人の好みを確認できる情報がありません" in e for e in unpunctuated_preference)
+    multiple_preferences = generation.validate_candidate_replies(
+        ["映画好きです！"], expected_candidates=1, mode="normal",
+        counterpart_message="映画好き？甘いもの大丈夫？", known_self_facts=["甘いものが大丈夫です"],
+    )
+    assert any("本人の好みを確認できる情報がありません" in e for e in multiple_preferences)
+
+
+def test_normal_validator_requires_movie_preference_fact():
+    assert any("本人の好みを確認できる情報がありません" in e for e in generation.validate_candidate_replies(
+        ["映画好きですよ！"], expected_candidates=1, mode="normal",
+        counterpart_message="映画好き？", known_self_facts=[],
+    ))
+    assert generation.validate_candidate_replies(
+        ["映画好きですよ！"], expected_candidates=1, mode="normal",
+        counterpart_message="映画好き？", known_self_facts=["自分は映画が好きです"],
+    ) == []
+    assert generation.validate_candidate_replies(
+        ["映画好きですよ！"], expected_candidates=1, mode="normal",
+        counterpart_message="この映画って好き？", known_self_facts=["映画が好きです"],
+    ) == []
+
+
+def test_normal_validator_requires_confirmation_for_unknown_tolerance():
+    violations = generation.validate_candidate_replies(
+        ["全然大丈夫ですよ！", "辛いの好きです", "辛いの結構いけます！"],
+        expected_candidates=3, mode="normal", counterpart_message="辛いの大丈夫？",
+        known_self_facts=[],
+    )
+    assert sum("本人の好みを確認できる情報がありません" in e for e in violations) == 3
+    assert generation.validate_candidate_replies(
+        ["辛いの結構いけます！"], expected_candidates=1, mode="normal",
+        counterpart_message="辛いの大丈夫？", known_self_facts=["自分は辛いものも平気です"],
+    ) == []
+    contradicts_tolerance = generation.validate_candidate_replies(
+        ["全然大丈夫です！"], expected_candidates=1, mode="normal",
+        counterpart_message="辛いもの大丈夫？", known_self_facts=["辛いものが苦手です"],
+    )
+    assert any("本人の好みを確認できる情報がありません" in error for error in contradicts_tolerance)
+
+
+def test_normal_validator_requires_confirmation_for_unknown_schedule_and_routine():
+    schedule_errors = generation.validate_candidate_replies(
+        ["土日は予定あけてますよ！", "土日どちらでも大丈夫です！", "土日なら空いてます！"],
+        expected_candidates=3, mode="normal", counterpart_message="土日どっちがいい？",
+        known_self_facts=[],
+    )
+    assert len(schedule_errors) == 3
+    routine_errors = generation.validate_candidate_replies(
+        ["休みの日もつい早起きしちゃいます！", "まだ起きる時間は決めてないです", "まだ寝てないから起きられるかな笑"],
+        expected_candidates=3, mode="normal", counterpart_message="明日何時に起きる？",
+        known_self_facts=[],
+    )
+    assert len(routine_errors) == 3
+
+
+def test_normal_validator_allows_grounded_schedule_and_wakeup_facts():
+    assert generation.validate_candidate_replies(
+        ["土日は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="週末空いてる？", known_self_facts=["今週末は予定がなくて空いています"],
+    ) == []
+
+    wrong_period = generation.validate_candidate_replies(
+        ["今週末は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="来週末空いてる？", known_self_facts=["今週末は予定がなくて空いています"],
+    )
+    assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in wrong_period)
+    mismatched_reply_period = generation.validate_candidate_replies(
+        ["今週末は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="来週末空いてる？", known_self_facts=["来週末は予定がなくて空いています"],
+    )
+    assert any("異なる日程について答えています" in error for error in mismatched_reply_period)
+    contradicted_schedule = generation.validate_candidate_replies(
+        ["明日は空いています！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる？", known_self_facts=["明日は空いていません"],
+    )
+    assert any("確認済みの予定と逆の空き状況" in error for error in contradicted_schedule)
+    for negative_fact in ("明日は暇じゃない", "明日は大丈夫じゃない"):
+        colloquial_negation = generation.validate_candidate_replies(
+            ["明日は空いてます！"], expected_candidates=1, mode="normal",
+            counterpart_message="明日空いてる？", known_self_facts=[negative_fact],
+        )
+        assert any("確認済みの予定と逆の空き状況" in error for error in colloquial_negation)
+    for ambiguous_fact in (
+        "明日は予定がないわけじゃない",
+        "明日は行けないわけじゃない",
+        "明日は空いてないとは言ってない",
+        "明日は空いてるかも",
+        "明日は空いてないとはいってない",
+        "明日は空いてるとは言えない",
+        "明日は空いてるとは限らない",
+        "明日は空いてるとはかぎらない",
+        "明日は空いてるって言ってない",
+        "明日は空いてると言ってない",
+        "明日は空いてるって聞いた",
+        "明日は空いてるって聞いてない",
+        "明日は空いてるとは聞いていない",
+        "明日は空いていると思う",
+        "明日は空いている可能性がある",
+        "明日はたぶん空いてる",
+        "明日は空いてるって言ってた",
+        "明日は空いてると言っていた",
+        "明日は空いてると言われている",
+        "明日は空いてると言われた",
+        "明日は空いてると聞かされた",
+        "明日は空いてるって聞いてなかった",
+        "明日は空いてると聞いていた",
+        "明日は空いてるって聞いてた",
+        "明日は空いてるって言われてた",
+        "明日は空いてると言われていない",
+        "明日は空いてると聞かされていない",
+        "明日は空いてるらしい",
+    ):
+        assert generation._availability_polarity(ambiguous_fact) is None
+        unclear_schedule = generation.validate_candidate_replies(
+            ["明日は空いてます！"], expected_candidates=1, mode="normal",
+            counterpart_message="明日空いてる？", known_self_facts=[ambiguous_fact],
+        )
+        assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in unclear_schedule)
+    general_weekend_polarity = generation.validate_candidate_replies(
+        ["週末は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="週末空いてる？", known_self_facts=["今週末は空いていません"],
+    )
+    assert any("確認済みの予定と逆の空き状況" in error for error in general_weekend_polarity)
+    ambiguous_weekend_facts = generation.validate_candidate_replies(
+        ["週末は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="週末空いてる？",
+        known_self_facts=["今週末は空いていない", "来週末は空いている"],
+    )
+    assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in ambiguous_weekend_facts)
+    for reply in ("明日なら大丈夫です！", "明日なら行けます！", "明日は暇です！"):
+        paraphrased_contradiction = generation.validate_candidate_replies(
+            [reply], expected_candidates=1, mode="normal",
+            counterpart_message="明日空いてる？", known_self_facts=["明日は空いていません"],
+        )
+        assert any("確認済みの予定と逆の空き状況" in error for error in paraphrased_contradiction)
+    unpunctuated_schedule = generation.validate_candidate_replies(
+        ["明日は空いてるよ！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる", known_self_facts=[],
+    )
+    assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in unpunctuated_schedule)
+    assert generation.validate_candidate_replies(
+        ["明日なら大丈夫です！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる？", known_self_facts=["明日は予定が入っていない"],
+    ) == []
+    assert generation.validate_candidate_replies(
+        ["明日は予定が入ってるけど、夕方なら行けるよ！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる？", known_self_facts=["明日は空いています"],
+    ) == []
+    assert generation.validate_candidate_replies(
+        ["明日は予定があるけど大丈夫です！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる？", known_self_facts=["明日は空いています"],
+    ) == []
+    for reply in ("明日なら行けません！", "明日は大丈夫だけど予定がある"):
+        contradiction = generation.validate_candidate_replies(
+            [reply], expected_candidates=1, mode="normal",
+            counterpart_message="明日空いてる？", known_self_facts=["明日は空いています"],
+        )
+        assert any("確認済みの予定と逆の空き状況" in error for error in contradiction)
+    assert generation.validate_candidate_replies(
+        ["休みの日もつい早起きしちゃいます！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日何時に起きる？", known_self_facts=["休みの日も早起きすることが多い"],
+    ) == []
+
+    comparison_with_both_periods_known = generation.validate_candidate_replies(
+        ["今週末は空いていて、来週末は予定があるよ"], expected_candidates=1, mode="normal",
+        counterpart_message="今週末と来週末どっち空いてる？",
+        known_self_facts=["今週末は空いている", "来週末は予定がある"],
+    )
+    assert comparison_with_both_periods_known == []
+    combined_comparison_facts = generation.validate_candidate_replies(
+        ["今週末も来週末も空いてないよ"], expected_candidates=1, mode="normal",
+        counterpart_message="今週末と来週末どっち空いてる？",
+        known_self_facts=["今週末は空いてるけど、来週末は予定がある"],
+    )
+    assert any("確認済みの予定と逆の空き状況" in error for error in combined_comparison_facts)
+    vague_both_periods_reply = generation.validate_candidate_replies(
+        ["どっちも空いてるよ"], expected_candidates=1, mode="normal",
+        counterpart_message="今週末と来週末どっち空いてる？",
+        known_self_facts=["今週末は空いてるけど、来週末は予定がある"],
+    )
+    assert any("確認済みの予定と逆の空き状況" in error for error in vague_both_periods_reply)
+
+
+def test_normal_validator_requires_all_directly_asked_preferences_to_be_known():
+    partial_answer = generation.validate_candidate_replies(
+        ["犬派です！"], expected_candidates=1, mode="normal",
+        counterpart_message="犬派？猫派？映画好き？", known_self_facts=["犬が好き"],
+    )
+    assert any("本人の好みを確認できる情報がありません" in error for error in partial_answer)
+
+
+def test_preference_choice_phrasing_does_not_create_phantom_topics():
+    assert generation._personal_preference_question_topics("犬派なの？") == ["犬"]
+    assert generation._personal_preference_question_topics("犬と猫どっちが好き？") == ["犬", "猫"]
+    assert generation._personal_preference_question_topics("犬派？猫派？どっちも好き？") == ["犬", "猫"]
+    assert generation._personal_preference_question_topics("犬と猫どっちが好き？甘いものは好き？") == ["犬", "猫", "甘いもの"]
+    assert generation._personal_preference_question_topics("コーヒーと紅茶どっちが好き？") == ["コーヒー", "紅茶"]
+    assert generation._personal_preference_question_topics("甘いものと辛いものどっちが好き？") == ["甘いもの", "辛いもの"]
+    assert generation._personal_preference_question_topics("コーヒーと紅茶、どっちも好き？") == ["コーヒー", "紅茶"]
+    assert any("本人の好みを確認できる情報がありません" in error for error in generation.validate_candidate_replies(
+        ["コーヒーも紅茶も好きです！"], expected_candidates=1, mode="normal",
+        counterpart_message="コーヒーと紅茶、どっちも好き？", known_self_facts=[],
+    ))
+    assert generation.validate_candidate_replies(
+        ["猫派です！甘いものも好きです！"], expected_candidates=1, mode="normal",
+        counterpart_message="犬と猫どっちが好き？甘いものは好き？",
+        known_self_facts=["猫が好き", "甘いものが好き"],
+    ) == []
+
+
+def test_normal_validator_requires_confirmation_for_unrecognized_specific_dates():
+    for message, reply in (
+        ("明後日空いてる？", "明後日は空いてるよ"),
+        ("土曜と日曜どっち空いてる？", "土曜が空いてるよ"),
+        ("今度の日曜いける？", "今度の日曜は行けるよ"),
+        ("来月の5日空いてる？", "来月5日は大丈夫だよ"),
+        ("7月5日空いてる？", "7月5日は大丈夫だよ"),
+        ("8/15空いてる？", "8/15は大丈夫だよ"),
+        ("2026/7/5空いてる？", "2026/7/5は大丈夫だよ"),
+    ):
+        violations = generation.validate_candidate_replies(
+            [reply], expected_candidates=1, mode="normal",
+            counterpart_message=message, known_self_facts=[],
+        )
+        assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in violations)
+
+    assert generation._availability_periods("2026/7/5空いてる？") == {"2026年7月5日"}
+    assert generation.validate_candidate_replies(
+        ["2026年7月5日は空いてるよ"], expected_candidates=1, mode="normal",
+        counterpart_message="2026/7/5空いてる？", known_self_facts=["2026年7月5日は空いている"],
+    ) == []
+
+
+def test_schedule_evidence_from_old_relative_date_message_expires():
+    stale_fact = generation.validate_candidate_replies(
+        ["明日は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる？", known_self_facts=["明日は空いてる"],
+        known_self_fact_timestamps=["2026-09-01T12:00:00+00:00"],
+        current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in stale_fact)
+
+    same_day_fact = generation.validate_candidate_replies(
+        ["明日は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる？", known_self_facts=["明日は空いてる"],
+        known_self_fact_timestamps=["2026-10-08T09:00:00+00:00"],
+        current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert same_day_fact == []
+
+    stale_weekday_fact = generation.validate_candidate_replies(
+        ["土曜は空いてるよ"], expected_candidates=1, mode="normal",
+        counterpart_message="土曜空いてる？", known_self_facts=["土曜は空いてる"],
+        known_self_fact_timestamps=["2026-09-01T12:00:00+00:00"],
+        current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in stale_weekday_fact)
+
+    recurring_weekday_fact = generation.validate_candidate_replies(
+        ["土曜は空いてるよ"], expected_candidates=1, mode="normal",
+        counterpart_message="土曜空いてる？", known_self_facts=["毎週土曜は空いてる"],
+        known_self_fact_timestamps=["2026-09-01T12:00:00+00:00"],
+        current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert recurring_weekday_fact == []
+
+    mixed_recurring_and_stale_fact = generation.validate_candidate_replies(
+        ["明日は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる？",
+        known_self_facts=["毎週土曜は空いてる。明日も空いてる"],
+        known_self_fact_timestamps=["2026-09-01T12:00:00+00:00"],
+        current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in mixed_recurring_and_stale_fact)
+
+    unrelated_recurring_fact = generation.validate_candidate_replies(
+        ["土曜は空いてるよ"], expected_candidates=1, mode="normal",
+        counterpart_message="土曜空いてる？",
+        known_self_facts=["毎週ジムに行くけど、土曜は空いてる"],
+        known_self_fact_timestamps=["2026-09-01T12:00:00+00:00"],
+        current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in unrelated_recurring_fact)
+
+    timestamp_less_relative_fact = generation.validate_candidate_replies(
+        ["明日は空いてます！"], expected_candidates=1, mode="normal",
+        counterpart_message="明日空いてる？", known_self_facts=["明日は空いてる"],
+        known_self_fact_timestamps=[None], current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert any("本人の予定・生活習慣を確認できる情報がありません" in error for error in timestamp_less_relative_fact)
+
+    recurring_weekday_with_stale_relative_fact = generation.validate_candidate_replies(
+        ["土曜は空いてるよ"], expected_candidates=1, mode="normal",
+        counterpart_message="土曜空いてる？",
+        known_self_facts=["毎週土曜は空いてる。明日は予定がある"],
+        known_self_fact_timestamps=["2026-09-01T12:00:00+00:00"],
+        current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert recurring_weekday_with_stale_relative_fact == []
+
+    undated_recurring_weekday_fact = generation.validate_candidate_replies(
+        ["土曜は空いてるよ！"], expected_candidates=1, mode="normal",
+        counterpart_message="土曜空いてる？", known_self_facts=["毎週土曜は空いてる"],
+        known_self_fact_timestamps=[None], current_datetime=datetime(2026, 10, 8, 12, 0),
+    )
+    assert any(
+        "本人の予定・生活習慣を確認できる情報がありません" in error
+        for error in undated_recurring_weekday_fact
+    )
+
+
+def test_normal_validator_rejects_bare_state_echo_and_ungrammatical_share_phrase():
+    for reply in ("わかります、眠いですよね笑", "わかります笑\n眠いですよね！"):
+        echo_errors = generation.validate_candidate_replies(
+            [reply], expected_candidates=1, mode="normal",
+            counterpart_message="眠い", known_self_facts=[],
+        )
+        assert any("相手の状態を言い換えただけ" in error for error in echo_errors)
+    assert generation.validate_candidate_replies(
+        ["眠いと余計しんどいよね、無理せず休んでね"], expected_candidates=1,
+        mode="normal", counterpart_message="眠い", known_self_facts=[],
+    ) == []
+    assert generation.validate_candidate_replies(
+        ["それは疲れたね、ゆっくり休んでね"], expected_candidates=1,
+        mode="normal", counterpart_message="仕事で疲れた", known_self_facts=[],
+    ) == []
+    repeated_state_with_advice = generation.validate_candidate_replies(
+        ["眠いですよね！今日は早めに寝ましょう笑"], expected_candidates=1,
+        mode="normal", counterpart_message="眠い", known_self_facts=[],
+    )
+    assert not any("相手の状態を言い換えただけ" in error for error in repeated_state_with_advice)
+
+    grammar_errors = generation.validate_candidate_replies(
+        ["観たこと誰かに共有したくなりますよね笑"], expected_candidates=1,
+        mode="normal", counterpart_message="昨日映画観てきた", known_self_facts=[],
+    )
+    assert any("助詞が抜けた不自然な表現" in error for error in grammar_errors)
+
+
+def test_normal_validator_rejects_unverified_first_person_desire_about_contact_topic():
+    violations = generation.validate_candidate_replies(
+        ["キャンプ行きたいですねー！"], expected_candidates=1, mode="normal",
+        counterpart_message="キャンプ行ってきた", known_self_facts=[],
+    )
+    assert any("本人の未確認の希望を追加しています" in error for error in violations)
+    assert generation.validate_candidate_replies(
+        ["キャンプ行きたいですねー！"], expected_candidates=1, mode="normal",
+        counterpart_message="キャンプ行ってきた", known_self_facts=["キャンプに興味がある"],
+    ) == []
+    topicless = generation.validate_candidate_replies(
+        ["僕も行きたい！"], expected_candidates=1, mode="normal",
+        counterpart_message="キャンプ行ってきた", known_self_facts=[],
+    )
+    assert any("本人の未確認の希望を追加しています" in error for error in topicless)
+
+
+def test_normal_validator_rejects_unverified_personal_habit_claim():
+    violations = generation.validate_candidate_replies(
+        ["自分も自信なくすことありますよ…！"], expected_candidates=1, mode="normal",
+        counterpart_message="自信なくなってきた", known_self_facts=[],
+    )
+    assert any("本人の未確認の習慣・傾向を追加しています" in error for error in violations)
+    assert generation.validate_candidate_replies(
+        ["自分も自信なくすことありますよ…！"], expected_candidates=1, mode="normal",
+        counterpart_message="自信なくなってきた", known_self_facts=["自分も時々自信をなくすことがある"],
+    ) == []
+    assert any("本人の未確認の習慣・傾向を追加しています" in error for error in generation.validate_candidate_replies(
+        ["僕も急に考え込んでしまう時ありますよ笑"], expected_candidates=1, mode="normal",
+        counterpart_message="将来のこと考えちゃう", known_self_facts=[],
+    ))
+    assert generation.validate_candidate_replies(
+        ["僕もよくわかります"], expected_candidates=1, mode="normal",
+        counterpart_message="うまくいかなくて悩んでる", known_self_facts=[],
+    ) == []
+
+
+def test_normal_validator_limits_unnecessary_multi_question_candidates():
+    violations = generation.validate_candidate_replies(
+        ["大丈夫ですか？\nなにか嫌なことがあったんですか？"], expected_candidates=1,
+        mode="normal", counterpart_message="今日ちょっと落ち込んでる", known_self_facts=[],
+    )
+    assert any("質問を重ねすぎています" in error for error in violations)
+
+    single_unneeded_question = generation.validate_candidate_replies(
+        ["おつかれさまです！\n明日も早いんですか？"], expected_candidates=1,
+        mode="normal", counterpart_message="眠い", known_self_facts=[],
+    )
+    assert any("短い状態共有への不要な質問" in error for error in single_unneeded_question)
+    assert any("本人の未確認の習慣・傾向を追加しています" in error for error in generation.validate_candidate_replies(
+        ["僕もたまに考え込んじゃいます！"], expected_candidates=1, mode="normal",
+        counterpart_message="将来のこと考えちゃう", known_self_facts=[],
+    ))
+
+
+def test_normal_validator_rejects_unverified_first_person_preference_statement():
+    violations = generation.validate_candidate_replies(
+        ["僕もカレー好きなので気になります笑"], expected_candidates=1, mode="normal",
+        counterpart_message="カレー作りにハマってる", known_self_facts=[],
+    )
+    assert any("本人の未確認の希望を追加しています" in error for error in violations)
+    assert generation.validate_candidate_replies(
+        ["僕もカレー好きなので気になります笑"], expected_candidates=1, mode="normal",
+        counterpart_message="カレー作りにハマってる", known_self_facts=["カレーが好き"],
+    ) == []
+
+
+def test_extract_ai_question_accepts_single_tagged_question_in_json_envelope():
+    raw = '{"replies":["[AI_QUESTION]明日の起床予定時刻は何時ですか？[/AI_QUESTION]"]}'
+    assert generation._extract_ai_question(raw) == "明日の起床予定時刻は何時ですか？"
+    multiple = '{"replies":["[AI_QUESTION]確認[/AI_QUESTION]", "返信"]}'
+    assert generation._extract_ai_question(multiple) is None
+
+
+def test_normal_validator_rejects_unstated_work_context_inference():
+    violations = generation.validate_candidate_replies(
+        ["お仕事大変だったんですね"], expected_candidates=1, mode="normal",
+        counterpart_message="眠い", known_self_facts=[], chat_history_text="相手: 眠い",
+    )
+    assert any("仕事の状況を確認できる情報がありません" in e for e in violations)
+
+
+def test_normal_validator_does_not_infer_holiday_from_free_time():
+    violations = generation.validate_candidate_replies(
+        ["今日はお休みだったんですね！"], expected_candidates=1, mode="normal",
+        counterpart_message="今日暇だった", known_self_facts=[], chat_history_text="相手: 今日暇だった",
+    )
+    assert any("休日・休暇を確認できる情報がありません" in e for e in violations)
+    assert generation.validate_candidate_replies(
+        ["今日はお休みだったんですね！"], expected_candidates=1, mode="normal",
+        counterpart_message="今日は仕事がお休みだった", known_self_facts=[],
+        chat_history_text="相手: 今日は仕事がお休みだった",
+    ) == []
+
+
+def test_normal_validator_allows_grounded_work_context_and_self_status():
+    assert generation.validate_candidate_replies(
+        ["僕も今日仕事でバタバタしてました笑"], expected_candidates=1, mode="normal",
+        counterpart_message="今日仕事が忙しかった",
+        known_self_facts=["僕も仕事が立て込んでいました"],
+        chat_history_text="相手: 今日仕事が忙しかった\n自分: 僕も仕事が立て込んでました",
+    ) == []
+
+
+def test_other_speaker_history_does_not_ground_self_disclosure():
+    violations = generation.validate_candidate_replies(
+        ["僕も最近見てないから気になります笑"], expected_candidates=1, mode="normal",
+        counterpart_message="昨日映画見てきた", known_self_facts=[],
+        chat_history_text="相手: 昨日映画見てきた",
+    )
+    assert any("本人の近況を確認できる情報がありません" in e for e in violations)
+
+
 def test_normal_validator_catches_prefixed_and_unavailable_experience_answers():
     for candidate in ("うん、ありますよ", "はい、あるよ", "ううん、ないよ", "いや、ないよ", "一応あるよ", "実はあるよ",
                       "まだ行けてないよ", "行けたことないです"):
@@ -525,6 +1039,30 @@ def test_experience_repair_requests_private_user_confirmation_not_sendable_guess
     assert "[AI_QUESTION]" in repair
     assert "アプリ利用者" in repair
     assert "相手に送る返信候補として確認質問を作らない" in repair
+
+
+def test_preference_repair_asks_one_short_topic_specific_user_question():
+    repair = generation._build_repair_messages(
+        [{"role": "system", "content": "unknown preference"}],
+        '{"replies":["辛いの大丈夫です"]}',
+        ["案1に本人の好みを確認できる情報がありません"],
+        candidates=3,
+    )[-1]["content"]
+    assert "アプリ利用者にだけ" in repair
+    assert "聞かれた対象に絞った短い確認質問" in repair
+    assert "追加質問を重ねない" in repair
+
+
+def test_schedule_repair_asks_user_without_inventing_a_sendable_reply():
+    repair = generation._build_repair_messages(
+        [{"role": "system", "content": "unknown schedule"}],
+        '{"replies":["土日は空いてます"]}',
+        ["案1に本人の予定・生活習慣を確認できる情報がありません"],
+        candidates=3,
+    )[-1]["content"]
+    assert "アプリ利用者にだけ" in repair
+    assert "予定" in repair and "生活習慣" in repair
+    assert "返信候補として確認質問を作らない" in repair
 
 
 def test_unresolved_reference_repair_remains_a_sendable_counterpart_question():
@@ -1157,6 +1695,41 @@ def test_unknown_experience_repair_returns_private_question_not_chat_reply(clien
     assert result["replies"] == []
     assert result["history_ids"] == []
     assert result["question"] == "寿司屋に行ったことがあるか教えてください"
+
+
+def test_unknown_preference_repair_returns_private_question_not_chat_reply(client, monkeypatch):
+    """本人の未確認の好みを捏造せず、利用者確認へ回す。"""
+    cid = client.post("/api/contacts", json={"name": "好み確認テスト", "profile": ""}).json()["id"]
+    client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": "犬派？猫派？"})
+
+    calls = 0
+
+    class PreferenceQuestionProvider:
+        name = "preference_question_fake"
+
+        def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return json.dumps({"replies": ["犬派です！", "猫派です！", "犬も猫も好きです！"]})
+            return "[AI_QUESTION]犬派か猫派か教えてください[/AI_QUESTION]"
+
+        def available_models(self):
+            return []
+
+    monkeypatch.setattr("app.routers.generation.factory.get_provider", lambda *a, **k: PreferenceQuestionProvider())
+    monkeypatch.setattr("app.routers.generation.get_ai_config", lambda: {
+        "provider": "preference_question_fake", "model": "fake-model", "api_key": "x",
+        "temperature": 0.8, "max_tokens": 512, "history_limit": 50,
+    })
+
+    response = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
+    assert response.status_code == 200
+    result = response.json()
+    assert calls == 2
+    assert result["replies"] == []
+    assert result["history_ids"] == []
+    assert result["question"] == "犬派か猫派か教えてください"
 
 
 def test_ambiguous_status_ai_question_is_repaired_as_counterpart_clarifications(client, monkeypatch):

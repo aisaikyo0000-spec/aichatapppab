@@ -142,7 +142,7 @@ def _patch_fake_provider(monkeypatch, replies):
 def test_e2e_case1_short_sleepy_no_expansion(client, monkeypatch):
     """ケース1: 相手「眠い」→ 長文＋質問にならず、そのまま返ること。"""
     cid = _setup_contact_with_message(client, "確認相手1", "眠い")
-    _patch_fake_provider(monkeypatch, ["それは眠そう", "眠いよね", "ゆっくり休んで"])
+    _patch_fake_provider(monkeypatch, ["それは眠そう", "今日は早めに休んでね", "ゆっくり休んで"])
 
     r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
     assert r.status_code == 200

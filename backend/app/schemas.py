@@ -63,6 +63,14 @@ class GenerateRequest(BaseModel):
     original_generated: str = Field(default="", max_length=10000)
     tone: str = Field(default="", max_length=20)  # keigo, hybrid, tame
     mode: str = Field(default="normal", max_length=20)  # normal, followup
+    strategy_mode: Literal["none", "tapple"] = "none"
+
+
+class TappleStrategy(BaseModel):
+    action: Literal["continue", "clarify", "invite", "wait", "stop"]
+    rationale: str = Field(min_length=1, max_length=500)
+    evidence: list[str] = Field(min_length=1, max_length=4)
+    invite_example: Optional[str] = Field(default=None, max_length=300)
 
 
 

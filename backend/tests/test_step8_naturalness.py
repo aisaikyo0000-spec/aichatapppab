@@ -123,7 +123,8 @@ def test_9_gold_style_preservation(client):
         "sender": "self", "content": "好きだよ！\nよく行くよ", "source": "manual",
     })
     prof = style.compute_hierarchical_profile(cid, "getting_to_know")
-    assert prof["hierarchy_tier"] == "same_contact_recent_manual_gold"
+    assert prof["hierarchy_tier"] == "sparse_manual_gold_fallback"
+    assert prof["same_contact_gold_samples"] == 1
     policy = style.to_learned_policy_prompt(prof)
     assert "短い相槌" in policy
 
@@ -151,7 +152,7 @@ def test_10_existing_invariants_regression(client, monkeypatch):
 
         def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
             assert "【FACT BOUNDARY】" in "".join(m.get("content", "") for m in messages)
-            return json.dumps({"replies": ["それは眠そう", "眠いよね", "ゆっくり休んで"]})
+            return json.dumps({"replies": ["それは眠そう", "今日は早めに休んでね", "ゆっくり休んで"]})
 
         def available_models(self):
             return []

@@ -78,7 +78,7 @@ def test_single_same_contact_gold_uses_global_fallback(client):
 
 
 def test_counterpart_not_copied():
-    """相手の口調コピーを強制しない（温度感適応＋コピー禁止の両立）。"""
+    """本人 Gold がない相手には既存の Global fallback を保つ。"""
     sysp = prompt.build_system_prompt(
         contact={"name": "相手", "profile": ""},
         condition="",
@@ -86,9 +86,22 @@ def test_counterpart_not_copied():
     )
     assert "オウム返し" in sysp
     assert "温度感" in sysp
+    assert "20〜30%" in sysp
+    assert "本人のGold実例とGlobalの本人文体" not in sysp
+
+
+def test_confident_same_contact_gold_gates_contact_adaptation_policy():
+    """十分な同一相手Goldがある場合だけGold優先の連絡先適応を使う。"""
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 今日まじ疲れた",
+        same_contact_gold_samples=3,
+        counterpart_style_block="短文中心の相手",
+    )
     assert "20〜30%" not in sysp
-    assert "本人のGold実例" in sysp
-    assert "現在の会話内容" in sysp
+    assert "本人のGold実例とGlobalの本人文体を土台" in sysp
+    assert "現在の会話内容を最優先" in sysp
 
 
 def test_closing_short_first():

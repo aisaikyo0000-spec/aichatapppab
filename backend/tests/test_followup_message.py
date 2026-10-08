@@ -202,6 +202,17 @@ def test_followup_without_contact_name_does_not_create_placeholder_address():
     assert "COUNTERPART WRITING STYLE】相手への適応" in system_prompt
 
 
+def test_normal_prompt_without_confirmed_contact_name_never_calls_them_san():
+    system_prompt = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        mode="normal",
+    )
+
+    assert "相手のお名前: 未設定（名前で呼びかけない）" in system_prompt
+    assert "相手さん" not in system_prompt
+    assert "仮の名前や敬称を作らない" in system_prompt
+
+
 def test_normal_prompt_does_not_include_new_followup_specific_constraints():
     """追いメッセージ向けの制約追加が通常返信に波及しない。"""
     system_prompt = prompt.build_system_prompt(

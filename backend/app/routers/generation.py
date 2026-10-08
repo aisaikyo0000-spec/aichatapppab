@@ -4,12 +4,13 @@ Frontendから外部AI APIを直接呼び出さず、必ずこのAPI経由で生
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import re
 import time
 import unicodedata
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -18,7 +19,7 @@ from ..ai import factory, naturalness, prompt
 from ..reply_policy import question_necessity
 from ..ai.base import AIError
 from ..ai.config import get_ai_config, get_contact_ai_config
-from ..schemas import GenerateRequest
+from ..schemas import GenerateRequest, TappleStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,28 @@ def _extract_ai_question(raw: str) -> str | None:
         q = match.group(1).strip()
         if q:
             return q
+    # Some providers wrap the safe question in the API's JSON reply shape.
+    # Accept only a single reply containing a complete question tag; never pull
+    # a private question out of a multi-candidate sendable response.
+    try:
+        payload = json.loads(t)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(payload, dict) and set(payload) == {"replies"}:
+        replies = payload.get("replies")
+        if isinstance(replies, list) and len(replies) == 1 and isinstance(replies[0], str):
+            nested = re.fullmatch(
+                r"\[AI_QUESTION\]\s*((?:(?!\[/AI_QUESTION\]).)+?)(?:\s*\[/AI_QUESTION\])?",
+                replies[0].strip(), re.DOTALL,
+            )
+            if nested and nested.group(1).strip():
+                return nested.group(1).strip()
     return None
 
 
-def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
+def _parse_replies_strict(
+    raw: str, candidates: int, *, strategy_mode: str = "none"
+) -> list[str]:
     """出力を厳格にパースする。newline fallback は完全排除。
 
     1. candidates == 1 の場合: 生テキスト（空以外）
@@ -63,7 +82,7 @@ def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
     t = _strip_code_fence(raw).strip()
     if not t:
         return []
-    if candidates <= 1:
+    if candidates <= 1 and strategy_mode != "tapple":
         return [t]
 
     # 1. JSON解析
@@ -82,6 +101,9 @@ def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
     except (json.JSONDecodeError, AttributeError):
         pass
 
+    if candidates <= 1 and strategy_mode == "tapple":
+        return []
+
     # 2. 【案1】【案2】【案3】または 案1: 案2: 案3:
     pattern = r"(?:^|\n)\s*(?:【案[1-9１-９]】|案[1-9１-９][:：]|\b(?:案[1-9１-９]|[1-9１-９]\.))\s*"
     splits = [p.strip() for p in re.split(pattern, t) if p.strip()]
@@ -94,6 +116,112 @@ def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
         return blocks
 
     return []
+
+
+_TAPPLE_DECLINE_RE = re.compile(
+    r"(?:会いたくない|会いたくありません|行きたくない|行きたくありません|"
+    r"(?:会いたい|行きたい).{0,12}(?:思わない|思いません|思っていない|思っていません|"
+    r"思ってない|思ってません|思っていなかった|思ってなかった|"
+    r"わけではない|わけじゃない|とは限らない|とは言えない)|"
+    r"(?:会う|行く).{0,8}つもりは(?:ない|ありません)|"
+    r"会う.{0,12}(?:難し|無理|できな|したくな|考えていな)|"
+    r"(?:デート|お出かけ).{0,12}(?:難し|無理|できな|したくな)|"
+    r"(?:会えない|行けない)|今回は.{0,8}(?:やめ|遠慮)|"
+    r"ごめんなさい.{0,16}(?:会|行)|今は.{0,8}(?:難し|無理|できな))"
+)
+_TAPPLE_INVITE_POSITIVE_RE = re.compile(
+    r"(?:一緒に.{0,8}(?:行きたい|行こう|行きましょう|会いたい|会おう|会いましょう)|"
+    r"(?:今度|近いうち).{0,8}(?:一緒に行きたい|会いたい|会いましょう)|"
+    r"会いたい(?:です|！|$)|会いましょう|誘って(?:ください|ね|！|$))"
+)
+_TAPPLE_INVITE_HEDGE_RE = re.compile(
+    r"(?:たら|れば|かも|かな|いつか|できたら|できれば|行けたら|会えたら|"
+    r"行けない|会えない|難し|無理|今は|まだ|けど|けれど)"
+)
+_TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|飲食店|公共の場所|人通りのある場所|人の多い場所|商業施設|フードコート|駅前|公園)")
+_TAPPLE_PRIVATE_PLACE_RE = re.compile(
+    r"(?:自宅|お?うち(?:で|に|へ|集合|待ち合わせ|飲み)|お?家(?:で|に|へ|集合|待ち合わせ|飲み)|ホテル|個室)"
+)
+_TAPPLE_CONTACT_EXCHANGE_RE = re.compile(
+    r"(?:LINE|ライン|連絡先|電話番号|メールアドレス|メアド|SNS|インスタ|Instagram|"
+    r"(?<![A-Za-z0-9])(?:X|Twitter|Discord|DM)(?![A-Za-z0-9])|カカオ|ID|QR)",
+    re.IGNORECASE,
+)
+_TAPPLE_CONTACT_EXCHANGE_ACTION_RE = re.compile(
+    r"(?:交換|教え|送っ|追加|登録|つな|繋|ID|QR|"
+    r"やって(?:い)?(?:る|ます)|使って(?:い)?(?:る|ます)|やりとり|"
+    r"話(?:そ|しません|しましょう|したい|そう)|し(?:ない|ません|ましょう|たい)|"
+    r"連絡(?:を)?(?:取|と)り?(?:ません|ましょう|たい)|連絡しよ)"
+)
+
+
+def _is_tapple_contact_exchange_request(text: str) -> bool:
+    return bool(
+        _TAPPLE_CONTACT_EXCHANGE_RE.search(text)
+        and _TAPPLE_CONTACT_EXCHANGE_ACTION_RE.search(text)
+    )
+
+
+def _parse_tapple_strategy(raw: str, conversation: str) -> TappleStrategy | None:
+    """Parse only evidence-grounded strategy metadata; never gate reply generation."""
+    try:
+        payload = json.loads(_strip_code_fence(raw))
+        if not isinstance(payload, dict) or not isinstance(payload.get("strategy"), dict):
+            return None
+        proposed = TappleStrategy.model_validate(payload["strategy"])
+    except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+        return None
+
+    contact_lines = [
+        match.group(1).strip()
+        for line in conversation.splitlines()
+        if (match := re.match(r"^\s*相手\s*:\s*(.*)$", line))
+        and match.group(1).strip()
+    ]
+    if not contact_lines:
+        return None
+    exact_evidence = [
+        evidence for evidence in proposed.evidence
+        if evidence and any(evidence in line for line in contact_lines)
+    ]
+    if len(exact_evidence) != len(proposed.evidence):
+        return None
+
+    last_contact = contact_lines[-1]
+    decline_match = _TAPPLE_DECLINE_RE.search(last_contact)
+    if decline_match:
+        return TappleStrategy(
+            action="stop",
+            rationale="相手が会うことに明確な難しさを示しているため、誘い直さずここで止めます。",
+            evidence=[decline_match.group(0)],
+            invite_example=None,
+        )
+
+    if proposed.action == "invite":
+        has_current_explicit_interest = any(
+            evidence in last_contact
+            and _TAPPLE_INVITE_POSITIVE_RE.search(evidence)
+            and not _TAPPLE_INVITE_HEDGE_RE.search(evidence)
+            for evidence in exact_evidence
+        )
+        if not has_current_explicit_interest:
+            return TappleStrategy(
+                action="wait",
+                rationale="直近の発言に明確な参加意思が見当たらないため、今は誘わず会話を続けるか反応を待ちます。返信の速さや曖昧な相づちは同意として扱いません。",
+                evidence=exact_evidence,
+                invite_example=None,
+            )
+        safe_example = proposed.invite_example
+        if safe_example and (
+            not _TAPPLE_PUBLIC_PLACE_RE.search(safe_example)
+            or _TAPPLE_PRIVATE_PLACE_RE.search(safe_example)
+            or _TAPPLE_CONTACT_EXCHANGE_RE.search(safe_example)
+        ):
+            safe_example = None
+        return proposed.model_copy(update={"invite_example": safe_example})
+
+    # An invitation example is meaningful only when the guarded invite action passes.
+    return proposed.model_copy(update={"invite_example": None})
 
 
 _EXPERIENCE_ACTIONS: dict[str, tuple[str, ...]] = {
@@ -345,6 +473,379 @@ def _needs_private_experience_confirmation(
         ):
             return False
     return True
+
+
+def _personal_preference_question_topics(counterpart_message: str) -> list[str]:
+    """Return concrete topics in a direct question about the user's preference."""
+    normalized = unicodedata.normalize("NFKC", counterpart_message or "")
+    looks_like_question = bool(re.search(r"[?？]|(?:なの|ですか|ますか|かな)$", normalized))
+    if not looks_like_question:
+        return []
+    if (
+        re.search(r"(?:犬と猫|犬か猫|犬猫)", normalized)
+        or ("犬派" in normalized and "猫派" in normalized)
+    ):
+        topics = ["犬", "猫"]
+    elif "犬派" in normalized:
+        topics = ["犬"]
+    elif "猫派" in normalized:
+        topics = ["猫"]
+    else:
+        topics = []
+
+    for clause in reversed(re.split(r"(?<=[?？。！!])", normalized)):
+        if not re.search(r"[?？]", clause):
+            continue
+        choice = re.search(
+            r"([^\s、。！？?と]{1,10}?)と([^\s、。！？?]{1,10}?)(?:なら)?、?(?:どっち|どちら)(?:が|も)?(?:好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)",
+            clause,
+        )
+        if choice:
+            for raw_topic in choice.groups():
+                topic = raw_topic.rstrip("はがを")
+                if topic and topic not in topics:
+                    topics.append(topic)
+        match = re.search(
+            r"([^\s、。！？?]{1,10}?)(?:は)?(?:好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)",
+            clause,
+        )
+        if match:
+            topic = re.sub(r"(?:って|とは|っては|のことは|のは|は|が|を|も)$", "", match.group(1))
+            topic = topic.lstrip("おご")
+            if topic.endswith("の") and not topic.endswith("もの"):
+                topic = topic[:-1]
+            topic = topic.rstrip("はがを")
+            topic = re.sub(r"^(?:この|その|あの|どの)", "", topic)
+            if re.search(r"(?:どっち|どちら|両方|どちらか)", topic):
+                continue
+            if topic and topic not in topics:
+                topics.append(topic)
+    return topics
+
+
+def _fact_supports_preference(fact: str, topic: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", fact or "")
+    return bool(re.search(rf"{re.escape(topic)}.{{0,12}}(?:派|好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)", normalized))
+
+
+def _preference_polarity(text: str, topic: str) -> str | None:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    match = re.search(
+        rf"{re.escape(topic)}(?:[^。！？?]{{0,12}})(?:派|好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)", normalized
+    )
+    if not match:
+        match = re.search(r"(?:好き|嫌い|苦手|得意|大丈夫|平気|いける|無理|だめ|駄目|食べられる|食べられない)", normalized)
+    if not match:
+        return None
+    phrase = match.group(0)
+    suffix = normalized[match.end():match.end() + 8]
+    prefix = normalized[max(0, match.start() - 6):match.start()]
+    if re.search(r"(?:嫌い|苦手|無理|だめ|駄目|できない|食べられない)", phrase) or re.match(
+        r"(?:じゃない|ではない|じゃありません|ではありません|くない|くありません)", suffix
+    ) or re.search(r"(?:あまり|そんなに).{0,3}$", prefix):
+        return "negative"
+    if re.search(r"(?:好き|得意|大丈夫|平気|いける|食べられる|できます|できる|派)", phrase):
+        return "positive"
+    return None
+
+
+def _preference_claim_topics(reply: str, topics: list[str]) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", reply or "")
+    claims = set()
+    for topic in topics:
+        if re.search(
+            rf"{re.escape(topic)}(?:[^。！？?]{{0,12}})(?:派|好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)",
+            normalized,
+        ):
+            claims.add(topic)
+    if len(topics) == 1 and re.search(
+        r"(?:好き|嫌い|苦手|得意|大丈夫|平気|いける|無理|だめ|駄目|食べられる|食べられない)",
+        normalized,
+    ):
+        claims.add(topics[0])
+    if len(topics) > 1 and re.search(r"(?:どっちも|どちらも|両方|どちらかといえば両方)", normalized):
+        if re.search(r"(?:好き|嫌い|苦手|得意|派|大丈夫|平気|いける|無理|だめ|駄目)", normalized):
+            claims.update(topics)
+    return claims
+
+
+def _personal_schedule_question_topic(counterpart_message: str) -> str:
+    """Classify direct questions about the user's availability or wake-up time."""
+    normalized = unicodedata.normalize("NFKC", counterpart_message or "")
+    looks_like_question = bool(re.search(r"[?？]|(?:空いてる|空いてます|空いています|行ける|行けます|いける|いけます|大丈夫)$", normalized))
+    if not looks_like_question:
+        return ""
+    date_or_availability = r"(?:(?:20\d{2}年)?\d{1,2}(?:月|/)\d{1,2}日?|来月(?:の)?\d{1,2}日?|今月(?:の)?\d{1,2}日?|(?:今度の|次の)?[月火水木金土日]曜(?:日)?|明後日|明日|今日|土日|週末|平日|来週|今週|いつ|何日|何曜日)"
+    if re.search(
+        rf"{date_or_availability}.{{0,10}}(?:どっち|どちら|空いて|予定|都合|行け|いけ|大丈夫)|"
+        rf"(?:空いて|予定|都合|行け|いけ|大丈夫).{{0,8}}{date_or_availability}",
+        normalized,
+    ):
+        return "availability"
+    if re.search(r"何時.{0,6}(?:起き|起床)|(?:起き|起床).{0,6}何時", normalized):
+        return "wake_time"
+    return ""
+
+
+_AVAILABILITY_PERIOD_RE = re.compile(
+    r"(?:20\d{2}/\d{1,2}/\d{1,2}|(?:20\d{2}年)?\d{1,2}(?:月|/)\d{1,2}日?)|"
+    r"来月(?:の)?\d{1,2}日?|今月(?:の)?\d{1,2}日?|"
+    r"(?:今度の|次の)?[月火水木金土日]曜(?:日)?|"
+    r"来週(?:末|土日)?|今週(?:末|土日)?|明後日|明日|今日|土日|週末|平日"
+)
+
+
+def _canonical_availability_period(period: str) -> str:
+    normalized = period.removeprefix("今度の").removeprefix("次の").replace("の", "")
+    slash_date = re.fullmatch(r"(?:(20\d{2})/)?(\d{1,2})/(\d{1,2})", normalized)
+    if slash_date:
+        year, month, day = slash_date.groups()
+        year_prefix = f"{year}年" if year else ""
+        return f"{year_prefix}{int(month)}月{int(day)}日"
+    if normalized.startswith("来週"):
+        return "来週末" if normalized != "来週" else "来週"
+    if normalized.startswith("今週"):
+        return "今週末" if normalized != "今週" else "今週"
+    if re.fullmatch(r"[月火水木金土日]曜日", normalized):
+        return normalized[:-1]
+    if re.fullmatch(r"(?:20\d{2}年)?\d{1,2}月\d{1,2}日?", normalized) and not normalized.endswith("日"):
+        return f"{normalized}日"
+    return normalized
+
+
+def _availability_periods(text: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    return {_canonical_availability_period(match.group()) for match in _AVAILABILITY_PERIOD_RE.finditer(normalized)}
+
+
+def _availability_claims_by_period(text: str) -> dict[str, str]:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    matches = list(_AVAILABILITY_PERIOD_RE.finditer(normalized))
+    segment_polarities = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        segment_polarities.append(_availability_polarity(normalized[match.start():end]))
+    if len(matches) > 1 and segment_polarities[-1]:
+        last_start = matches[-1].start()
+        for index, match in enumerate(matches[:-1]):
+            connector = normalized[match.end():last_start]
+            if (
+                not segment_polarities[index]
+                and re.search(r"(?:と|も|や|、|及び|および)", connector)
+                and not re.search(r"(?:けど|けれど|でも|一方)", connector)
+            ):
+                segment_polarities[index] = segment_polarities[-1]
+    claims = {
+        _canonical_availability_period(match.group()): polarity
+        for match, polarity in zip(matches, segment_polarities)
+        if polarity
+    }
+    return claims
+
+
+def _availability_period_matches(requested: str, known: str) -> bool:
+    if requested == known:
+        return True
+    if requested in {"週末", "土日"}:
+        return known in {"週末", "土日", "今週末", "来週末", "土曜", "日曜"}
+    if requested in {"土曜", "日曜"}:
+        return known in {requested, "土日", "週末"}
+    if requested in {"今週", "来週"}:
+        return known in {requested, f"{requested}末"}
+    return False
+
+
+def _availability_polarity(text: str) -> str | None:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    if re.search(
+        r"(?:わけ(?:では|じゃ)ない|(?:とは|と|って)(?:言|い)って(?:い)?ない|"
+        r"(?:とは|って)(?:言|い)えない|とは(?:限|かぎ)ら(?:ない|ず)|言い切れない|断定できない|"
+        r"(?:聞いた|聞いて(?:い)?(?:る|た|ない|なかった)|聞かされ(?:た|て(?:い)?(?:る|た|ない|なかった))|"
+        r"(?:とは|と|って)(?:言|い)われ(?:た|て(?:い)?(?:る|た|ない|なかった))|言ってた|言っていた|らしい|そうだ|と思う|と思います|可能性(?:が)?(?:ある|あります)|たぶん|多分|おそらく)|"
+        r"かも(?:しれない)?|かな|気がする|無理じゃない)",
+        normalized,
+    ):
+        return None
+    polarity_patterns = (
+        ("unavailable", re.compile(r"(?:空いてい(?:ない|ません)|空いて(?:ない|ません)|空いておらず|予定.{0,8}(?:あります|ある|入って(?:いる|ます|る)|埋まって(?:いる|ます|る))|都合.{0,5}悪い|行け(?:ない|ません)|暇(?:ではない|じゃない)|大丈夫(?:ではない|じゃない)|無理)")),
+        ("available", re.compile(r"(?:空いて(?:います|いる|いて|ます|る)|予定.{0,8}(?:ありません|ない|なし|入っていない|入ってません)|都合.{0,5}(?:いい|よい|つく)|行け(?:ます|る)|大丈夫|暇)")),
+    )
+    matches = [
+        (match.start(), polarity)
+        for polarity, pattern in polarity_patterns
+        for match in pattern.finditer(normalized)
+    ]
+    return max(matches)[1] if matches else None
+
+
+def _fact_supports_schedule_question(fact: str, topic: str, counterpart_message: str = "") -> bool:
+    normalized = unicodedata.normalize("NFKC", fact or "")
+    if topic == "availability":
+        question = unicodedata.normalize("NFKC", counterpart_message or "")
+        requested_periods = _availability_periods(question)
+        fact_periods = _availability_periods(normalized)
+        if any(_is_specific_availability_period(period) for period in requested_periods) and not any(
+            _availability_period_matches(requested, known)
+            for requested in requested_periods for known in fact_periods
+        ):
+            return False
+        return _availability_polarity(normalized) is not None
+    if topic == "wake_time":
+        return bool(re.search(r"(?:何時.{0,4}起き|[0-2]?[0-9]時.{0,4}起き|早起き|起床.{0,6}時間)", normalized))
+    return False
+
+
+def _is_recurring_weekday_claim(text: str, match: re.Match[str]) -> bool:
+    recurrence = r"(?:毎週|週ごと|定期的(?:に)?|いつも|毎回|基本的(?:に)?)"
+    prefix = text[max(0, match.start() - 8):match.start()]
+    suffix = text[match.end():match.end() + 8]
+    return bool(
+        re.search(rf"{recurrence}(?:の|に|は)?$", prefix)
+        or re.match(rf"^(?:は|も|が|なら)?{recurrence}", suffix)
+    )
+
+
+def _current_relative_schedule_fact(
+    fact: str,
+    created_at: str | None,
+    reference_datetime: datetime,
+) -> str:
+    """Keep only schedule clauses whose relative dates still have a time anchor."""
+    normalized = unicodedata.normalize("NFKC", fact or "")
+    fact_date = None
+    if created_at:
+        try:
+            fact_date = datetime.fromisoformat(created_at.replace("Z", "+00:00")).date()
+        except (TypeError, ValueError):
+            fact_date = None
+
+    clauses = re.split(r"(?:[。！？!?;；\n]+|けど|けれど|でも|一方で?|ただし)", normalized)
+    current_clauses = []
+    for clause in clauses:
+        if not clause.strip():
+            continue
+        stale = False
+        for match in _AVAILABILITY_PERIOD_RE.finditer(clause):
+            period = _canonical_availability_period(match.group())
+            is_relative = period in {"今日", "明日", "明後日", "今週", "今週末", "来週", "来週末"}
+            is_weekday = bool(re.fullmatch(r"[月火水木金土日]曜", period))
+            if not is_relative and not is_weekday:
+                continue
+            if is_weekday and _is_recurring_weekday_claim(clause, match):
+                if fact_date is None:
+                    stale = True
+                    break
+                continue
+            if fact_date is None or fact_date != reference_datetime.date():
+                stale = True
+                break
+        if not stale:
+            current_clauses.append(clause.strip())
+    return "。".join(current_clauses)
+
+
+def _is_specific_availability_period(period: str) -> bool:
+    return bool(
+        period in {"来週末", "今週末", "来週", "今週", "明後日", "明日", "今日"}
+        or re.fullmatch(r"[月火水木金土日]曜", period)
+        or re.fullmatch(r"(?:20\d{2}年)?\d{1,2}月\d{1,2}日", period)
+    )
+
+
+def _is_bare_state_echo(counterpart_message: str, reply: str) -> bool:
+    """Reject a short state restatement that substitutes for a direct response."""
+    incoming = unicodedata.normalize("NFKC", counterpart_message or "")
+    outgoing = unicodedata.normalize("NFKC", reply or "")
+    state_terms = ("眠い", "疲れた", "へとへと", "だるい", "忙しい")
+    for state in state_terms:
+        if state not in incoming or state not in outgoing:
+            continue
+        remainder = re.sub(r"^(?:わかります|わかる|そうだよね|そうですね|ほんと|それは)[、,\s笑ｗw]*", "", outgoing)
+        remainder = re.sub(r"(?:ですよね|だよね|だね|ですね|よね|よ|ね)?[笑ｗw！!。…‥]*$", "", remainder)
+        remainder = re.sub(r"[\s、。！？!?,笑ｗw]+", "", remainder)
+        if remainder == state:
+            return True
+    return False
+
+
+def _personal_desire_topic(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    desire = re.search(r"(?:行きたく|行きたい|見たく|見たい|観たく|観たい|食べたく|食べたい|飲みたく|飲みたい|欲しく|欲しい|好き|嫌い|苦手|得意|興味(?:が)?(?:ある|あります))", normalized)
+    if not desire:
+        return ""
+    prefix = normalized[:desire.start()]
+    prefix = re.sub(r"^(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)?", "", prefix)
+    prefix = re.sub(r"(?:行ってきた|行ってきました|行った|見てきた|見てきました|観てきた|食べてきた|してきた|してきました|してた|していました|しました|した).*$", "", prefix)
+    prefix = re.sub(r"^(?:昨日|今日|最近|この前|先日|今週|来週|週末|土日)+", "", prefix)
+    return prefix.strip(" 、。はがをにへでとの")[-10:]
+
+
+def _contact_activity_topic(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    prefix = re.split(
+        r"(?:行ってきた|行ってきました|行った|行きました|見てきた|見てきました|観てきた|観てきました|"
+        r"食べてきた|食べてきました|してきた|してきました|してた|していました|しました|した|好き)",
+        normalized,
+    )[0]
+    prefix = re.sub(r"^(?:昨日|今日|最近|この前|先日|今週|来週|週末|土日)+", "", prefix)
+    return prefix.strip(" 、。はがをにへでとの")[-10:]
+
+
+def _has_unverified_personal_desire(
+    counterpart_message: str,
+    reply: str,
+    known_self_facts: list[str] | None,
+) -> bool:
+    incoming_topic = _contact_activity_topic(counterpart_message)
+    reply_topic = _personal_desire_topic(reply)
+    # For implied-subject expressions (e.g. 「キャンプ行きたい」), only guard
+    # when the desire concerns the current contact's topic. Explicit self-subjects
+    # are guarded regardless of topic overlap.
+    has_explicit_self = bool(re.search(r"(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)", reply))
+    has_explicit_desire = bool(re.search(
+        r"(?:行きたく|行きたい|見たく|見たい|観たく|観たい|食べたく|食べたい|飲みたく|飲みたい|欲しく|欲しい|好き|嫌い|苦手|得意|興味(?:が)?(?:ある|あります))",
+        unicodedata.normalize("NFKC", reply),
+    ))
+    if has_explicit_self and has_explicit_desire and not reply_topic:
+        reply_topic = incoming_topic
+    if not (has_explicit_self and has_explicit_desire) and not (
+        incoming_topic and reply_topic and (incoming_topic in reply_topic or reply_topic in incoming_topic)
+    ):
+        return False
+    if not reply_topic:
+        return False
+    fact_terms = r"(?:好き|嫌い|苦手|得意|興味|行きたい|見たい|観たい|食べたい|飲みたい|欲しい|飼いたい)"
+    return not any(
+        reply_topic in unicodedata.normalize("NFKC", fact or "")
+        and re.search(fact_terms, unicodedata.normalize("NFKC", fact or ""))
+        for fact in (known_self_facts or [])
+        if fact
+    )
+
+
+def _has_unverified_personal_habit(reply: str, known_self_facts: list[str] | None) -> bool:
+    normalized = unicodedata.normalize("NFKC", reply or "")
+    if re.search(r"(?:よく|よくは)?(?:わかります|わかる|分かります|分かる)", normalized):
+        return False
+    claim = re.search(
+        r"(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)?[^。！？!?]{0,35}",
+        normalized,
+    )
+    habit_signal = r"(?:よく|普段|いつも|たまに|時々|ときどき|つい|ふとした時|こと(?:が)?あります|こと(?:が)?ある|時(?:が)?あります|時(?:が)?ある|考えちゃ|なくすこと)"
+    if not claim or not re.search(habit_signal, claim.group(0)):
+        return False
+    claim_core = re.sub(r"^(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)?", "", claim.group(0))
+    claim_core = re.sub(r"(?:よく|普段|いつも|たまに|時々|ときどき|つい|ふとした時)", "", claim_core)
+    claim_core = re.sub(r"(?:こと(?:が)?あります|こと(?:が)?ある|時(?:が)?あります|時(?:が)?ある)", "", claim_core)
+    claim_core = re.sub(r"(?:ます|ました|です|でした|よ|ね|笑|ｗ|w|！|!|。|…|‥|\.)+$", "", claim_core)
+    claim_core = re.sub(r"[\s、。はがをにへでとも]", "", claim_core)
+    if not claim_core:
+        return False
+    return not any(
+        claim_core in re.sub(r"[\s、。はがをにへでとも]", "", unicodedata.normalize("NFKC", fact or ""))
+        for fact in (known_self_facts or [])
+        if fact
+    )
 
 
 def _is_private_question_for_unknown_experience(
@@ -609,7 +1110,8 @@ def validate_tone_strict(replies: list[str], tone: str) -> list[str]:
     if tone == "tame":
         # 丁寧語終止パターンの検査
         keigo_end_pattern = re.compile(
-            r"(?:です|ます|でした|ました|でしょう|ません|なんですね|ありますか|ですか|でしょうか|ですね)(?:[！!？?\s]|$)"
+            r"(?:です|ます|でした|ました|でしょう|ません|なんですね|ありますか|ですか|でしょうか|ですね)"
+            r"(?:[。！!？?、\s笑ｗw]|$)"
         )
         for i, r in enumerate(replies, start=1):
             if keigo_end_pattern.search(r):
@@ -617,7 +1119,8 @@ def validate_tone_strict(replies: list[str], tone: str) -> list[str]:
     elif tone == "keigo":
         # タメ口終止パターンの検査
         tame_end_pattern = re.compile(
-            r"(?:だね|だよ|でしょ|じゃん|っけ|ない？|行こ|ね！|よ！)(?:[！!？?\s]|$)"
+            r"(?:だね|だよ|でしょ|じゃん|っけ|ない？|行こ)(?:[！!？?\s]|$)"
+            r"|(?<!ですよ)(?<!ますよ)(?<!です)(?<!ます)(?:ね|よ)[！!？?]"
         )
         for i, r in enumerate(replies, start=1):
             if tame_end_pattern.search(r):
@@ -743,7 +1246,9 @@ def validate_candidate_replies(
     last_self_message: str = "",
     counterpart_message: str = "",
     known_self_facts: list[str] | None = None,
+    known_self_fact_timestamps: list[str | None] | None = None,
     chat_history_text: str = "",
+    strategy_mode: str = "none",
 ) -> list[str]:
     """返信案のHardバリデーションを行い、違反内容のリストを返す。空リストなら合格。
 
@@ -771,6 +1276,14 @@ def validate_candidate_replies(
     for i, rep in enumerate(replies, start=1):
         if not rep.strip():
             violations.append(f"案{i}が空文字です。")
+
+    if strategy_mode == "tapple":
+        for i, rep in enumerate(replies, start=1):
+            if _is_tapple_contact_exchange_request(rep):
+                violations.append(
+                    f"案{i}に外部連絡先の交換や移動を促す表現があります。"
+                    "連絡先交換を提案せず、タップル上で会話を続ける文面にしてください。"
+                )
 
     # [AI_QUESTION] タグの混入チェック
     for i, rep in enumerate(replies, start=1):
@@ -813,6 +1326,196 @@ def validate_candidate_replies(
 
     # Normal mode: verify claims against the last direct personal-experience question.
     if mode == "normal":
+        preference_topics = _personal_preference_question_topics(counterpart_message)
+        supported_preferences = {
+            topic for topic in preference_topics
+            if any(_fact_supports_preference(fact, topic) for fact in (known_self_facts or []) if fact)
+        }
+        unanswered_preferences = set(preference_topics) - supported_preferences
+        if {"犬", "猫"}.issubset(preference_topics) and supported_preferences.intersection({"犬", "猫"}):
+            unanswered_preferences.difference_update({"犬", "猫"})
+        if preference_topics and unanswered_preferences:
+            for i in range(1, len(replies) + 1):
+                violations.append(
+                    f"案{i}に本人の好みを確認できる情報がありません。"
+                    "相手の直接質問に、未確認の嗜好を事実として答えないでください。"
+                    "アプリ利用者に [AI_QUESTION] で確認してください。"
+                )
+        elif supported_preferences:
+            for i, rep in enumerate(replies, start=1):
+                claimed_preferences = _preference_claim_topics(rep, preference_topics)
+                unsupported_preferences = {
+                    topic for topic in claimed_preferences
+                    if topic not in supported_preferences
+                    or (
+                        _preference_polarity(rep, topic)
+                        and not any(
+                            _preference_polarity(fact, topic) == _preference_polarity(rep, topic)
+                            for fact in (known_self_facts or []) if fact
+                        )
+                    )
+                }
+                if unsupported_preferences:
+                    violations.append(
+                        f"案{i}に本人の好みを確認できる情報がありません。"
+                        "確認済みの好みと異なる嗜好を本人の事実として答えないでください。"
+                    )
+
+        schedule_topic = _personal_schedule_question_topic(counterpart_message)
+        schedule_reference_datetime = current_datetime or datetime.now(timezone.utc)
+        schedule_fact_items = []
+        for index, fact in enumerate(known_self_facts or []):
+            if not fact:
+                continue
+            if known_self_fact_timestamps is None:
+                # Backward-compatible callers provide facts as current assertions.
+                created_at = schedule_reference_datetime.isoformat()
+            else:
+                created_at = (
+                    known_self_fact_timestamps[index]
+                    if index < len(known_self_fact_timestamps) else None
+                )
+            current_fact = _current_relative_schedule_fact(fact, created_at, schedule_reference_datetime)
+            if current_fact:
+                schedule_fact_items.append((current_fact, created_at))
+        schedule_facts = [
+            fact for fact, _created_at in schedule_fact_items
+            if _fact_supports_schedule_question(fact, schedule_topic, counterpart_message)
+        ] if schedule_topic else []
+        requested_periods = _availability_periods(counterpart_message) if schedule_topic == "availability" else set()
+        supported_periods = {
+            period for period in requested_periods
+            if any(
+                _availability_period_matches(period, known_period)
+                for fact, _created_at in schedule_fact_items
+                for known_period in _availability_periods(fact)
+            )
+        }
+        missing_requested_period = bool(requested_periods and supported_periods != requested_periods)
+        weekend_question = bool(requested_periods.intersection({"週末", "土日"}))
+        weekend_polarities = {
+            polarity
+            for fact in schedule_facts
+            for fact_period, polarity in _availability_claims_by_period(fact).items()
+            if any(_availability_period_matches(period, fact_period) for period in requested_periods)
+        }
+        ambiguous_weekend_facts = weekend_question and len(weekend_polarities) > 1
+        if schedule_topic and (not schedule_facts or missing_requested_period or ambiguous_weekend_facts):
+            for i in range(1, len(replies) + 1):
+                violations.append(
+                    f"案{i}に本人の予定・生活習慣を確認できる情報がありません。"
+                    "予定や起床習慣を作らず、アプリ利用者に [AI_QUESTION] で確認してください。"
+                )
+        elif schedule_topic == "availability":
+            known_polarities_by_period = {}
+            for fact in schedule_facts:
+                fact_claims = _availability_claims_by_period(fact)
+                for requested_period in requested_periods:
+                    for fact_period, polarity in fact_claims.items():
+                        if _availability_period_matches(requested_period, fact_period):
+                            known_polarities_by_period[requested_period] = polarity
+            for i, rep in enumerate(replies, start=1):
+                reply_claims = _availability_claims_by_period(rep)
+                reply_polarity = _availability_polarity(rep)
+                if (
+                    len(requested_periods) > 1
+                    and reply_polarity
+                    and re.search(r"(?:どっちも|どちらも|両方)", unicodedata.normalize("NFKC", rep))
+                ):
+                    reply_claims.update({period: reply_polarity for period in requested_periods})
+                contradicts_period = any(
+                    known_polarities_by_period.get(period) != polarity
+                    for period, polarity in reply_claims.items()
+                    if period in requested_periods and period in known_polarities_by_period
+                )
+                if len(requested_periods) <= 1 and reply_polarity and known_polarities_by_period and set(known_polarities_by_period.values()) != {reply_polarity}:
+                    contradicts_period = True
+                if contradicts_period:
+                    violations.append(
+                        f"案{i}が確認済みの予定と逆の空き状況を答えています。本人の予定と矛盾する断定をせず、情報が不十分なら利用者に確認してください。"
+                    )
+                reply_periods = _availability_periods(rep)
+                if (
+                    any(_is_specific_availability_period(period) for period in requested_periods)
+                    and reply_periods and not reply_periods.issubset(requested_periods)
+                ):
+                    violations.append(
+                        f"案{i}が相手の質問と異なる日程について答えています。確認済みの予定にない別の日付を混ぜず、質問された日程だけに答えてください。"
+                    )
+
+        for i, rep in enumerate(replies, start=1):
+            question_counts = naturalness.count_meaningful_questions(rep)
+            emotionally_sensitive_share = bool(re.search(
+                r"(?:落ち込|つら|辛い|悲し|不安|しんど|悩ん|自信なく|疲れた|へとへと)",
+                unicodedata.normalize("NFKC", counterpart_message or ""),
+            ))
+            if counterpart_message and emotionally_sensitive_share and question_counts["informative"] > 1:
+                violations.append(
+                    f"案{i}は質問を重ねすぎています。質問は会話上必要なものを一つだけにし、相手の発言にまず自然に反応してください。"
+                )
+            normalized_share = unicodedata.normalize("NFKC", counterpart_message or "").strip(" 　。、.!！?？")
+            bare_states = {"眠い", "疲れた", "へとへと", "だるい", "忙しい"}
+            unrelated_schedule_question = bool(re.search(
+                r"(?:明日|今日|今週|来週|仕事|勤務|早く|早い|何時|予定)",
+                unicodedata.normalize("NFKC", rep),
+            ))
+            if normalized_share in bare_states and question_counts["informative"] and unrelated_schedule_question:
+                violations.append(
+                    f"案{i}は短い状態共有への不要な質問をしています。質問を足さず、短い気遣いで返してください。"
+                )
+            if _is_bare_state_echo(counterpart_message, rep):
+                violations.append(
+                    f"案{i}は相手の状態を言い換えただけで新しい反応がありません。"
+                    "同じ状態を繰り返さず、自然な労いや気遣いを短く返してください。"
+                )
+            if counterpart_message and _has_unverified_personal_desire(counterpart_message, rep, known_self_facts):
+                violations.append(
+                    f"案{i}に本人の未確認の希望を追加しています。"
+                    "相手の話題をきっかけに本人の好みや希望を作らず、確認できる話題への自然な反応に直してください。"
+                )
+            if counterpart_message and _has_unverified_personal_habit(rep, known_self_facts):
+                violations.append(
+                    f"案{i}に本人の未確認の習慣・傾向を追加しています。"
+                    "本人の確認済み情報にない一人称の習慣や心理傾向を作らず、相手への共感に直してください。"
+                )
+
+        factual_context = unicodedata.normalize(
+            "NFKC", f"{counterpart_message}\n{chat_history_text or ''}"
+        )
+        work_terms = ("仕事", "お仕事", "出勤", "勤務", "職場", "残業")
+        work_is_grounded = any(term in factual_context for term in work_terms)
+        time_off_is_grounded = any(term in factual_context for term in ("休み", "休日", "休暇"))
+        # chat_history_text contains both speakers; only explicitly collected SELF facts
+        # can ground a first-person claim.
+        self_fact_context = unicodedata.normalize("NFKC", "\n".join(known_self_facts or []))
+        for i, rep in enumerate(replies, start=1):
+            if counterpart_message and not work_is_grounded and any(term in rep for term in work_terms):
+                violations.append(
+                    f"案{i}に仕事の状況を確認できる情報がありません。"
+                    "会話にない勤務・職場の事情を相手の眠気や疲れから推測しないでください。"
+                )
+
+            if counterpart_message and not time_off_is_grounded and re.search(
+                r"(?:お?休み|休日|休暇)(?:だった|なんですね|ですね|でしたね|なんですか)", rep
+            ):
+                violations.append(
+                    f"案{i}に休日・休暇を確認できる情報がありません。"
+                    "自由時間があったことから勤務状況や休日を推測しないでください。"
+                )
+
+            transient_self_claim = re.search(
+                r"(?:僕|私|自分)(?:は|も|が)?[^。！!？?]{0,16}(?:今日|昨日|最近|さっき|今|この前)"
+                r"[^。！!？?]{0,16}(?:バタバタ|忙し|仕事|出かけ|寝て|体調|疲れ|予定|行って|食べ|見て|買って)",
+                unicodedata.normalize("NFKC", rep),
+            )
+            if counterpart_message and transient_self_claim:
+                claim_terms = re.findall(r"バタバタ|忙し|仕事|出かけ|寝て|体調|疲れ|予定|行って|食べ|見て|買って", rep)
+                if not any(term in self_fact_context for term in claim_terms):
+                    violations.append(
+                        f"案{i}に本人の近況を確認できる情報がありません。"
+                        "会話履歴や本人情報にない今日の行動・状態を自己開示として追加しないでください。"
+                    )
+
         if _unresolved_status_query(counterpart_message):
             supported_status = _latest_prior_self_status(chat_history_text, counterpart_message)
             for i, rep in enumerate(replies, start=1):
@@ -862,6 +1565,11 @@ def validate_candidate_replies(
             violations.append(
                 f"案{i}に「〜とのこと」「〜と拝見」等の機械的で不自然なAI表現が含まれています。"
                 f"自然な口語（『〜なんですね！』『〜いいですね！』等）に修正してください。"
+            )
+        if re.search(r"(?:こと|の)誰かに(?:共有|話し)", rep):
+            violations.append(
+                f"案{i}に助詞が抜けた不自然な表現があります。"
+                "『ことを誰かに共有する』のように助詞を補い、自然な日本語に直してください。"
             )
 
     # 「ほかにも」「ほかに」「〜以外」による話題逃げ・並列質問の禁止チェック
@@ -985,11 +1693,15 @@ def _build_repair_messages(
     raw_output: str,
     violations: list[str],
     candidates: int,
+    strategy_mode: str = "none",
 ) -> list[dict[str, str]]:
     """修復用のメッセージリストを構築する。"""
     v_text = "\n".join(f"- {v}" for v in violations)
     requires_private_experience_confirmation = any(
-        "本人の経験を確認できる情報がありません" in violation for violation in violations
+        "本人の経験を確認できる情報がありません" in violation
+        or "本人の好みを確認できる情報がありません" in violation
+        or "本人の予定・生活習慣を確認できる情報がありません" in violation
+        for violation in violations
     )
     requires_reference_clarification = any(
         "参照先が会話履歴から特定できません" in violation
@@ -999,14 +1711,23 @@ def _build_repair_messages(
     )
     if requires_private_experience_confirmation:
         output_instruction = (
-            "本人の経験が会話履歴や本人情報で確認できません。返信候補を作らず、"
-            "アプリ利用者にだけ事実を確認する質問を [AI_QUESTION]質問内容[/AI_QUESTION] の形式で1つだけ出力してください。"
+            "本人の経験・好み・予定・生活習慣・体質が会話履歴や本人情報で確認できません。返信候補を作らず、"
+            "アプリ利用者にだけ、聞かれた対象に絞った短い確認質問を [AI_QUESTION]質問内容[/AI_QUESTION] の形式で1つ出力してください。"
+            "別の話題や追加質問を重ねないこと。"
             "相手に送る返信候補として確認質問を作らないこと。JSON repliesや説明文は出力しないこと。"
         )
     elif requires_reference_clarification:
         output_instruction = (
             f"参照先が不明なため、状況を推測せず、相手に送る短い確認質問を含む通常のJSON repliesを{candidates}案作ってください。"
             "アプリ利用者向けの質問タグは使わないこと。"
+        )
+    elif strategy_mode == "tapple":
+        reply_slots = ", ".join(f'"案{i + 1}"' for i in range(candidates))
+        output_instruction = (
+            f"不備を修正して返信候補を必ず{candidates}件作成してください。"
+            f'JSON形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop",'
+            '"rationale":"根拠に基づく短い説明","evidence":["相手発言からの完全一致抜粋"],"invite_example":null}}。'
+            "戦略の根拠がない場合はstrategyを省略してかまいません。"
         )
     else:
         output_instruction = (
@@ -1881,6 +2602,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
 
     # 2. 階層的スタイルプロファイル構築
     hierarchical_profile = learning.style.compute_hierarchical_profile(contact_id, current_phase)
+    effective_tone = learning.style.infer_contact_tone(hierarchical_profile, tone)
     learned_policy_block = learning.style.to_learned_policy_prompt(hierarchical_profile)
 
     # 3. 2段階 Positive Reply Pairs 検索
@@ -1905,10 +2627,18 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     counterpart_style_data = analyze_counterpart_style(contact_id)
 
     # 5.5 same-contact manual Gold の原文実例ブロック
-    same_contact_gold_block = learning.style.build_same_contact_gold_pairs_block(contact_id, limit=10)
+    same_contact_gold_block = ""
+    if hierarchical_profile["same_contact_gold_samples"] >= 3:
+        same_contact_gold_block = learning.style.build_same_contact_gold_pairs_block(contact_id, limit=10)
 
     # 5.55 Step 11: 最近そのまま送信された生成返信の実例（最大5件。なければ空）
-    accepted_block = learning.contrast.build_accepted_block(contact_id, limit=5)
+    same_contact_gold_count = hierarchical_profile["same_contact_gold_samples"]
+    accepted_block = (
+        learning.contrast.build_accepted_block(contact_id, limit=5)
+        if same_contact_gold_count >= 3
+        or (same_contact_gold_count == 0 and hierarchical_profile["gold_samples"] == 0)
+        else ""
+    )
     if accepted_block:
         same_contact_gold_block = (
             f"{same_contact_gold_block}\n{accepted_block}" if same_contact_gold_block else accepted_block
@@ -1927,11 +2657,18 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         for m in messages
         if m["sender"] == "self" and str(m["content"] or "").strip()
     ]
+    known_self_fact_timestamps = [
+        str(m["created_at"] or "") or None
+        for m in messages
+        if m["sender"] == "self" and str(m["content"] or "").strip()
+    ]
     if self_profile.get("my_info", "").strip():
         known_self_facts.append(self_profile["my_info"].strip())
+        known_self_fact_timestamps.append(None)
     user_knowledge_text = database.get_user_knowledge_text()
     if user_knowledge_text.strip():
         known_self_facts.append(user_knowledge_text.strip())
+        known_self_fact_timestamps.append(None)
     contact_info = {
         "name": contact["name"],
         "profile": contact["profile"],
@@ -1952,13 +2689,14 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         contact=contact_info,
         condition=condition,
         chat_history_text=chat_text,
-        tone=tone,
+        tone=effective_tone,
         mode=mode,
         learned_policy_block=learned_policy_block,
         positive_pairs_block=positive_pairs_block,
         contrast_block=contrast_block,
         counterpart_style_block=counterpart_style_data["summary"],
         same_contact_gold_block=same_contact_gold_block,
+        same_contact_gold_samples=hierarchical_profile["same_contact_gold_samples"],
         conversation_ledger=conversation_ledger,
         counterpart_length_tier=counterpart_length_tier,
         counterpart_length_chars=counterpart_length_chars,
@@ -1968,6 +2706,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
 
     return {
         "cfg": cfg,
+        "effective_tone": effective_tone,
         "custom_knowledge": custom_knowledge,
         "system_prompt": system_prompt,
         "chat_text": chat_text,
@@ -1975,6 +2714,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         "last_contact_msg_id": last_contact_msg_id,
         "last_self_msg": last_self_msg,
         "known_self_facts": known_self_facts,
+        "known_self_fact_timestamps": known_self_fact_timestamps,
         "current_phase": current_phase,
         "pieces": {
             "phase": current_phase,
@@ -2241,6 +2981,8 @@ def preview_generation(body: GenerateRequest):
     return {
         "provider": ctx["cfg"]["provider"],
         "model": ctx["cfg"]["model"],
+        "requested_tone": body.tone or "auto",
+        "effective_tone": ctx.get("effective_tone") or "auto",
         "system_prompt": ctx["system_prompt"],
         "rules": rules,
         "references": references,
@@ -2325,6 +3067,36 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
     active_provider = provider
     active_cfg = cfg
     using_fallback = False
+    is_quota_model_pair = (
+        cfg.get("provider") == "gemini"
+        and cfg.get("model") == "gemini-3.5-flash-lite"
+        and cfg.get("fallback_provider") == "gemini"
+        and cfg.get("fallback_model") == "gemini-3.1-flash-lite"
+    )
+    secondary_api_key = (cfg.get("secondary_api_key") or "").strip()
+    quota_attempts: list[tuple[Any, dict[str, Any], str]] = []
+    if (
+        is_quota_model_pair
+        and secondary_api_key
+        and secondary_api_key != (cfg.get("api_key") or "").strip()
+    ):
+        primary_fallback_cfg = dict(
+            cfg,
+            model=cfg["fallback_model"],
+            api_key=cfg["api_key"],
+        )
+        secondary_provider = factory.get_provider("gemini", secondary_api_key)
+        secondary_primary_cfg = dict(cfg, api_key=secondary_api_key)
+        secondary_fallback_cfg = dict(
+            secondary_primary_cfg,
+            model=cfg["fallback_model"],
+        )
+        quota_attempts = [
+            (provider, cfg, "primary"),
+            (provider, primary_fallback_cfg, "primary"),
+            (secondary_provider, secondary_primary_cfg, "secondary"),
+            (secondary_provider, secondary_fallback_cfg, "secondary"),
+        ]
     system_prompt = ctx["system_prompt"]
     chat_text = ctx["chat_text"]
 
@@ -2344,6 +3116,8 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             condition=body.condition,
             original_generated=body.original_generated,
             revision_instruction=body.revision_instruction,
+            strategy_mode=body.strategy_mode,
+            candidates=body.candidates,
         )
     else:
         msgs = prompt.build_initial_generation_messages(
@@ -2351,6 +3125,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             chat_history_text=chat_text,
             candidates=body.candidates,
             mode=body.mode,
+            strategy_mode=body.strategy_mode,
         )
 
     def _call_ai(messages: list[dict[str, str]]) -> str:
@@ -2362,21 +3137,57 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                 messages=messages,
                 temperature=active_cfg["temperature"],
                 max_tokens=active_cfg["max_tokens"],
-                json_mode=body.candidates > 1,
+                json_mode=body.candidates > 1 or body.strategy_mode == "tapple",
             )
 
         try:
             return _invoke()
         except AIError as exc:
+            if exc.code == "rate_limit" and quota_attempts:
+                current_index = next(
+                    (
+                        index
+                        for index, (_candidate_provider, candidate_cfg, _account) in enumerate(quota_attempts)
+                        if candidate_cfg.get("api_key") == active_cfg.get("api_key")
+                        and candidate_cfg.get("model") == active_cfg.get("model")
+                    ),
+                    -1,
+                )
+                if current_index < 0:
+                    raise HTTPException(
+                        status_code=502,
+                        detail={"code": exc.code, "message": exc.message},
+                    )
+                last_quota_error = exc
+                for next_provider, next_cfg, next_account in quota_attempts[current_index + 1 :]:
+                    active_provider = next_provider
+                    active_cfg = next_cfg
+                    using_fallback = True
+                    logger.warning(
+                        "Gemini quota exhausted; trying account=%s model=%s",
+                        next_account,
+                        next_cfg["model"],
+                    )
+                    try:
+                        return _invoke()
+                    except AIError as next_exc:
+                        if next_exc.code != "rate_limit":
+                            logger.warning("Gemini fallback failed: code=%s", next_exc.code)
+                            raise HTTPException(
+                                status_code=502,
+                                detail={"code": next_exc.code, "message": next_exc.message},
+                            )
+                        last_quota_error = next_exc
+
+                logger.warning("Gemini quota fallbacks exhausted")
+                raise HTTPException(
+                    status_code=502,
+                    detail={"code": last_quota_error.code, "message": last_quota_error.message},
+                )
+
             # Production defaults switch from Gemini 3.5 Flash Lite to 3.1
             # Flash Lite as soon as the primary quota is exhausted. Keep the
             # generic retry/fallback policy unchanged for every other setup.
-            is_quota_model_pair = (
-                cfg.get("provider") == "gemini"
-                and cfg.get("model") == "gemini-3.5-flash-lite"
-                and cfg.get("fallback_provider") == "gemini"
-                and cfg.get("fallback_model") == "gemini-3.1-flash-lite"
-            )
             if exc.code == "rate_limit" and is_quota_model_pair and not using_fallback:
                 fb = factory.get_fallback(cfg)
                 if fb is None:
@@ -2455,6 +3266,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
 
     MAX_ATTEMPTS = 3
     final_parsed_replies = None
+    final_strategy_raw = None
     last_violations = []
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -2474,7 +3286,9 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             return {"replies": [], "history_ids": [], "question": question_text}
 
         # 2. Strict Parse & Auto-Sanitize (勝手に自動修正して不備を解消)
-        parsed_replies = _parse_replies_strict(raw, body.candidates)
+        parsed_replies = _parse_replies_strict(
+            raw, body.candidates, strategy_mode=body.strategy_mode
+        )
         if parsed_replies:
             parsed_replies = [
                 sanitize_reply_text(r, current_datetime=datetime.now(), contact_name=contact_name)
@@ -2488,14 +3302,16 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         violations = validate_candidate_replies(
             parsed_replies,
             body.candidates,
-            tone=body.tone,
+            tone=ctx.get("effective_tone") or body.tone,
             condition=body.condition,
             mode=body.mode,
-            current_datetime=datetime.now(),
+            current_datetime=datetime.now(timezone.utc),
             last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
             counterpart_message=ctx.get("last_contact_msg", ""),
             known_self_facts=ctx.get("known_self_facts", []),
+            known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
             chat_history_text=ctx.get("chat_text", ""),
+            strategy_mode=body.strategy_mode,
         )
 
         # Step 16 §22: 初回のみ、質問不要なのに全案質問つきなら soft repair を促す。
@@ -2524,6 +3340,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         # 違反がなければ即合格
         if not violations and parsed_replies and len(parsed_replies) == body.candidates:
             final_parsed_replies = parsed_replies
+            final_strategy_raw = raw
             break
 
         # 3. 違反がある場合は1回 Repair を試行
@@ -2536,14 +3353,18 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                 violations = [f"出力が正しいJSON形式（{{\"replies\": [...]}}）または期待される{body.candidates}案の形式になっていません。"]
         logger.info("Attempt %d validation failed: %s. Attempting repair...", attempt, violations)
 
-        repair_msgs = _build_repair_messages(msgs, raw, violations, body.candidates)
+        repair_msgs = _build_repair_messages(
+            msgs, raw, violations, body.candidates, strategy_mode=body.strategy_mode
+        )
         try:
             repair_raw = _call_ai(repair_msgs)
             repair_question = _extract_ai_question(repair_raw)
             if may_return_private_question(repair_question):
                 return {"replies": [], "history_ids": [], "question": repair_question}
 
-            repair_parsed = _parse_replies_strict(repair_raw, body.candidates)
+            repair_parsed = _parse_replies_strict(
+                repair_raw, body.candidates, strategy_mode=body.strategy_mode
+            )
             if repair_parsed:
                 repair_parsed = [
                     sanitize_reply_text(r, current_datetime=datetime.now(), contact_name=contact_name)
@@ -2553,18 +3374,21 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                     ensure_has_question(r, condition=body.condition, contact_name=contact_name)
                     for r in repair_parsed
                 ]
+            repair_strategy_matches_replies = True
 
             repair_violations = validate_candidate_replies(
                 repair_parsed,
                 body.candidates,
-                tone=body.tone,
+                tone=ctx.get("effective_tone") or body.tone,
                 condition=body.condition,
                 mode=body.mode,
-                current_datetime=datetime.now(),
+                current_datetime=datetime.now(timezone.utc),
                 last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
                 counterpart_message=ctx.get("last_contact_msg", ""),
                 known_self_facts=ctx.get("known_self_facts", []),
+                known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
                 chat_history_text=ctx.get("chat_text", ""),
+                strategy_mode=body.strategy_mode,
             )
             if (
                 repair_violations
@@ -2576,27 +3400,31 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                     counterpart_message=ctx.get("last_contact_msg", ""),
                     known_self_facts=ctx.get("known_self_facts", []),
                     chat_history_text=ctx.get("chat_text", ""),
-                    tone=body.tone,
+                    tone=ctx.get("effective_tone") or body.tone,
                     condition=body.condition,
-                    current_datetime=datetime.now(),
+                    current_datetime=datetime.now(timezone.utc),
                     mode=body.mode,
                 )
                 if safe_clarifications:
                     repair_parsed = safe_clarifications
+                    repair_strategy_matches_replies = False
                     repair_violations = validate_candidate_replies(
                         repair_parsed,
                         body.candidates,
-                        tone=body.tone,
+                        tone=ctx.get("effective_tone") or body.tone,
                         condition=body.condition,
                         mode=body.mode,
-                        current_datetime=datetime.now(),
+                        current_datetime=datetime.now(timezone.utc),
                         last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
                         counterpart_message=ctx.get("last_contact_msg", ""),
                         known_self_facts=ctx.get("known_self_facts", []),
+                        known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
                         chat_history_text=ctx.get("chat_text", ""),
+                        strategy_mode=body.strategy_mode,
                     )
             if not repair_violations and repair_parsed and len(repair_parsed) == body.candidates:
                 final_parsed_replies = repair_parsed
+                final_strategy_raw = repair_raw if repair_strategy_matches_replies else None
                 break
             else:
                 last_violations = repair_violations or violations
@@ -2713,7 +3541,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         replies=sorted_replies,
         revision_instruction=body.revision_instruction,
         original_generated=body.original_generated,
-        tone=body.tone,
+        tone=ctx.get("effective_tone") or body.tone,
         counterpart_message=ctx.get("last_contact_msg", ""),
         batch_id=batch_id,
     )
@@ -2731,12 +3559,12 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         # 生成を失敗扱いにすると、履歴があるのにbatchだけ失敗状態になる。
         logger.exception("Failed to save auto evaluations: batch_id=%s", batch_id)
 
-    effective_tone = body.tone or (
+    effective_tone = ctx.get("effective_tone") or body.tone or (
         "hybrid" if getattr(user_style_profile_data, "hybrid_ratio", 0.5) >= 0.5
         else ("keigo" if getattr(user_style_profile_data, "keigo_ratio", 0.0) >= 0.5 else "tame")
     )
 
-    return {
+    response = {
         "replies": sorted_replies,
         "history_ids": history_ids,
         "style_scores": style_scores,
@@ -2751,5 +3579,16 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         "effective_tone": effective_tone,
         "tone_validation": "passed",
     }
+    if body.strategy_mode == "tapple":
+        # Strategy metadata is advisory and independently validated; a malformed
+        # or absent strategy never invalidates otherwise usable reply candidates.
+        strategy = (
+            _parse_tapple_strategy(final_strategy_raw, chat_text)
+            if final_strategy_raw is not None
+            else None
+        )
+        if strategy is not None:
+            response["strategy"] = strategy.model_dump()
+    return response
 
 

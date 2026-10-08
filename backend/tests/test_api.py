@@ -150,9 +150,9 @@ def test_generate_success_and_history(client, monkeypatch):
 
         def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
             assert any("RULES" in str(m) or "カフェ行きたい" in str(m) for m in messages)
-            reply1 = "いいですね！\nカフェ巡りよく行きます\nおすすめのお店ありますか？"
-            reply2 = "カフェ行きたいですね！\n最近新しいお店探してました笑\nどこか気になるところありますか？"
-            reply3 = "カフェいいですね！\nのんびり過ごすの好きです\n今度おすすめ教えてくれませんか？"
+            reply1 = "いいですね！\n雰囲気のいいお店だとゆっくりできそうです\nおすすめのお店ありますか？"
+            reply2 = "カフェいいですね！\n新しいお店も増えてそうですね笑\nどこか気になるところありますか？"
+            reply3 = "カフェ行ってきたんですね。\n落ち着いたお店だとゆっくり過ごせそうですね\nどのあたりがおすすめですか？"
             return json.dumps({"replies": [reply1, reply2, reply3]}) if json_mode else reply1
 
         def available_models(self):
@@ -176,7 +176,7 @@ def test_generate_success_and_history(client, monkeypatch):
 
     r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 1})
     assert r.status_code == 200
-    assert r.json()["replies"] == ["いいですね！\nカフェ巡りよく行きます\nおすすめのお店ありますか？"]
+    assert r.json()["replies"] == ["いいですね！\n雰囲気のいいお店だとゆっくりできそうです\nおすすめのお店ありますか？"]
 
     # 3案
     r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
@@ -191,7 +191,7 @@ def test_generate_success_and_history(client, monkeypatch):
     # 全レコードが全案同一の生テキストではなく個別案になっていることを確認
     history_texts = [h["generated_text"] for h in r.json()]
     assert "おすすめのお店ありますか？" in history_texts[3]
-    assert "気になるところありますか？" in history_texts[1]
+    assert any("新しいお店も増えてそうですね" in text for text in history_texts)
 
 
 def test_knowledge_files(client):

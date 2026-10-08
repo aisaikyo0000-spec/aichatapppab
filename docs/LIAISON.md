@@ -10,9 +10,9 @@
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（fork上。最新commitは`5cdc764`、今回の実装修正・資料更新は未commit）
+- 作業ブランチ: `codex/chat-quality-20261008`（fork上。最新公開commitは`9bd4682`）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4 Iteration 22。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tapple境界修正と独立レビューはPASS。全体テスト・資料更新後にforkへWIPを公開する
+- 進行状況: Step 18-R4 Iteration 22。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tapple境界修正、独立レビュー、全体テストはPASS。WIPをforkへ公開済み
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を再開可能な時間帯に行う。完了条件がそろうまでStep 18-R4は合格としない
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）
@@ -454,4 +454,4 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - 独立レビューで見つかった口語の「迷う／悩んでる」の見逃し、仕事・資格・転職先など会うことと無関係な悩みの誤ブロック、仕事帰り・会社近くのデート安全懸念の誤除外を修正した。会うこと自体の迷いと安全懸念は、同じ文に仕事の話があっても招待・日程調整を保留する
 - Tapple strategy **299 passed**、backend全体 **828 passed / 2 warnings**。主3.5→主3.1→予備3.5→予備3.1のAPIキー・quota fallback mock tests **26 passed**。frontend production build、Python compile、`git diff --check` はPASS
 - 最新差分への独立code reviewerとPython reviewerはともに **PASS**。実Gemini APIは未呼び出し。最新70ケース、Contact Bench、Tapple実生成文のレビューは未完了
-- main基点 `a75ba76` は変更していない。検証完了後、forkの作業branchへWIPをfast-forward pushする予定。Step 18-R4は未完成
+- 対応commit `9bd4682` をforkの作業branchへfast-forward push済み。GitHub main基点 `a75ba76` は変更していない。Step 18-R4は未完成

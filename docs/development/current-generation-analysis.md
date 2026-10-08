@@ -2103,4 +2103,4 @@ APIは呼び出していないため、実際のquota応答と生成品質は未
 
 まず旧動作で失敗する回帰テストを追加し、RED test commit `8d7d53a`を作成した。実装修正commitは`6b68dcc`。focused suiteはbenchmark config **18 passed**、APIキー・model fallback **27 passed**。`python -m pytest backend/tests -q`は**1,084 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。新しいread-only code reviewerもPASSと判定した。
 
-Gemini APIは呼び出していない。最新70ケース、Contact Bench全9返信、Tapple全11シナリオの実生成と目視確認は未実施で、Step 18-R4は未完成。修正コードと資料はローカルにあり、forkの公開済みHEADは`c9501ef`。API疎通確認は利用者が再開を指示するまで行わない。
+Gemini APIは呼び出していない。最新70ケース、Contact Bench全9返信、Tapple全11シナリオの実生成と目視確認は未実施で、Step 18-R4は未完成。修正commit `6b68dcc`と資料commit `3c1da1b`はforkへpushし、remote SHA一致を確認した。API疎通確認は利用者が再開を指示するまで行わない。

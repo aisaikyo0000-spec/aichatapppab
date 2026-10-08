@@ -12,9 +12,9 @@
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
 - 作業ブランチ: `codex/chat-quality-20261008`（ローカル最新コードcommitは`6b68dcc`。予備アカウント使用時に、疎通確認で制限済みと分かった主アカウントへ戻らない）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。現HEAD `6b68dcc`でbackendは**1,084 passed / 2 warnings**、Tapple専用は**519 passed**、quota/fallback関連は**45 passed**。frontend production build、Python compileall、`git diff --check`はPASS。quota切替の独立code reviewerと安全ReviewerはともにPASS
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。コードcommit `6b68dcc`でbackendは**1,084 passed / 2 warnings**、Tapple専用は**519 passed**、quota/fallback関連は**45 passed**。frontend production build、Python compileall、`git diff --check`はPASS。quota切替の独立code reviewerはPASS
 - Geminiの利用経路は主3.5→主3.1→予備3.5→予備3.1。rate limit時だけ次の経路へ進む。今回、70ケース・Contact・Tappleの成果物に`successful_route: {account, model}`を記録し、APIキーを含めないことを回帰テストで確認した。実APIは呼び出していない
-- 直近の公開済みcommitは`c9501ef`。ローカル最新コード`6b68dcc`と本資料は未push。PR #1はOpenで未マージ、mainには未反映
+- コード修正`6b68dcc`と資料commit `3c1da1b`をfork作業branchへpushし、SHA一致を確認済み。PR #1はOpenで未マージ、mainには未反映
 - 次の作業: 利用者の確認後に実API疎通を行い、70ケース、Contact Bench、Tapple全11シナリオの実生成と全文レビューをする。全条件が揃うまでStep 18-R4を合格としない
 
 今回のPair testでは、二つの実ベンチ会話に同じ`invite`提案を渡す。温かい相互会話では`invite`を維持し、反応が薄い履歴ではstrategy parserが`wait`へ調整することを確認する。従来のシナリオ設定だけを見るテストを補う。
@@ -31,7 +31,7 @@
 
 疎通確認が予備アカウントで成功した場合、後続ベンチの設定が主アカウントへ戻る問題を修正した。主3.5・主3.1が`rate_limit`と確認された後に、quota fallbackが同じ2経路を再試行しないようにした。通常起動時の順序は主3.5 → 主3.1 → 予備3.5 → 予備3.1のまま維持する。
 
-回帰テストを先に追加し、旧動作で失敗することを確認した。RED test commitは`8d7d53a`、修正commitは`6b68dcc`。quota設定18件、キー読込・モデルfallback27件、backend全体**1,084 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。独立code reviewerはPASS。Gemini APIは呼び出していない。ローカル最新commitとこの記録は未pushで、fork branchの公開済みHEADは`c9501ef`。Step 18-R4の実API疎通、最新70ケース、Contact 9返信、Tapple 11シナリオの生成・目視確認は未完了。
+回帰テストを先に追加し、旧動作で失敗することを確認した。RED test commitは`8d7d53a`、修正commitは`6b68dcc`。quota設定18件、キー読込・モデルfallback27件、backend全体**1,084 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。独立code reviewerはPASS。Gemini APIは呼び出していない。修正と資料commit `3c1da1b`はforkへpushし、remote SHA一致を確認した。Step 18-R4の実API疎通、最新70ケース、Contact 9返信、Tapple 11シナリオの生成・目視確認は未完了。
 
 ## Step 18-R4 進捗（オフライン受け入れ準備）
 

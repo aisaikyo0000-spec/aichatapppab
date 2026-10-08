@@ -51,7 +51,11 @@ from benchmark_config import (  # noqa: E402
     record_gemini_benchmark_success,
     successful_gemini_benchmark_route,
 )
-from benchmark_response import benchmark_run_state, extract_api_error_code  # noqa: E402
+from benchmark_response import (  # noqa: E402
+    benchmark_run_state,
+    extract_api_error_code,
+    generation_response_is_valid,
+)
 from app.ai.naturalness import evaluate_candidate_naturalness  # noqa: E402
 
 
@@ -161,33 +165,35 @@ def main() -> int:
                         route_state_path=args.quota_route_state,
                     )
                 data = r.json()
-                entry["candidates"] = data["replies"]
-                if data.get("question"):
-                    entry["safe_user_question"] = data["question"]
-                if len(entry["candidates"]) != 3 and not entry.get("safe_user_question"):
-                    entry["error"] = "incomplete_candidate_set"
-                history_ids = data.get("history_ids", [])
-                conn = database.get_conn()
-                try:
-                    entry["models_used"] = [row["model"] for row in conn.execute(
-                        f"SELECT DISTINCT model FROM generation_history WHERE id IN ({','.join('?' for _ in history_ids)})",
-                        history_ids,
-                    ).fetchall()] if history_ids else []
-                finally:
-                    conn.close()
-                entry["final_scores"] = data.get("final_scores")
-                entry["naturalness_scores"] = data.get("naturalness_scores")
-                entry["issues"] = [detect_issues(c, case["contact"]) for c in data["replies"]]
-                _, _, ledger = build_case_prompt(case)
-                naturalness = [
-                    evaluate_candidate_naturalness(reply, case["contact"], ledger, [])
-                    for reply in data["replies"]
-                ]
-                entry["four_axis"] = [four_axis_scores(item) for item in naturalness]
-                entry["ai_like_patterns"] = [
-                    classify_ai_like(reply, case["contact"], case.get("intent", "report"))
-                    for reply in data["replies"]
-                ]
+                if not generation_response_is_valid(data):
+                    entry["error"] = "invalid_generation_response"
+                    entry["error_code"] = "invalid_response"
+                else:
+                    entry["candidates"] = data["replies"]
+                    if "question" in data:
+                        entry["safe_user_question"] = data["question"]
+                    history_ids = data.get("history_ids", [])
+                    conn = database.get_conn()
+                    try:
+                        entry["models_used"] = [row["model"] for row in conn.execute(
+                            f"SELECT DISTINCT model FROM generation_history WHERE id IN ({','.join('?' for _ in history_ids)})",
+                            history_ids,
+                        ).fetchall()] if history_ids else []
+                    finally:
+                        conn.close()
+                    entry["final_scores"] = data.get("final_scores")
+                    entry["naturalness_scores"] = data.get("naturalness_scores")
+                    entry["issues"] = [detect_issues(c, case["contact"]) for c in data["replies"]]
+                    _, _, ledger = build_case_prompt(case)
+                    naturalness = [
+                        evaluate_candidate_naturalness(reply, case["contact"], ledger, [])
+                        for reply in data["replies"]
+                    ]
+                    entry["four_axis"] = [four_axis_scores(item) for item in naturalness]
+                    entry["ai_like_patterns"] = [
+                        classify_ai_like(reply, case["contact"], case.get("intent", "report"))
+                        for reply in data["replies"]
+                    ]
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}"
         entry["llm_calls"] = call_counter["n"] - calls_before

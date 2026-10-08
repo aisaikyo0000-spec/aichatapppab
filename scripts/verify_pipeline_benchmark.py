@@ -61,8 +61,15 @@ def _candidate_metrics_are_valid(cases: list[dict[str, Any]]) -> bool:
         if any(not isinstance(candidate, str) or not candidate.strip() for candidate in candidates):
             return False
         safe_question = case.get("safe_user_question")
+        has_safe_question = "safe_user_question" in case
+        if has_safe_question and (
+            not isinstance(safe_question, str)
+            or not safe_question.strip()
+            or candidates
+        ):
+            return False
         valid_candidate_count = len(candidates) == 3 or (
-            not candidates and isinstance(safe_question, str) and bool(safe_question.strip())
+            not candidates and has_safe_question
         )
         if not valid_candidate_count or len(issues) != len(candidates) or len(axes) != len(candidates):
             return False
@@ -130,12 +137,27 @@ def _generation_provenance_is_valid(cases: list[dict[str, Any]]) -> bool:
 
 
 def build_pipeline_manual_review_bundle(cases: list[dict[str, Any]]) -> dict[str, Any]:
-    """Expose representative cases and every candidate with a review signal."""
+    """Expose representative outputs and every candidate with a review signal."""
     representative_cases = [
         str(cases[index].get("id", ""))
         for index in MANUAL_REVIEW_SAMPLE_INDICES
         if index < len(cases) and isinstance(cases[index], dict)
     ]
+    representative_outputs = []
+    for index in MANUAL_REVIEW_SAMPLE_INDICES:
+        if index >= len(cases) or not isinstance(cases[index], dict):
+            continue
+        case = cases[index]
+        candidates = case.get("candidates")
+        safe_question = case.get("safe_user_question")
+        representative_outputs.append(
+            {
+                "case_id": str(case.get("id", "")),
+                "contact": str(case.get("contact", "")),
+                "candidates": candidates if isinstance(candidates, list) else [],
+                "safe_user_question": safe_question if isinstance(safe_question, str) else None,
+            }
+        )
     flagged_candidates: list[dict[str, Any]] = []
     safe_user_questions: list[dict[str, str]] = []
     for case in cases:
@@ -208,6 +230,7 @@ def build_pipeline_manual_review_bundle(cases: list[dict[str, Any]]) -> dict[str
                 )
     return {
         "representative_cases": representative_cases,
+        "representative_outputs": representative_outputs,
         "flagged_candidates": flagged_candidates,
         "safe_user_questions": safe_user_questions,
     }

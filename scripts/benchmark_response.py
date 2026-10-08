@@ -4,6 +4,23 @@ from __future__ import annotations
 from typing import Any
 
 
+def generation_response_is_valid(payload: Any) -> bool:
+    """Accept exactly three replies or one non-empty safety question."""
+    if not isinstance(payload, dict):
+        return False
+    replies = payload.get("replies")
+    if (
+        not isinstance(replies, list)
+        or any(not isinstance(reply, str) or not reply.strip() for reply in replies)
+    ):
+        return False
+
+    if "question" in payload:
+        question = payload["question"]
+        return not replies and isinstance(question, str) and bool(question.strip())
+    return len(replies) == 3
+
+
 def benchmark_run_state(results: list[dict], expected_count: int) -> dict[str, Any]:
     """Describe completion from both expected count and per-case failures."""
     failures = [result for result in results if "error" in result]

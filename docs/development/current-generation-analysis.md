@@ -1924,3 +1924,11 @@ Tapple専用テストは**26 passed**、Gemini fallbackテストは**13 passed**
 共有設定関数のテスト**2 passed**、両CLIの`--help`も確認した。最新backend suiteは**506 passed / 2 warnings**。Frontend build、`git diff --check`、対象Python compileも**PASS**。独立Python Reviewerは両Runnerがキーを表示せず予備キーを渡し、従来の3.5→3.1順を維持することを確認して**PASS**。実装commitは`61ec2fe`で、未push。
 
 API疎通・70ケース・Contact Benchは依然未実施。API回復後はまず一回だけ疎通を確認し、3.5を指定して全70ケース、続いて3接触先のContact Benchを実行する。ケース間の既定待機時間は6秒。
+
+アプリ実行時もキーを直接設定画面へ貼らずに済むよう、`GEMINI_API_KEY_FILE`で主キーのファイル読込を追加した。`GEMINI_SECONDARY_API_KEY_FILE`は予備キーを読み込む。DBに登録した主キーがあれば引き続きDBを優先する。利用環境の`.env`にはgemini2.mdとgemini3.mdのパスだけを設定し、キーの内容はコピーしない。
+
+## Gemini主・予備キーのファイル設定
+
+主・予備キーをファイルのまま読み込む経路を統合テストした。`GEMINI_API_KEY_FILE`にgemini2.md、`GEMINI_SECONDARY_API_KEY_FILE`にgemini3.mdを設定すると、主キーの3.5→3.1を試した後、両方がレート制限の場合に予備キーへ進む。DBの主キーが登録済みなら設定ファイルよりDBを優先する。設定APIには主・予備キーの有無だけを返す。
+
+ファイル読込を使うテストは**16 passed**、backend全体は**509 passed / 2 warnings**。frontend build、`git diff --check`、対象Python compileは**PASS**。独立Python Reviewerも**PASS**。実装commitは`51c14aa`、GitHub main基点は`a75ba76`で、WIPはpushしていない。API実生成は保留中のため、Step 18-R4は未完成。

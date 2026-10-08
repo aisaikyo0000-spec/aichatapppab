@@ -350,9 +350,16 @@
 - 設定組み立ての単体テストは**2 passed**。両CLIのhelp表示も確認済み。最新全backend suiteは**506 passed / 2 warnings**、frontend build・`git diff --check`・対象Python compileも**PASS**。独立Python Reviewer **PASS**
 - 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Benchを実行する。両スクリプトの既定待機はケースごとに6秒。artifactは共有せずローカルの一時領域へ保存する
 - 実装commitは`61ec2fe`（作業branchにローカル保存、未push）。API復旧と品質評価が終わるまでGitHubへのpushは保留する
+- アプリ本体でファイルを直接使う場合は、実行環境の`.env`に`GEMINI_API_KEY_FILE=<gemini2.md>`と`GEMINI_SECONDARY_API_KEY_FILE=<gemini3.md>`を設定する。DBに登録された主キーはファイルより優先する。キー値は`.env`や資料へコピーしない
 
 ```powershell
 python scripts/check_tapple_api_connectivity.py --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
 python scripts/run_pipeline_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
 python scripts/run_contact_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
 ```
+
+## Gemini主キーのファイル読込
+
+- アプリ本体も`GEMINI_API_KEY_FILE`で主キーのファイルを読み込む。`GEMINI_SECONDARY_API_KEY_FILE`と併用すればgemini2.mdを主キー、gemini3.mdを予備キーとして設定できる。DBに主キーがある場合はDBを優先する
+- gemini2.mdだけを設定する経路、DBキー優先、主・予備両ファイルの同時設定、設定APIに秘密値が含まれないことをテストした。主キーfallback関連テスト **16 passed**。全backend suite **509 passed / 2 warnings**、frontend build **PASS**、独立Python Reviewer **PASS**
+- 実装commit `51c14aa`。GitHub基点main `a75ba76`からの未push WIP。APIを呼んでいないため、実際のアカウント切替・70ケース・Contact Bench・Tapple実生成は未確認。Step 18-R4は未完成

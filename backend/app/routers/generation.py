@@ -571,10 +571,12 @@ _TAPPLE_SHARED_ACTIVITY_TERMS = (
 _TAPPLE_ACTIVITY_DISINTEREST_RE = re.compile(
     r"(?:あまり|そんなに|全然|もう|最近は|ちょっと)?"
     r"(?:好き(?:では|じゃ)?ありません|好き(?:では|じゃ)?ない(?!わけ|こと)|"
+    r"得意(?:では|じゃ)?ありません|得意(?:では|じゃ)?ない(?!わけ|こと)|"
     r"苦手(?!ではない|じゃない)|嫌い(?!ではない|じゃない)|"
     r"興味(?:が)?ありません|興味(?:が)?ない(?!わけ|こと)|"
     r"行きたくありません|行きたくない(?!わけ|こと)|"
     r"行く気がありません|行く気がない(?!わけ|こと)|"
+    r"行かなくな(?:った|りました)|行って(?:いない|ない|ません)|"
     r"気になりません|気にならない(?!わけ|こと))"
 )
 
@@ -597,8 +599,16 @@ def _has_recent_self_disinterest_in_tapple_activity(
         term_position = clause.find(activity_term)
         if term_position < 0:
             continue
-        if _TAPPLE_ACTIVITY_DISINTEREST_RE.search(
-            clause[term_position + len(activity_term) :]
+        following_activity_text = clause[
+            term_position + len(activity_term) :
+        ][:12]
+        disinterest_match = _TAPPLE_ACTIVITY_DISINTEREST_RE.search(
+            following_activity_text
+        )
+        if disinterest_match and not any(
+            other_term in following_activity_text[: disinterest_match.start()]
+            for other_term in _TAPPLE_SHARED_ACTIVITY_TERMS
+            if other_term != activity_term
         ):
             return True
     return False
@@ -1321,6 +1331,14 @@ def _parse_tapple_strategy(
         )
 
     if proposed.action == "invite":
+        recent_activity_disinterest = any(
+            term in evidence
+            and _has_recent_self_disinterest_in_tapple_activity(
+                conversation_messages, last_contact_index, term
+            )
+            for evidence in exact_evidence
+            for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+        )
         has_current_invitation_readiness = any(
             evidence in last_contact
             and (
@@ -1346,7 +1364,7 @@ def _parse_tapple_strategy(
             )
             for evidence in exact_evidence
         )
-        if not has_current_invitation_readiness:
+        if recent_activity_disinterest or not has_current_invitation_readiness:
             return TappleStrategy(
                 action="wait",
                 rationale="会う提案につながる具体的な関心が確認できないため、今は誘わず会話を続けるか反応を待ちます。返信の速さや曖昧な相づちは誘う根拠にしません。",

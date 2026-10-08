@@ -3470,6 +3470,9 @@ def test_denied_meeting_safety_concern_does_not_block_explicit_invite(statement)
         "不安ではないと言い切れないですが、ぜひ一緒に行きたいです。",
         "怖くないかもしれませんが、ぜひ一緒に行きたいです。",
         "不安じゃないとは思えませんが、ぜひ一緒に行きたいです。",
+        "初対面なので、警戒しなくても大丈夫とは思えません。ぜひ会いたいです。",
+        "初対面だから警戒しなくていいとは思わないです。ぜひ会いたいです。",
+        "初対面なので、警戒する必要はないとは言えません。ぜひ会いたいです。",
     ],
 )
 def test_qualified_denial_does_not_clear_safety_concern(statement):

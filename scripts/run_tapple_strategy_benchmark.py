@@ -21,26 +21,35 @@ from benchmark_config import build_gemini_benchmark_config  # noqa: E402
 SCENARIOS = (
     {
         "id": "explicit_interest",
-        "message": "そのカフェいいですね！ぜひ一緒に行きたいです。",
+        "messages": [
+            {"sender": "self", "content": "コーヒー好きなんですね。来週、気になっているカフェに一緒に行きませんか？"},
+            {"sender": "contact", "content": "ぜひ一緒に行きたいです！"},
+        ],
         "expected_action": "invite",
+        "allowed_actions": ["invite"],
     },
     {
         "id": "ambiguous_interest",
-        "message": "カフェいいですね！行ってみたいな。",
-        "forbidden_action": "invite",
+        "messages": [
+            {"sender": "self", "content": "コーヒー好きなんですね。駅前に気になるカフェができたみたいです。"},
+            {"sender": "contact", "content": "カフェいいですね！行ってみたいな。"},
+        ],
+        "allowed_actions": ["continue", "clarify", "wait"],
     },
     {
         "id": "decline",
-        "message": "ごめんなさい、今は会うのは難しいです。",
+        "messages": [
+            {"sender": "self", "content": "よかったら今度、駅前のカフェに行きませんか？"},
+            {"sender": "contact", "content": "ごめんなさい、今は会うのは難しいです。"},
+        ],
         "expected_action": "stop",
+        "allowed_actions": ["stop"],
     },
 )
 
 
 def expectation_met(scenario: dict, action: str | None) -> bool:
-    if scenario.get("expected_action"):
-        return action == scenario["expected_action"]
-    return bool(action) and action != scenario.get("forbidden_action")
+    return bool(action) and action in scenario.get("allowed_actions", [])
 
 
 def _write_artifact(path: Path, results: list[dict], *, complete: bool) -> None:
@@ -100,19 +109,20 @@ def main() -> int:
         for scenario in SCENARIOS:
             result: dict = {
                 "id": scenario["id"],
-                "message": scenario["message"],
+                "messages": scenario["messages"],
                 "expected_action": scenario.get("expected_action"),
-                "forbidden_action": scenario.get("forbidden_action"),
+                "allowed_actions": scenario["allowed_actions"],
             }
             try:
                 contact = client.post(
                     "/api/contacts", json={"name": "相手", "profile": ""}
                 ).json()
                 contact_id = contact["id"]
-                client.post(
-                    f"/api/contacts/{contact_id}/messages",
-                    json={"sender": "contact", "content": scenario["message"]},
-                )
+                for turn in scenario["messages"]:
+                    client.post(
+                        f"/api/contacts/{contact_id}/messages",
+                        json=turn,
+                    )
                 response = client.post(
                     "/api/generate",
                     json={

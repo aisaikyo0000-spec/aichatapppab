@@ -88,3 +88,20 @@ def test_benchmark_success_does_not_move_state_for_unknown_route():
 
     assert index is None
     assert config["quota_attempt_start_index"] == 0
+
+
+def test_known_primary_35_quota_can_start_benchmark_at_primary_31_then_secondary():
+    config = build_gemini_benchmark_config(
+        primary_key="primary-test-key",
+        secondary_key="secondary-test-key",
+        model="gemini-3.1-flash-lite",
+    )
+
+    assert [
+        (attempt["account"], attempt["model"])
+        for attempt in config["quota_attempts"]
+    ] == [
+        ("primary", "gemini-3.1-flash-lite"),
+        ("secondary", "gemini-3.5-flash-lite"),
+        ("secondary", "gemini-3.1-flash-lite"),
+    ]

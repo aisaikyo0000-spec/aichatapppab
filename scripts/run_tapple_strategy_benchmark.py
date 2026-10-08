@@ -13,9 +13,13 @@ sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from app import config, database  # noqa: E402
+from app.ai import factory  # noqa: E402
 from app.routers import generation  # noqa: E402
 from api_key_file import read_gemini_api_key  # noqa: E402
-from benchmark_config import build_gemini_benchmark_config  # noqa: E402
+from benchmark_config import (  # noqa: E402
+    build_gemini_benchmark_config,
+    record_gemini_benchmark_success,
+)
 from benchmark_response import benchmark_run_state, extract_api_error_code  # noqa: E402
 
 
@@ -303,6 +307,23 @@ def main() -> int:
         model=args.model,
     )
     generation.get_ai_config = lambda: ai_config
+    successful_attempts: list[tuple[str, str]] = []
+    real_get_provider = factory.get_provider
+
+    def tracking_get_provider(provider_name, api_key):
+        provider = real_get_provider(provider_name, api_key)
+        original_generate = provider.generate
+
+        def tracking_generate(**kwargs):
+            response = original_generate(**kwargs)
+            successful_attempts.append((api_key, kwargs["model"]))
+            return response
+
+        provider.generate = tracking_generate
+        return provider
+
+    factory.get_provider = tracking_get_provider
+    generation.factory.get_provider = tracking_get_provider
 
     temp_dir = Path(tempfile.mkdtemp(prefix="tapplebench_"))
     config.DB_PATH = temp_dir / "tapplebench.db"
@@ -318,6 +339,7 @@ def main() -> int:
     out_path = Path(args.out)
     with TestClient(app) as client:
         for scenario in SCENARIOS:
+            successful_before = len(successful_attempts)
             result: dict = {
                 "id": scenario["id"],
                 "messages": scenario["messages"],
@@ -347,6 +369,13 @@ def main() -> int:
                     result["error"] = f"HTTP {response.status_code}"
                     result["error_code"] = extract_api_error_code(response)
                 else:
+                    if len(successful_attempts) > successful_before:
+                        successful_key, successful_model = successful_attempts[-1]
+                        record_gemini_benchmark_success(
+                            ai_config,
+                            api_key=successful_key,
+                            model=successful_model,
+                        )
                     data = response.json()
                     result["replies"] = data.get("replies", [])
                     result["strategy"] = data.get("strategy")

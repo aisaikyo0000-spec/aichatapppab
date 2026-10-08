@@ -44,7 +44,10 @@ from compare_before_after import (  # noqa: E402
     summarize_issues,
 )
 from api_key_file import read_gemini_api_key  # noqa: E402
-from benchmark_config import build_gemini_benchmark_config  # noqa: E402
+from benchmark_config import (  # noqa: E402
+    build_gemini_benchmark_config,
+    record_gemini_benchmark_success,
+)
 from benchmark_response import benchmark_run_state, extract_api_error_code  # noqa: E402
 from app.ai.naturalness import evaluate_candidate_naturalness  # noqa: E402
 
@@ -96,6 +99,7 @@ def main() -> int:
     _real_get_provider = _factory.get_provider
     call_counter = {"n": 0}
     raw_capture = {"raws": []}
+    successful_attempts: list[tuple[str, str]] = []
 
     def _counting_get_provider(name, api_key):
         provider = _real_get_provider(name, api_key)
@@ -105,6 +109,7 @@ def main() -> int:
             call_counter["n"] += 1
             out = orig_generate(**kwargs)
             raw_capture["raws"].append(out)
+            successful_attempts.append((api_key, kwargs["model"]))
             return out
 
         provider.generate = _counting_generate
@@ -118,6 +123,7 @@ def main() -> int:
     for case in subset:
         entry: dict = {"id": case["id"], "contact": case["contact"]}
         calls_before = call_counter["n"]
+        successful_before = len(successful_attempts)
         try:
             # 直接生成との比較可能性のため表示名は「相手」に統一する
             # （プロンプトの「さん付け」指示により名前が文面に混入するため）
@@ -130,6 +136,13 @@ def main() -> int:
                 entry["error"] = f"HTTP {r.status_code}"
                 entry["error_code"] = extract_api_error_code(r)
             else:
+                if len(successful_attempts) > successful_before:
+                    successful_key, successful_model = successful_attempts[-1]
+                    record_gemini_benchmark_success(
+                        ai_config,
+                        api_key=successful_key,
+                        model=successful_model,
+                    )
                 data = r.json()
                 entry["candidates"] = data["replies"]
                 if data.get("question"):

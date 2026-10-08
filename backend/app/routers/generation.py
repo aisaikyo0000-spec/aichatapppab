@@ -3574,7 +3574,42 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
     )
     secondary_api_key = (cfg.get("secondary_api_key") or "").strip()
     quota_attempts: list[tuple[Any, dict[str, Any], str]] = []
+    configured_attempts = cfg.get("quota_attempts")
+    attempt_start_index = cfg.get("quota_attempt_start_index", 0)
     if (
+        isinstance(configured_attempts, list)
+        and configured_attempts
+        and isinstance(attempt_start_index, int)
+        and 0 <= attempt_start_index < len(configured_attempts)
+        and all(
+            isinstance(attempt, dict)
+            and attempt.get("provider") == "gemini"
+            and isinstance(attempt.get("model"), str)
+            and isinstance(attempt.get("api_key"), str)
+            and attempt.get("api_key")
+            and isinstance(attempt.get("account"), str)
+            for attempt in configured_attempts
+        )
+    ):
+        provider_by_key = {(cfg["provider"], cfg["api_key"]): provider}
+        for attempt in configured_attempts:
+            key = attempt["api_key"]
+            provider_key = (attempt["provider"], key)
+            attempt_provider = provider_by_key.get(provider_key)
+            if attempt_provider is None:
+                attempt_provider = factory.get_provider(*provider_key)
+                provider_by_key[provider_key] = attempt_provider
+            attempt_cfg = dict(
+                cfg,
+                provider=attempt["provider"],
+                model=attempt["model"],
+                api_key=key,
+            )
+            quota_attempts.append(
+                (attempt_provider, attempt_cfg, attempt["account"])
+            )
+        active_provider, active_cfg, _account = quota_attempts[attempt_start_index]
+    elif (
         is_quota_model_pair
         and secondary_api_key
         and secondary_api_key != (cfg.get("api_key") or "").strip()

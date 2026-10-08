@@ -15,7 +15,10 @@ from app.ai import factory
 from app.learning import style
 from app.routers import generation
 from api_key_file import read_gemini_api_key
-from benchmark_config import build_gemini_benchmark_config
+from benchmark_config import (
+    build_gemini_benchmark_config,
+    record_gemini_benchmark_success,
+)
 from benchmark_response import benchmark_run_state, extract_api_error_code
 
 
@@ -57,6 +60,23 @@ def seed_and_generate(client, key, model, delay_seconds, probe, secondary_key=""
         primary_key=key, secondary_key=secondary_key, model=model
     )
     generation.get_ai_config = lambda: ai_config
+    successful_attempts = []
+    real_get_provider = factory.get_provider
+
+    def tracking_get_provider(provider_name, api_key):
+        provider = real_get_provider(provider_name, api_key)
+        original_generate = provider.generate
+
+        def tracking_generate(**kwargs):
+            response = original_generate(**kwargs)
+            successful_attempts.append((api_key, kwargs["model"]))
+            return response
+
+        provider.generate = tracking_generate
+        return provider
+
+    factory.get_provider = tracking_get_provider
+    generation.factory.get_provider = tracking_get_provider
     contact_ids = {}
     for name, pairs in CONTACTS.items():
         cid = client.post("/api/contacts", json={"name": f"{name}さん", "profile": ""}).json()["id"]
@@ -69,6 +89,7 @@ def seed_and_generate(client, key, model, delay_seconds, probe, secondary_key=""
     for name in CONTACTS:
         cid = contact_ids[name]
         client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": probe})
+        successful_before = len(successful_attempts)
         r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
         if r.status_code != 200:
             out[name] = {
@@ -77,6 +98,13 @@ def seed_and_generate(client, key, model, delay_seconds, probe, secondary_key=""
             }
             break
         else:
+            if len(successful_attempts) > successful_before:
+                successful_key, successful_model = successful_attempts[-1]
+                record_gemini_benchmark_success(
+                    ai_config,
+                    api_key=successful_key,
+                    model=successful_model,
+                )
             data = r.json()
             history_ids = data.get("history_ids", [])
             conn = database.get_conn()

@@ -92,6 +92,42 @@ def _candidate_metrics_are_valid(cases: list[dict[str, Any]]) -> bool:
     return True
 
 
+def _generation_provenance_is_valid(cases: list[dict[str, Any]]) -> bool:
+    """Require per-case evidence emitted by the live generation pipeline."""
+    for case in cases:
+        if not isinstance(case, dict):
+            return False
+
+        llm_calls = case.get("llm_calls")
+        if isinstance(llm_calls, bool) or not isinstance(llm_calls, int) or llm_calls < 1:
+            return False
+
+        route = case.get("successful_route")
+        if not isinstance(route, dict):
+            return False
+        account = route.get("account")
+        model = route.get("model")
+        if (
+            account not in {"primary", "secondary"}
+            or not isinstance(model, str)
+            or not model.strip()
+        ):
+            return False
+
+        models_used = case.get("models_used")
+        candidates = case.get("candidates")
+        if (
+            not isinstance(models_used, list)
+            or any(not isinstance(value, str) or not value.strip() for value in models_used)
+            or not isinstance(candidates, list)
+        ):
+            return False
+        if candidates and model not in models_used:
+            return False
+
+    return True
+
+
 def build_pipeline_manual_review_bundle(cases: list[dict[str, Any]]) -> dict[str, Any]:
     """Expose representative cases and every candidate with a review signal."""
     representative_cases = [
@@ -235,6 +271,8 @@ def verify_pipeline_artifact(
         failures.append("case_errors_present")
     if not _candidate_metrics_are_valid(cases):
         failures.append("case_metrics_invalid")
+    if not _generation_provenance_is_valid(cases):
+        failures.append("generation_provenance_invalid")
 
     issue_metrics, axis_metrics = _case_metrics(cases) if "case_metrics_invalid" not in failures else ({}, {})
     reported_issues = summary.get("issues")

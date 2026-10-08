@@ -255,6 +255,28 @@ def test_activity_interest_must_match_the_shared_activity_subject():
         assert result.action == "wait"
 
 
+def test_unlisted_shared_hobby_can_support_low_pressure_invite():
+    conversation = (
+        "相手: ボルダリングに興味があります\n"
+        "自分: 僕もボルダリングが好きです\n"
+        "相手: 最近はじめたところです。ボルダリングを体験してみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "二人の共通の趣味に相手が関心を示しています。",
+            "evidence": ["ボルダリングを体験してみたいです"],
+            "invite_example": "よかったら今度、ボルダリングを一緒に体験してみませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example is not None
+
+
 def test_full_latest_message_hedge_blocks_invite_even_when_evidence_omits_it():
     latest = "駅前のカフェに行ってみたいです。タイミングが合えばかな"
     conversation = (

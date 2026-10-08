@@ -1043,11 +1043,47 @@ def test_invite_gate_checks_full_message_when_evidence_quotes_only_interest():
     assert result.invite_example is None
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "ぜひ一緒に行きたいですが、身元が分からず不安です。",
+        "ぜひ一緒に行きたいですが、相手のことをよく知らなくて不安です。",
+    ],
+)
+def test_invite_gate_blocks_identity_and_familiarity_safety_concerns(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": [statement],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
 def test_unrelated_weather_worry_does_not_block_accepted_date_scheduling():
     violations = validate_candidate_replies(
         ["日曜はどうですか？"],
         1,
         counterpart_message="明日の天気が心配ですが、ぜひ一緒に行きたいです。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_weather_worry_does_not_block_accepted_date_with_meeting_anticipation():
+    violations = validate_candidate_replies(
+        ["日曜はどうですか？"],
+        1,
+        counterpart_message="明日の天気が心配ですが、会えるのを楽しみにしています。",
         strategy_mode="tapple",
         tapple_action="continue",
     )

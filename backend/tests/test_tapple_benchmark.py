@@ -1,17 +1,42 @@
 import json
 
 from scripts.run_tapple_strategy_benchmark import (
+    SCENARIOS,
     _write_artifact,
     summarize_expectations,
 )
 
 
-def test_tapple_benchmark_passes_only_when_all_three_expectations_are_met():
-    results = [
-        {"id": "explicit_interest", "expectation_met": True},
-        {"id": "ambiguous_interest", "expectation_met": True},
-        {"id": "decline", "expectation_met": True},
-    ]
+def _valid_results():
+    results = []
+    for scenario in SCENARIOS:
+        last_contact = next(
+            message["content"]
+            for message in reversed(scenario["messages"])
+            if message["sender"] == "contact"
+        )
+        action = scenario["allowed_actions"][0]
+        results.append(
+            {
+                "id": scenario["id"],
+                "expectation_met": True,
+                "messages": scenario["messages"],
+                "replies": ["そうなんですね、いいですね！"],
+                "strategy": {
+                    "action": action,
+                    "rationale": "相手の発言に合わせた次の進め方です。",
+                    "evidence": [last_contact],
+                    "invite_example": (
+                        "駅前のカフェでお茶しませんか？" if action == "invite" else None
+                    ),
+                },
+            }
+        )
+    return results
+
+
+def test_tapple_benchmark_passes_only_when_all_scenarios_have_evidence_and_replies():
+    results = _valid_results()
 
     summary = summarize_expectations(results, complete=True)
 
@@ -22,55 +47,45 @@ def test_tapple_benchmark_passes_only_when_all_three_expectations_are_met():
 
 
 def test_tapple_benchmark_rejects_complete_run_with_wrong_strategy():
-    results = [
-        {"id": "explicit_interest", "expectation_met": True},
-        {"id": "ambiguous_interest", "expectation_met": False},
-        {"id": "decline", "expectation_met": True},
-    ]
+    results = _valid_results()
+    results[1]["strategy"]["action"] = "stop"
+    results[1]["expectation_met"] = True  # A stale status flag must not override raw evidence.
 
     summary = summarize_expectations(results, complete=True)
 
     assert summary["quality_pass"] is False
-    assert summary["expectations_met"] == 2
-    assert summary["expectation_failures"] == ["ambiguous_interest"]
+    assert summary["expectations_met"] == len(SCENARIOS) - 1
+    assert summary["expectation_failures"] == [results[1]["id"]]
     assert summary["exit_code"] == 3
 
 
 def test_tapple_benchmark_keeps_incomplete_run_distinct_from_quality_failure():
-    results = [
-        {"id": "explicit_interest", "expectation_met": True},
-    ]
+    results = _valid_results()[:1]
 
     summary = summarize_expectations(results, complete=False)
 
     assert summary["quality_pass"] is False
     assert summary["expectations_met"] == 1
-    assert summary["expectation_failures"] == ["ambiguous_interest", "decline"]
+    assert summary["expectation_failures"] == [scenario["id"] for scenario in SCENARIOS[1:]]
     assert summary["exit_code"] == 2
 
 
 def test_tapple_benchmark_marks_duplicate_and_missing_scenarios_incomplete():
-    results = [
-        {"id": "explicit_interest", "expectation_met": True},
-        {"id": "explicit_interest", "expectation_met": True},
-        {"id": "decline", "expectation_met": True},
-    ]
+    results = _valid_results()
+    results[1] = dict(results[0])
 
     summary = summarize_expectations(results, complete=True)
 
     assert summary["complete"] is False
     assert summary["quality_pass"] is False
-    assert summary["expectation_failures"] == ["ambiguous_interest"]
+    assert summary["expectation_failures"]
     assert summary["stopped_reason"] == "scenario_coverage_mismatch"
     assert summary["exit_code"] == 2
 
 
 def test_tapple_artifact_does_not_claim_completion_for_duplicate_scenario_ids(tmp_path):
-    results = [
-        {"id": "explicit_interest", "expectation_met": True},
-        {"id": "explicit_interest", "expectation_met": True},
-        {"id": "decline", "expectation_met": True},
-    ]
+    results = _valid_results()
+    results[1] = dict(results[0])
     artifact_path = tmp_path / "tapple.json"
 
     _write_artifact(artifact_path, results, complete=True)
@@ -83,11 +98,9 @@ def test_tapple_artifact_does_not_claim_completion_for_duplicate_scenario_ids(tm
 
 
 def test_tapple_expectation_summary_rejects_error_even_when_all_actions_match():
-    results = [
-        {"id": "explicit_interest", "expectation_met": True, "error": "HTTP 502", "error_code": "rate_limit"},
-        {"id": "ambiguous_interest", "expectation_met": True},
-        {"id": "decline", "expectation_met": True},
-    ]
+    results = _valid_results()
+    results[0]["error"] = "HTTP 502"
+    results[0]["error_code"] = "rate_limit"
 
     summary = summarize_expectations(results, complete=True)
 
@@ -98,11 +111,7 @@ def test_tapple_expectation_summary_rejects_error_even_when_all_actions_match():
 
 
 def test_interim_artifact_with_all_cases_has_incomplete_reason(tmp_path):
-    results = [
-        {"id": "explicit_interest", "expectation_met": True},
-        {"id": "ambiguous_interest", "expectation_met": True},
-        {"id": "decline", "expectation_met": True},
-    ]
+    results = _valid_results()
     artifact_path = tmp_path / "interim.json"
 
     _write_artifact(artifact_path, results, complete=False)
@@ -112,3 +121,47 @@ def test_interim_artifact_with_all_cases_has_incomplete_reason(tmp_path):
     assert summary["stopped_reason"] == "incomplete"
     assert summary["quality_pass"] is False
     assert summary["exit_code"] == 2
+
+
+def test_tapple_benchmark_rejects_a_reinvitation_after_decline_even_when_action_is_stop():
+    results = _valid_results()
+    declined = next(result for result in results if result["id"] == "decline")
+    declined["replies"] = ["わかった！でも来週カフェに行こうよ！"]
+    declined["expectation_met"] = True
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert declined["id"] in summary["expectation_failures"]
+
+
+def test_tapple_benchmark_recomputes_result_instead_of_trusting_boolean():
+    results = _valid_results()
+    results[0]["expectation_met"] = True
+    results[0]["strategy"]["action"] = "wait"
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert results[0]["id"] in summary["expectation_failures"]
+
+
+def test_accepted_invitation_scenario_expects_scheduling_not_another_invitation():
+    accepted = next(
+        scenario for scenario in SCENARIOS if scenario["id"] == "accepted_invitation"
+    )
+
+    assert accepted["allowed_actions"] == ["continue"]
+    assert accepted["no_reinvitation"] is True
+
+
+def test_tapple_benchmark_rejects_missing_reply_or_unverifiable_evidence():
+    results = _valid_results()
+    results[0]["replies"] = []
+    results[1]["strategy"]["evidence"] = ["記録にない発言"]
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert results[0]["id"] in summary["expectation_failures"]
+    assert results[1]["id"] in summary["expectation_failures"]

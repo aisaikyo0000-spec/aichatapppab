@@ -157,6 +157,8 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
         "そうなんだ。気が向いたらまた話そう",
         "うん、気にしないで",
         "うん、わかった。無理せず休んでね",
+        "そうなんだね。また話そうね",
+        "気にしないでね、また話せるときに話そう",
     ):
         result["replies"] = [natural_reply]
         assert expectation_met(scenario, result), natural_reply
@@ -177,6 +179,7 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
         "そっか。返信くれると嬉しいな",
         "了解です。落ち着いたら一言ちょうだい",
         "了解。また連絡くれると嬉しい",
+        "了解です。また話そうところで明日カレー食べるんだ",
         "今日は仕事が忙しかったです。また話そう。",
         "了解です。明日カレー食べよう。",
         "そうですね。株価は上がっています。",

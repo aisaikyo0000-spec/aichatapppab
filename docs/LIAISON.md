@@ -3,19 +3,21 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 Iteration 23のオフライン検証を記録
+最終更新: 2026-10-09 / Step 18-R4 オフライン受け入れ状況を更新
 
 ---
 
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（Tappleの最終コードcommitは`f2cc261`。Gemini別アカウント経路修正commit `38e6d4a`までforkとSHA一致を確認済み）
+- 作業ブランチ: `codex/chat-quality-20261008`（最新コードcommitは`622ab4d`。Geminiベンチの成功アカウント・モデル記録を追加）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。今回、Tappleの誘い時期を「会う同意」と分け、温かい相互会話と反応の薄い会話を区別する回帰を追加した。全backend **885 passed / 2 warnings**、frontend build、compileall、`git diff --check`はPASS。Python Reviewerと独立安全Reviewerも修正後の差分をPASSと判定。最新70ケース、Contact Bench、Tapple実生成と全文レビューは未実施
-- Geminiの利用経路は主3.5→主3.1→予備3.5→予備3.1。rate limitのときだけ次の経路へ進む。両キー設定が別の値で読み込まれることと、4経路のテストを確認した。実APIは呼び出していない
-- Iteration 23のオフライン変更はcommit `86c399f`としてfork作業ブランチへpush済み。GitHub側も`86c399f603fe46fa859fb601da467501a6bf75a9`で一致を確認した。これはWIPで、PR #1は未マージ。Step 18-R4の完了を意味しない
-- 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を朝の確認後に行う。完了条件がそろうまでStep 18-R4は合格としない
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。全backendは**889 passed / 2 warnings**、frontend build、Python compileall、3つのベンチCLI `--help`、`git diff --check`はPASS。戦略ペア回帰とアカウント記録の独立Python ReviewerもPASS
+- Geminiの利用経路は主3.5→主3.1→予備3.5→予備3.1。rate limit時だけ次の経路へ進む。今回、70ケース・Contact・Tappleの成果物に`successful_route: {account, model}`を記録し、APIキーを含めないことを回帰テストで確認した。実APIは呼び出していない
+- 最新のWIPコードcommitは`622ab4d`、テストcheckpointは`dab481e`。これらと進捗資料をforkへpushし、SHA一致を確認する。PR #1はOpenで未マージ、mainには未反映
+- 次の作業: 朝の利用者確認後に実API疎通を行い、70ケース、Contact Bench、Tapple全11シナリオの実生成と全文レビューをする。全条件が揃うまでStep 18-R4を合格としない
+
+今回のPair testでは、二つの実ベンチ会話に同じ`invite`提案を渡す。温かい相互会話では`invite`を維持し、反応が薄い履歴ではstrategy parserが`wait`へ調整することを確認する。従来のシナリオ設定だけを見るテストを補う。
 
 ## Step 18-R4 進捗（オフライン受け入れ準備）
 
@@ -374,7 +376,7 @@
 
 - API復旧後に使う`run_pipeline_benchmark.py`と`run_contact_benchmark.py`が予備キーを受け取っていなかったため、両スクリプトに任意の`--secondary-env-file`を追加した。主キーを使った3.5→3.1の後、両方が`rate_limit`なら予備キーの3.5→3.1へ進む設定をアプリ本体へ渡す
 - 設定組み立ての単体テストは**2 passed**。4つのCLIのhelp表示も確認済み。Tapple API実生成ベンチは3件の期待値テストと独立Python Reviewerが**PASS**。曖昧な反応では`continue`/`clarify`/`wait`だけを許容し、`invite`と`stop`を不合格にする。最新全backend suiteは**517 passed / 2 warnings**、frontend build・`git diff --check`・対象Python compileも**PASS**
-- 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Bench、Tapple 8シナリオを実行する。ケースごとの既定待機は6秒。artifactはローカルの一時領域へ保存する
+- 当時の実行手順ではTapple 8シナリオを使っていた。現行は11シナリオのため、朝は本書の現行PowerShell手順を使う。ケースごとの既定待機は6秒。artifactはローカルの一時領域へ保存する
 - 実装commitは`61ec2fe`（作業branchにローカル保存、未push）。API復旧と品質評価が終わるまでGitHubへのpushは保留する
 - アプリ本体でファイルを直接使う場合は、実行環境の`.env`に`GEMINI_API_KEY_FILE=<gemini2.md>`と`GEMINI_SECONDARY_API_KEY_FILE=<gemini3.md>`を設定する。DBに登録された主キーはファイルより優先する。キー値は`.env`や資料へコピーしない
 - 主3.5と主3.1がどちらも`rate_limit`のときだけ別アカウントへ切り替え、予備3.5→3.1の順で試すコード経路は回帰テスト済み。実APIキーでの疎通・切替は未確認で、API品質評価と合わせて実施する

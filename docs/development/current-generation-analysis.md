@@ -32,9 +32,9 @@ pipeline・Contact・Tappleの各ベンチが、同じrun専用`quota-route.json
 
 独立Reviewerは、日付のない「ぜひ会いましょう」と丁寧語の「お会いしましょう」「ぜひお会いしませんか」が保留中の相手に対する再勧誘として検出されない問題を指摘した。追加テストが修正前に失敗することを確認し、修正後はベンチの失敗理由が`reinvitation_not_allowed`になることも確認した。最新差分のfresh Reviewerは**PASS**。Tapple focused suiteは**337 passed**、backend全体は**844 passed / 2 warnings**、frontend production build・`compileall`・`git diff --check`はPASS。
 
-Geminiのprimary 3.5、primary 3.1、予備アカウント3.5、予備3.1への切替経路はmockテストで確認済み。実APIは呼んでいないため、実際のquota状態は未確認。70ケースの最新実行、Contact Bench 3/3、Tapple 8シナリオの実返信と目視レビューも未実施であり、Step 18-R4は未完成。テストRED commitsは`2074291`、`53aa7e7`、`5ba125d`、シナリオ追加は`777d05f`、コードは`cf0e0d0`、`c854f16`、`36a54d8`。最新コードcommitは`36a54d8`で、GitHub main基点`a75ba76`は変更していない。
+この記録時点のGeminiのprimary 3.5、primary 3.1、予備アカウント3.5、予備3.1への切替経路はmockテストで確認済みだった。実APIを呼んでおらず、当時のTappleベンチは8シナリオ。最新の実装・検証状況は本資料末尾を参照する。Step 18-R4は未完成。
 
-> 初回調査は2026-09-27に実施しました。最新の実装・検証状況は、この冒頭の「2026-10-09 受け入れ準備の追加レビュー」を参照してください。
+> 初回調査は2026-09-27に実施しました。過去の進捗記録は記録時点の状態です。現状は本資料末尾の最新ステータスを参照してください。
 
 ## 2026-10-08 返信品質・Geminiフォールバック更新
 
@@ -2062,3 +2062,13 @@ Tapple focused suite **299 passed**、backend全体 **828 passed / 2 warnings**�
 招待可否では、直近の相手発言全体から安全・信頼への懸念を確認する。参加意思の根拠抜粋だけを検査すると、同じ発言の別箇所にある「身元が分からない」「相手がどんな人か分からない」「まだ会ったことがなくて不安」「安全かどうか分からない」を見落とすためである。一方、天気への心配や、参加意思より前にある仕事の逆接表現を理由に招待を止めない。安全への不安を否定した表現は懸念として扱わず、参加意思の後に迷いが続くときは日程調整を保留する。
 
 この境界を検証する回帰テストを追加した。Iteration 6 Reviewerは「会いたいけど少し怖い／不安」という参加意思の後に続く安全懸念を見逃す点を指摘したため、招待可否と日程調整の両方を修正した。次のReviewerは、代替日提案と安全懸念が同時にある場合、別のcounterproposal経路から日程調整が許可される問題を指摘した。`has_counterproposal`にも安全懸念と対面への迷いの確認を加えた。曖昧な否定を安全確認済みと誤認する問題、日程選び・仕事の悩み・会う前の準備を会う意思への迷いと誤認する問題も修正した。独立Python reviewで文頭に「正直／私は」が付く迷いの見逃しと、「不安を感じていません」という否定の誤検出が見つかった。これらのテストを追加し、判定を修正した。「会う日の候補はいいけど少し迷う」を日程選びとして扱うテストと判定も追加した。Tapple strategy suiteは**223 passed**、APIキー切替と疎通のmock suiteは**26 passed**。backend全体suiteは最新差分で再実行中。frontend production build、対象Python compile、`git diff --check`はPASS。Iteration 21の独立ReviewerとPython Reviewerが確認中。Gemini APIは未使用で、Step 18-R4の最新70ケース、Contact Bench、Tapple実生成文の目視確認も未完了。
+
+## 2026-10-09 現在のオフライン受け入れ状況
+
+監査で、ベンチの成功結果に使用アカウントが残らず、主・予備のどちらのキーで生成したかをartifactから追えない点を確認した。共通metadata解決関数を追加し、70ケース・Contact・Tappleそれぞれの成功結果へ`successful_route`として`account`と`model`だけを出す。APIキーとfingerprintは成果物に含めない。quota時の経路順序とroute-state保存・再開条件は変更していない。
+
+Tappleの相互活動関心ベンチ2ケースを、実際のstrategy parserへ通す回帰も追加した。同じ`invite`候補を与え、温かい複数ターン会話では`invite`を維持し、反応が短い履歴では`wait`に変わることを確認する。
+
+`python -m pytest backend/tests -q`は**889 passed / 2 warnings**。frontend production build、Python `compileall`、pipeline・Contact・Tappleの`--help`、`git diff --check`はPASS。新しい独立Python Reviewerは戦略ペアテストとベンチ経路metadataをそれぞれPASSと判定した。REDテストcommitは`dab481e`、実装GREEN commitは`622ab4d`。GitHub main基点は`a75ba76`、PR #1はOpen・未マージ。APIは呼び出していない。
+
+API依存の完了条件は未達。朝の利用者確認後に単発疎通を行い、実際の成功routeを確認する。その後、正規70ケースと全指標検証、Contact Benchの全9返信・3/3目視判定、Tapple全11シナリオと生成文レビューを行う。rate limit以外のエラーは即時停止し、部分結果は成功扱いしない。実生成の全評価が未実施のためStep 18-R4は未完成。

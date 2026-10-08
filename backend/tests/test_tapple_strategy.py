@@ -323,6 +323,28 @@ def test_recent_disinterest_blocks_invite_for_unlisted_shared_hobby():
     assert result.invite_example is None
 
 
+def test_later_disinterest_in_same_message_overrides_earlier_activity_interest():
+    conversation = (
+        "相手: カフェ巡りが好きです\n"
+        "自分: 僕もカフェが好きです。カフェは苦手でした\n"
+        "相手: 今度一緒にカフェに行きたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の趣味なので誘います。",
+            "evidence": ["今度一緒にカフェに行きたいです"],
+            "invite_example": "よかったら今度、駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
 def test_unrelated_later_self_message_does_not_clear_activity_disinterest():
     conversation = (
         "相手: ボルダリングに興味があります\n"

@@ -657,7 +657,14 @@ def _has_recent_self_disinterest_in_tapple_activity(
                         + term_match.end()
                         + disinterest_match.end()
                     )
-                    events.append((term_match.start(), True))
+                    events.append(
+                        (
+                            clause_match.start()
+                            + term_match.end()
+                            + disinterest_match.start(),
+                            True,
+                        )
+                    )
                     later_text = self_text[disinterest_end:]
                     renewal_match = renewed_interest_re.search(later_text)
                     if renewal_match:
@@ -683,7 +690,12 @@ def _has_recent_self_disinterest_in_tapple_activity(
                 ) or _TAPPLE_ACTIVITY_INTEREST_RE.search(following_text)
                 if positive_match:
                     events.append(
-                        (term_match.end() + positive_match.start(), False)
+                        (
+                            clause_match.start()
+                            + term_match.end()
+                            + positive_match.start(),
+                            False,
+                        )
                     )
 
         for _position, disinterest_event in sorted(events):

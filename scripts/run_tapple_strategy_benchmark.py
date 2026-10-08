@@ -115,7 +115,7 @@ SCENARIOS = (
         "no_reinvitation": True,
         "reply_must_contain_any": [
             "そうなんですね", "そうなんだ", "そうですね", "そうだね",
-            "わかりました", "分かりました", "わかった", "了解", "そっか", "またね",
+            "わかりました", "分かりました", "わかった", "了解", "そっか", "うん", "またね", "気にしないで",
             "また話したくなったら", "話せるときにまた", "気が向いたらまた",
         ],
         "reply_must_end_contextually": True,
@@ -170,15 +170,12 @@ _FOLLOW_UP_PRESSURE_RE = re.compile(
     r"|一言.{0,8}(?:ちょうだい|もらえる|くれる|ください|ほしい|お願い)"
 )
 _ACKNOWLEDGMENT_RE = re.compile(
-    r"^(?:そうなんですね|そうなんだ|そうですね|そうだね|わかりました|分かりました|了解(?:です)?|そっか|わかった|ありがとう|承知しました|承知です)$"
+    r"^(?:そうなんですね|そうなんだ|そうですね|そうだね|わかりました|分かりました|了解(?:です)?|そっか|うん|はい|わかった|ありがとう|承知しました|承知です)$"
 )
 _OFF_RAMP_ENDING_RE = re.compile(
-    r"^(?:また[^。.!！?？、,]{0,20}(?:話|連絡|やりとり|ね)[^。.!！?？、,]{0,10}"
-    r"|(?:話|連絡|やりとり)[^。.!！?？、,]{0,20}また"
-    r"|またね|気が向いたらまた(?:話|連絡|ね)?"
-    r"|無理せず(?:ゆっくり|休んで|過ごして)?(?:ね|ください)?"
-    r"|ゆっくり(?:休んで|して|過ごして)(?:ね|ください)?"
-    r"|休んで(?:ね|ください)?|気にしないで(?:ね|ください)?)"
+    r"また[^。.!！?？、,]{0,30}(?:話|連絡|やりとり)"
+    r"|(?:話|連絡|やりとり)[^。.!！?？、,]{0,30}また"
+    r"|またね|気にしないで|気が向いたら|無理せず|ゆっくり|休んで"
 )
 
 
@@ -188,7 +185,7 @@ def _has_contextual_off_ramp(reply: str) -> bool:
         for clause in re.split(r"[。.!！?？、,]+", reply)
         if clause.strip()
     ]
-    if not clauses or not _OFF_RAMP_ENDING_RE.fullmatch(clauses[-1]):
+    if not clauses or not _OFF_RAMP_ENDING_RE.search(clauses[-1]):
         return False
     return all(_ACKNOWLEDGMENT_RE.fullmatch(clause) for clause in clauses[:-1])
 

@@ -2,6 +2,8 @@
 
 import json
 import re
+import sys
+from pathlib import Path
 import pytest
 
 from app.ai import prompt
@@ -13,6 +15,10 @@ from app.routers.generation import (
     validate_candidate_replies,
 )
 from app.schemas import GenerateRequest
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
+import run_tapple_strategy_benchmark
 
 
 def _raw_strategy(strategy, replies=None):
@@ -64,6 +70,19 @@ def test_tapple_prompt_requests_evidence_grounded_separate_strategy():
     assert "返信候補ではありません" in messages[1]["content"]
     assert "安全面への不安" in messages[1]["content"]
     assert "相手を信頼できるか分からない" in messages[1]["content"]
+
+
+def test_tapple_prompt_uses_declining_engagement_as_a_cue_without_using_reply_speed():
+    messages = prompt.build_initial_generation_messages(
+        system_prompt="system",
+        chat_history_text="相手: うん",
+        candidates=3,
+        strategy_mode="tapple",
+    )
+
+    assert "直近の相手発言が続けて短い相づち" in messages[1]["content"]
+    assert "返信速度だけで" in messages[1]["content"]
+    assert "追撃や説得" in messages[1]["content"]
 
 
 def test_tapple_single_candidate_extracts_reply_from_strategy_json():
@@ -161,6 +180,31 @@ def test_strategy_accepts_exact_conversation_evidence_and_explicit_interest():
     assert result is not None
     assert result.action == "invite"
     assert result.evidence == ["今度一緒に行きたいです"]
+    assert "AIは相手の信頼性を判断できません" in result.rationale
+
+
+def test_tapple_benchmark_requires_wait_after_engagement_declines():
+    scenario = next(
+        scenario
+        for scenario in run_tapple_strategy_benchmark.SCENARIOS
+        if scenario["id"] == "declining_engagement"
+    )
+    latest_contact = next(
+        message["content"]
+        for message in reversed(scenario["messages"])
+        if message["sender"] == "contact"
+    )
+    result = {
+        "strategy": {
+            "action": "wait",
+            "rationale": "直近は短い返答が続いています。今は追わずに待ちます。",
+            "evidence": [latest_contact],
+            "invite_example": None,
+        },
+        "replies": ["わかりました。無理せず、また話せるときに話しましょう。"],
+    }
+
+    assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
 
 
 @pytest.mark.parametrize(

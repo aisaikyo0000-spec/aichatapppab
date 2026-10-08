@@ -1045,6 +1045,29 @@ def test_explicit_interest_with_safety_concern_does_not_authorize_invite():
     assert result.invite_example is None
 
 
+def test_work_or_company_context_does_not_hide_date_safety_concern():
+    for concern in (
+        "仕事帰りに会うのは安全面で不安です。",
+        "仕事の後に会うのは安全面が心配です。",
+        "会社の近くで会うのは安全か分からなくて不安です。",
+    ):
+        statement = f"ぜひ一緒に行きたいですが、{concern}"
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたい"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
+
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+        assert result is not None, statement
+        assert result.action == "wait", statement
+        assert result.invite_example is None, statement
+
+
 def test_invite_gate_checks_full_message_when_evidence_quotes_only_interest():
     statement = "ぜひ一緒に行きたいですが、あなたを信用できるか分からないです。"
     raw = _raw_strategy(
@@ -1522,6 +1545,24 @@ def test_work_anxiety_does_not_block_accepted_date_scheduling():
         )
 
         assert not any("誘い" in violation for violation in violations), counterpart_message
+
+
+def test_work_or_company_context_does_not_allow_unsafe_date_scheduling():
+    for concern in (
+        "仕事帰りに会うのは安全面で不安です。",
+        "仕事の後に会うのは安全面が心配です。",
+        "会社の近くで会うのは安全か分からなくて不安です。",
+    ):
+        counterpart_message = f"ぜひ一緒に行きたいですが、{concern}"
+        violations = validate_candidate_replies(
+            ["日曜はどうですか？"],
+            1,
+            counterpart_message=counterpart_message,
+            strategy_mode="tapple",
+            tapple_action="continue",
+        )
+
+        assert any("誘い" in violation for violation in violations), counterpart_message
 
 
 @pytest.mark.parametrize(

@@ -1123,6 +1123,26 @@ def test_tapple_benchmark_covers_recent_disinterest_in_the_proposed_activity():
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
 
 
+def test_tapple_benchmark_covers_an_unlisted_shared_hobby():
+    scenario = next(
+        scenario
+        for scenario in run_tapple_strategy_benchmark.SCENARIOS
+        if scenario["id"] == "unlisted_shared_hobby"
+    )
+
+    assert scenario["expected_action"] == "invite"
+    result = {
+        "strategy": {
+            "action": "invite",
+            "rationale": "二人の共通の趣味に相手が関心を示しています。",
+            "evidence": ["ボルダリングを体験してみたいです"],
+            "invite_example": "よかったら今度、近くのボルダリングジムで体験してみませんか？",
+        },
+        "replies": ["ボルダリング楽しそうですね。ぜひやってみたいです。"],
+    }
+    assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
+
+
 def test_tapple_benchmark_does_not_use_another_interest_to_clear_disinterest():
     scenario = next(
         scenario

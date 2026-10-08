@@ -2124,6 +2124,8 @@ def test_formal_meeting_refusals_block_invite(decline):
         "「会うのは無理」と言われましたが、私はぜひ会いたいです。",
         "「会うのは無理」と友達に言われましたが、私はぜひ会いたいです。",
         "「会うのは無理」と友達から言われましたが、私はぜひ会いたいです。",
+        "『会うのは無理』と元彼に言われましたが、私はぜひ会いたいです。",
+        "『会うのは無理』と別の人に言われましたが、私はぜひ会いたいです。",
     ],
 )
 def test_formal_refusal_match_preserves_negation_counterproposal_and_attribution(statement):

@@ -2,6 +2,7 @@ from pathlib import Path
 import argparse
 import json
 import sys
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -135,7 +136,18 @@ def test_benchmark_success_does_not_move_state_for_unknown_route():
     assert config["quota_attempt_start_index"] == 0
 
 
-def test_successful_route_metadata_identifies_account_without_exposing_key():
+@pytest.mark.parametrize(
+    "api_key, model, expected_account",
+    [
+        ("primary-test-secret", "gemini-3.5-flash-lite", "primary"),
+        ("primary-test-secret", "gemini-3.1-flash-lite", "primary"),
+        ("secondary-test-secret", "gemini-3.5-flash-lite", "secondary"),
+        ("secondary-test-secret", "gemini-3.1-flash-lite", "secondary"),
+    ],
+)
+def test_successful_route_metadata_identifies_account_without_exposing_key(
+    api_key, model, expected_account
+):
     config = build_gemini_benchmark_config(
         primary_key="primary-test-secret",
         secondary_key="secondary-test-secret",
@@ -144,13 +156,13 @@ def test_successful_route_metadata_identifies_account_without_exposing_key():
 
     route = benchmark_config.successful_gemini_benchmark_route(
         config,
-        api_key="secondary-test-secret",
-        model="gemini-3.1-flash-lite",
+        api_key=api_key,
+        model=model,
     )
 
     assert route == {
-        "account": "secondary",
-        "model": "gemini-3.1-flash-lite",
+        "account": expected_account,
+        "model": model,
     }
     route_json = json.dumps(route)
     assert "secondary-test-secret" not in route_json

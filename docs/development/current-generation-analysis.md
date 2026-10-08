@@ -1985,7 +1985,7 @@ API疎通・70ケース・Contact Benchは依然未実施。API回復後はま�
 
 Gemini復旧後にタップル戦略を確認するため、独立スクリプト`run_tapple_strategy_benchmark.py`を追加した。アプリ本体と同じ生成・検証処理を通し、明確な参加意思、曖昧な反応、明示的な断りを各1件試す。結果から返信、戦略、使用モデル、期待した行動との一致を記録する。実データや本番DBには触れず、一時DBを使う。鍵は出力しない。
 
-期待値チェックの単体テスト2件、`--help`、独立Python Reviewerは**PASS**。最新backend全体は**511 passed / 2 warnings**、frontend buildも**PASS**。APIはまだ呼び出していない。API再開時は疎通を1回だけ実施し、70ケース、Contact Bench、Tapple 8シナリオの順に回す。各artifactはローカル一時領域へ保存し、失敗ケースも残してReviewerへ渡す。
+当時の期待値チェックの単体テスト2件、`--help`、独立Python Reviewerは**PASS**。backend suiteは**511 passed / 2 warnings**、frontend buildも**PASS**。APIは呼び出していない。当時はTapple 8シナリオだったが、現在は11件に増えている。朝の実行ではLIAISON記載の現行手順を使い、70ケース、Contact Bench、Tapple全11シナリオを行う。各artifactはローカル一時領域へ保存し、失敗ケースも残してReviewerへ渡す。
 
 なお、主キー側で3.5と3.1の両方がレート制限になったときだけ予備アカウントへ移り、予備側でも3.5→3.1を試す。主アカウントの3.1が成功した場合はアカウントを切り替えない。この分岐は回帰テストで確認済み。
 
@@ -2072,3 +2072,7 @@ Tappleの相互活動関心ベンチ2ケースを、実際のstrategy parserへ�
 `python -m pytest backend/tests -q`は**889 passed / 2 warnings**。frontend production build、Python `compileall`、pipeline・Contact・Tappleの`--help`、`git diff --check`はPASS。新しい独立Python Reviewerは戦略ペアテストとベンチ経路metadataをそれぞれPASSと判定した。REDテストcommitは`dab481e`、実装GREEN commitは`622ab4d`。GitHub main基点は`a75ba76`、PR #1はOpen・未マージ。APIは呼び出していない。
 
 API依存の完了条件は未達。朝の利用者確認後に単発疎通を行い、実際の成功routeを確認する。その後、正規70ケースと全指標検証、Contact Benchの全9返信・3/3目視判定、Tapple全11シナリオと生成文レビューを行う。rate limit以外のエラーは即時停止し、部分結果は成功扱いしない。実生成の全評価が未実施のためStep 18-R4は未完成。
+
+### 2026-10-09 オフライン経路記録テストの拡張
+
+成功routeの記録テストを4通りに拡張し、主・予備アカウントそれぞれの3.5・3.1経路で`account`と`model`が正しく記録されること、APIキーが結果へ含まれないことを確認した。`python -m pytest backend/tests -q`は**892 passed / 2 warnings**。独立Python Reviewerはテストと、Tapple旧8件の記録を現行11件へ案内する資料修正を**PASS**と判定した。frontend build、compileall、`git diff --check`もPASS。Gemini APIは呼び出していない。70ケース、Contact Bench、Tapple全11シナリオの実生成と目視確認が残るため、Step 18-R4は未完成。

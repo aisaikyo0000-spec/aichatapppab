@@ -3,7 +3,7 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 オフライン受け入れ状況を更新
+最終更新: 2026-10-09 / Step 18-R4 892件のbackend suiteを確認
 
 ---
 
@@ -12,10 +12,10 @@
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
 - 作業ブランチ: `codex/chat-quality-20261008`（最新コードcommitは`622ab4d`。Geminiベンチの成功アカウント・モデル記録を追加）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。全backendは**889 passed / 2 warnings**、frontend build、Python compileall、3つのベンチCLI `--help`、`git diff --check`はPASS。戦略ペア回帰とアカウント記録の独立Python ReviewerもPASS
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。全backendは**892 passed / 2 warnings**。frontend build、Python compileall、3つのベンチCLI `--help`、`git diff --check`もPASS。戦略ペア回帰とアカウント記録の独立Python ReviewerはPASS。成功経路テストは主・予備アカウントと3.5・3.1の4通りを確認する
 - Geminiの利用経路は主3.5→主3.1→予備3.5→予備3.1。rate limit時だけ次の経路へ進む。今回、70ケース・Contact・Tappleの成果物に`successful_route: {account, model}`を記録し、APIキーを含めないことを回帰テストで確認した。実APIは呼び出していない
 - 最新のWIPコードcommitは`622ab4d`、テストcheckpointは`dab481e`。コードと進捗資料をforkへpushし、push後のSHA一致を確認した。PR #1はOpenで未マージ、mainには未反映
-- 次の作業: 朝の利用者確認後に実API疎通を行い、70ケース、Contact Bench、Tapple全11シナリオの実生成と全文レビューをする。全条件が揃うまでStep 18-R4を合格としない
+- 次の作業: 利用者の確認後に実API疎通を行い、70ケース、Contact Bench、Tapple全11シナリオの実生成と全文レビューをする。全条件が揃うまでStep 18-R4を合格としない
 
 今回のPair testでは、二つの実ベンチ会話に同じ`invite`提案を渡す。温かい相互会話では`invite`を維持し、反応が薄い履歴ではstrategy parserが`wait`へ調整することを確認する。従来のシナリオ設定だけを見るテストを補う。
 

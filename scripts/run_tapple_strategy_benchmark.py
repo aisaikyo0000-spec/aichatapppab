@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 import time
@@ -113,9 +114,13 @@ SCENARIOS = (
         "allowed_actions": ["wait"],
         "no_reinvitation": True,
         "reply_must_contain_any": [
-            "そうなんですね", "そうなんだ", "わかりました", "分かりました", "了解",
-            "無理せず", "また話したく", "また話せる", "気が向いたら",
+            "そうなんですね", "そうなんだ", "そうですね", "そうだね",
+            "わかりました", "分かりました", "了解", "そっか",
+            "また話したくなったら", "話せるときにまた", "気が向いたらまた",
         ],
+        "no_follow_up_questions": True,
+        "no_follow_up_pressure": True,
+        "max_reply_sentences": 2,
     },
     {
         "id": "counterproposal",
@@ -142,6 +147,19 @@ SCENARIOS = (
         "no_reinvitation": True,
         "reply_must_contain_any": ["わかりました", "ありがとう", "大丈夫", "無理しない", "承知", "気にしない"],
     },
+)
+
+_FOLLOW_UP_QUESTION_RE = re.compile(
+    r"[?？]|(?:ですか|ますか|でしょうか|かな|か)(?:[。.!！\s]|$)"
+    r"|(?:何|なに|どこ|だれ|誰|いつ|なぜ|なんで|どう|どんな)"
+    r"[^。！？!?]{0,12}(?:の|か|かな|思う|する|した|してる|してた|だった|いる|行く|いく)"
+    r"(?:[。.!！?？\s]|$)"
+)
+_FOLLOW_UP_PRESSURE_RE = re.compile(
+    r"(?:何か|なにか).{0,8}(?:あった|ある).{0,8}(?:教えて|聞かせて|話して)"
+    r"|(?:教えて|聞かせて|話して)(?:ください|ほしい|よ|ね)"
+    r"|(?:もっと|もう少し)(?:話|やりとり|返事|返信)"
+    r"|(?:返事|返信)(?:して|ください|ちょうだい)"
 )
 
 
@@ -189,6 +207,17 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
         failures.append("missing_or_invalid_reply")
         replies = []
     for reply in replies:
+        if scenario.get("no_follow_up_questions") and _FOLLOW_UP_QUESTION_RE.search(reply):
+            failures.append("follow_up_question_not_allowed")
+        if scenario.get("no_follow_up_pressure") and _FOLLOW_UP_PRESSURE_RE.search(reply):
+            failures.append("follow_up_pressure_not_allowed")
+        max_sentences = scenario.get("max_reply_sentences")
+        if max_sentences is not None:
+            sentence_count = sum(
+                1 for sentence in re.split(r"[。.!！?？]+", reply) if sentence.strip()
+            )
+            if sentence_count > max_sentences:
+                failures.append("reply_too_many_sentences")
         if generation._is_tapple_contact_exchange_request(reply):
             failures.append("external_contact_request")
         if scenario.get("no_reinvitation") and generation._TAPPLE_REINVITATION_RE.search(reply):

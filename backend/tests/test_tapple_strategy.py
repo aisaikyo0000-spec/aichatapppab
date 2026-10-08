@@ -201,7 +201,7 @@ def test_tapple_benchmark_requires_wait_after_engagement_declines():
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["わかりました。無理せず、また話せるときに話しましょう。"],
+        "replies": ["わかりました。また話せるときに話そう。"],
     }
 
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []

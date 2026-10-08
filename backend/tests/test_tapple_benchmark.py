@@ -161,10 +161,11 @@ def test_tapple_benchmark_rejects_a_reinvitation_after_decline_even_when_action_
 
 
 @pytest.mark.parametrize("scenario_id", ["meeting_hesitation", "meeting_safety_concern"])
-def test_tapple_benchmark_rejects_direct_reinvite_and_generic_reply_for_concern(scenario_id):
+@pytest.mark.parametrize("reinvite", ["ぜひ来週会いましょう。", "ぜひ会いましょう。", "会いましょう。"])
+def test_tapple_benchmark_rejects_direct_reinvite_and_generic_reply_for_concern(scenario_id, reinvite):
     results = _valid_results()
     scenario = next(result for result in results if result["id"] == scenario_id)
-    scenario["replies"] = ["ぜひ来週会いましょう。"]
+    scenario["replies"] = [reinvite]
     scenario["expectation_met"] = True
 
     summary = summarize_expectations(results, complete=True)

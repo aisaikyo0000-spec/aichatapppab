@@ -466,6 +466,22 @@ def test_scheduling_is_not_allowed_for_hearsay_or_hedged_interest(counterpart_me
     assert any("誘い" in violation for violation in violations)
 
 
+def test_scheduling_is_not_allowed_when_negated_safety_is_uncertain():
+    for counterpart_message in (
+        "怖くないかもしれませんが、土曜は無理だけど日曜なら大丈夫です。",
+        "不安じゃないとは思えませんが、土曜は無理だけど日曜なら大丈夫です。",
+    ):
+        violations = validate_candidate_replies(
+            ["日曜はどうですか？"],
+            1,
+            counterpart_message=counterpart_message,
+            strategy_mode="tapple",
+            tapple_action="continue",
+        )
+
+        assert any("誘い" in violation for violation in violations), counterpart_message
+
+
 def test_first_person_counterproposal_is_not_blocked_by_unrelated_friend_availability():
     violations = validate_candidate_replies(
         ["日曜ならどうですか？"],
@@ -1101,6 +1117,24 @@ def test_explicit_hesitation_before_positive_interest_blocks_invite():
     assert result.invite_example is None
 
 
+def test_thinking_about_meeting_logistics_is_not_hesitation():
+    statement = "来週会う日程を考えています。ぜひ一緒に行きたいです。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["ぜひ一緒に行きたいです"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example is not None
+
+
 @pytest.mark.parametrize(
     "statement",
     [
@@ -1293,6 +1327,8 @@ def test_denied_meeting_safety_concern_does_not_block_explicit_invite(statement)
         "不安ではないとは言えないですが、ぜひ一緒に行きたいです。",
         "会うのが怖くないとは言い切れませんが、ぜひ一緒に行きたいです。",
         "不安ではないと言い切れないですが、ぜひ一緒に行きたいです。",
+        "怖くないかもしれませんが、ぜひ一緒に行きたいです。",
+        "不安じゃないとは思えませんが、ぜひ一緒に行きたいです。",
     ],
 )
 def test_qualified_denial_does_not_clear_safety_concern(statement):

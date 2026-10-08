@@ -2103,6 +2103,7 @@ def test_formal_meeting_refusals_block_invite(decline):
         "お会いするのは難しいと感じません。ぜひ会いたいです。",
         "お会いするのは難しいことはありません。ぜひ会いたいです。",
         "お会いするのは無理ではありません。ぜひ会いたいです。",
+        "会うのは無理じゃないです。ぜひ会いたいです。",
         "ご一緒するのは無理ではありません。ぜひ会いたいです。",
         "会うのは無理ではありません。ぜひ会いたいです。",
         "お会いできませんとは思えません。ぜひ会いたいです。",
@@ -2121,6 +2122,7 @@ def test_formal_meeting_refusals_block_invite(decline):
         "友人から、会うつもりはないと聞きましたが、私はぜひ会いたいです。",
         "「会うのは無理」と言われましたが、私はぜひ会いたいです。",
         "「会うのは無理」と友達に言われましたが、私はぜひ会いたいです。",
+        "「会うのは無理」と友達から言われましたが、私はぜひ会いたいです。",
     ],
 )
 def test_formal_refusal_match_preserves_negation_counterproposal_and_attribution(statement):

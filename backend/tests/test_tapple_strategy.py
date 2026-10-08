@@ -2064,6 +2064,10 @@ def test_soft_but_clear_decline_forces_stop():
         "お会いすることをお断りしたいです。",
         "今回はお断りいたします。",
         "今回のお誘いについてはお断りさせていただきます。",
+        "今回はお断り。",
+        "今回はお断りです。",
+        "お誘いについてはお断り。",
+        "今回はお誘いについてはお断り。",
         "会うのはご遠慮いただきたいです。",
         "一度会ってみたいと思っていましたが、やっぱりお会いするのはやめておきます。",
     ],
@@ -2105,6 +2109,7 @@ def test_formal_meeting_refusals_block_invite(decline):
         "お会いするのは難しいとは思っていません。ぜひ一緒に行きたいです。",
         "お会いするのは難しいことではありません。ぜひ一緒に行きたいです。",
         "お会いしたくありませんとは思っていません。ぜひ会いたいです。",
+        "お断りなく進めてください。ぜひ会いましょう。",
         "お会いするのは難しいとは思えません。ぜひ会いたいです。",
         "お会いできませんとは言い切れません。ぜひ会いたいです。",
         "お会いするのは難しいと感じません。ぜひ会いたいです。",
@@ -2121,9 +2126,12 @@ def test_formal_meeting_refusals_block_invite(decline):
         "会うのは難しいかもしれませんが、私は会いたいです。",
         "会うのは厳しいかもしれませんが、私は会いたいです。",
         "会うのは無理かもしれません。",
+        "もし会うのが無理なら、正直に教えてください。私はぜひ会いたいです。",
+        "万が一会うのが難しければ、遠慮なく言ってください。私はあなたと会いたいです。",
         "会うのは無理と言われましたが、私はぜひ会いたいです。",
         "会うのは無理と友達に言われましたが、私はぜひ会いたいです。",
         "前回は会えませんでしたが、今度はぜひ会いたいです。",
+        "今日は会えませんが、明日なら会えます。",
         "会うのは無理だとは思いません。ぜひ会いたいです。",
         "会うのは難しいとは思ってない。ぜひ会いたいです。",
         "「会うのは無理」と私は言いましたが、私はぜひ会いたいです。",
@@ -2171,6 +2179,31 @@ def test_formal_refusal_match_preserves_negation_counterproposal_and_attribution
 
     assert result is not None
     assert result.action != "stop"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "今は会うつもりはありませんが、いつかは会ってみたいです。",
+        "今回はお断りしますが、また今度はぜひ会いたいです。",
+        "会うのは今は難しいですが、来月なら会いたいです。",
+    ],
+)
+def test_vague_future_interest_does_not_reopen_current_decline(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手は将来会いたいと伝えています。",
+            "evidence": [statement],
+            "invite_example": "来月カフェで会いませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action != "invite"
+    assert result.invite_example is None
 
 
 @pytest.mark.parametrize(

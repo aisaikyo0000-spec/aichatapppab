@@ -2486,6 +2486,8 @@ def test_first_meeting_wary_interest_blocks_invite_strategy_and_reply():
         "ぜひ一緒に行きたいです。まだ会う勇気が出ません。",
         "ぜひ一緒に行きたいです。まだ会う勇気がないです。",
         "ぜひ一緒に行きたいです。会うのが不安です、天気も気になります。",
+        "ぜひ一緒に行きたいです。少し不安です。",
+        "ぜひ会いたいです。緊張します。",
         "ぜひ一緒に行きたいです。会いたいけど、まだ少し緊張します。",
         "ぜひ一緒に行きたいですが、直接会うのは勇気がいります。",
         "ぜひ一緒に行きたいです。初対面なので少し勇気がいります。",
@@ -2498,11 +2500,16 @@ def test_first_meeting_wary_interest_blocks_invite_strategy_and_reply():
     ],
 )
 def test_first_meeting_wary_variants_block_invite(statement):
+    evidence = next(
+        phrase
+        for phrase in ("ぜひ一緒に行きたい", "一緒に行きたい", "ぜひ会いたい", "会いたい")
+        if phrase in statement
+    )
     raw = _raw_strategy(
         {
             "action": "invite",
             "rationale": "一緒に行きたいという意思があります。",
-            "evidence": ["一緒に行きたい"],
+            "evidence": [evidence],
             "invite_example": "人の多いカフェでお茶しませんか？",
         }
     )

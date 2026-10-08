@@ -2,6 +2,7 @@
 
 import json
 import re
+import pytest
 
 from app.ai import prompt
 from app.routers.generation import (
@@ -240,9 +241,7 @@ def test_fake_contact_label_inside_self_message_is_not_interest_evidence():
         ],
     )
 
-    assert result is not None
-    assert result.action == "wait"
-    assert result.invite_example is None
+    assert result is None
 
 
 def test_decline_response_cannot_include_a_reinvitation():
@@ -602,6 +601,86 @@ def test_strategy_comes_from_the_repaired_output_when_repair_is_accepted(client,
     assert response.status_code == 200, response.text
     assert response.json()["replies"] == ["いいですね！\nどんなカフェが好きですか？"]
     assert response.json()["strategy"]["action"] == "continue"
+
+
+@pytest.mark.parametrize(
+    "decline",
+    [
+        "ごめんなさい、今は会うのは難しいです。",
+        "今は会うのはちょっと考えたいです。",
+    ],
+)
+def test_decline_reinvitation_is_repaired_before_a_reply_is_returned(
+    client, monkeypatch, decline
+):
+    from app import database
+
+    first = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "もう一度誘ってみます。",
+            "evidence": [decline],
+            "invite_example": "駅前のカフェでお茶しませんか？",
+        },
+        replies=["わかった！でも来週カフェに行こうよ！"],
+    )
+    repaired = _raw_strategy(
+        {
+            "action": "stop",
+            "rationale": "相手が会うのは難しいと伝えています。",
+            "evidence": [decline],
+            "invite_example": None,
+        },
+        replies=["わかった、教えてくれてありがとう。無理しないでね。"],
+    )
+
+    class QueuedProvider:
+        name = "gemini"
+
+        def __init__(self):
+            self.responses = [first, repaired]
+
+        def generate(self, **_kwargs):
+            return self.responses.pop(0)
+
+        def available_models(self):
+            return ["gemini-3.5-flash-lite"]
+
+    provider = QueuedProvider()
+    monkeypatch.setattr("app.routers.generation.factory.get_provider", lambda *_args: provider)
+    monkeypatch.setattr(
+        "app.routers.generation.get_ai_config",
+        lambda: {
+            "provider": "gemini",
+            "model": "gemini-3.5-flash-lite",
+            "api_key": "test-key",
+            "temperature": 0.2,
+            "max_tokens": 512,
+            "history_limit": 50,
+            "fallback_provider": "gemini",
+            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_api_key": "test-key",
+            "secondary_api_key": "",
+        },
+    )
+    monkeypatch.setattr("app.routers.generation.time.sleep", lambda *_args: None)
+    database.set_setting("ai_provider", "gemini")
+    database.set_setting("ai_model", "gemini-3.5-flash-lite")
+    database.set_setting("api_key_gemini", "test-key")
+
+    contact_id = client.post("/api/contacts", json={"name": "テストさん"}).json()["id"]
+    client.post(
+        f"/api/contacts/{contact_id}/messages",
+        json={"sender": "contact", "content": decline},
+    )
+    response = client.post(
+        "/api/generate",
+        json={"contact_id": contact_id, "candidates": 1, "strategy_mode": "tapple"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["replies"] == ["わかった、教えてくれてありがとう。\n無理しないでね。"]
+    assert response.json()["strategy"]["action"] == "stop"
 
 
 def test_strategy_is_omitted_when_final_replies_are_replaced_by_safe_clarifications(

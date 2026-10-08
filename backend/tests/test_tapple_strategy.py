@@ -62,6 +62,8 @@ def test_tapple_prompt_requests_evidence_grounded_separate_strategy():
     assert '"strategy"' in messages[1]["content"]
     assert "公共の場所" in messages[1]["content"]
     assert "返信候補ではありません" in messages[1]["content"]
+    assert "安全面への不安" in messages[1]["content"]
+    assert "相手を信頼できるか分からない" in messages[1]["content"]
 
 
 def test_tapple_single_candidate_extracts_reply_from_strategy_json():
@@ -112,6 +114,7 @@ def test_tapple_revision_prompt_honors_single_candidate_count():
     )
     assert '"replies":["案1"]' in messages[-1]["content"]
     assert "3案" not in messages[-1]["content"]
+    assert "安全面への不安" in messages[-1]["content"]
 
 
 def test_tapple_revision_and_repair_prompts_honor_two_and_three_candidates():
@@ -1020,6 +1023,54 @@ def test_explicit_interest_with_safety_concern_does_not_authorize_invite():
     assert result is not None
     assert result.action == "wait"
     assert result.invite_example is None
+
+
+def test_invite_gate_checks_full_message_when_evidence_quotes_only_interest():
+    statement = "ぜひ一緒に行きたいですが、あなたを信用できるか分からないです。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["一緒に行きたい"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
+def test_unrelated_weather_worry_does_not_block_accepted_date_scheduling():
+    violations = validate_candidate_replies(
+        ["日曜はどうですか？"],
+        1,
+        counterpart_message="明日の天気が心配ですが、ぜひ一緒に行きたいです。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_denied_meeting_safety_concern_does_not_block_explicit_invite():
+    statement = "会うのは不安ではありません。ぜひ一緒に行きたいです。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": [statement],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example is not None
 
 
 def test_ambiguous_reply_or_response_speed_cannot_authorize_invite():

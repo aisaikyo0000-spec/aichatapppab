@@ -2271,6 +2271,29 @@ def test_reported_third_party_quote_does_not_create_current_self_intent(statemen
     assert _unqualified_tapple_decline_matches(statement) == []
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "今はあなたと会いたいです。前は会うのは無理だと思っていました。",
+        "前は会うのは無理だと思っていました。今はあなたと会いたいです。",
+    ],
+)
+def test_clear_current_desire_is_not_hedged_by_historical_difficulty(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手本人が今は会いたいと伝えています。",
+            "evidence": [statement],
+            "invite_example": "よかったら人通りのあるカフェで会いませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "invite"
+
+
 def test_third_party_availability_does_not_reopen_contact_meeting_difficulty():
     statement = "お会いするのは難しいですが、友達は来週なら会えます。"
     violations = validate_candidate_replies(

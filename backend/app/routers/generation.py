@@ -605,10 +605,16 @@ def _has_recent_self_disinterest_in_tapple_activity(
         disinterest_match = _TAPPLE_ACTIVITY_DISINTEREST_RE.search(
             following_activity_text
         )
+        preceding_activity_context = following_activity_text[
+            : disinterest_match.start()
+        ] if disinterest_match else ""
         if disinterest_match and not any(
             other_term in following_activity_text[: disinterest_match.start()]
             for other_term in _TAPPLE_SHARED_ACTIVITY_TERMS
             if other_term != activity_term
+        ) and not re.search(
+            r"(?:好き(?:です|だ|だけど|ですが|だけれど)|気になって)",
+            preceding_activity_context,
         ):
             return True
     return False

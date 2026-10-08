@@ -36,6 +36,7 @@ def _valid_results():
         "meeting_hesitation": "無理せず、もう少しメッセージで話しましょう。",
         "meeting_safety_concern": "不安な気持ちは大切にしたいです。無理せず話しましょう。",
         "declining_engagement": "そうなんですね。また話したくなったら話しましょう。",
+        "recent_activity_disinterest": "誘ってくれてありがとう。今はプリンの話をするのも楽しそうですね。",
     }
     results = []
     for scenario in SCENARIOS:

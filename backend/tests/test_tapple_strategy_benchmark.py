@@ -23,6 +23,7 @@ def test_live_tapple_benchmark_covers_positive_ambiguous_and_declined_invites():
         "meeting_hesitation",
         "meeting_safety_concern",
         "declining_engagement",
+        "recent_activity_disinterest",
     }
 
 

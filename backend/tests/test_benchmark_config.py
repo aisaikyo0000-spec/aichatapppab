@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 import json
 import sys
 
@@ -33,6 +34,30 @@ def test_benchmark_config_keeps_secondary_key_optional():
     assert config["model"] == "gemini-3.1-flash-lite"
     assert config["secondary_api_key"] == ""
     assert "fallback_model" not in config
+
+
+def test_runner_can_preserve_secondary_account_label_when_it_is_the_active_key():
+    config = build_gemini_benchmark_config(
+        primary_key="active-secondary-key",
+        model="gemini-3.5-flash-lite",
+        active_account="secondary",
+    )
+
+    assert [
+        (attempt["account"], attempt["model"])
+        for attempt in config["quota_attempts"]
+    ] == [
+        ("secondary", "gemini-3.5-flash-lite"),
+        ("secondary", "gemini-3.1-flash-lite"),
+    ]
+
+
+def test_active_account_cli_argument_defaults_to_primary_and_accepts_secondary():
+    parser = argparse.ArgumentParser()
+    benchmark_config.add_active_account_argument(parser)
+
+    assert parser.parse_args([]).active_account == "primary"
+    assert parser.parse_args(["--active-account", "secondary"]).active_account == "secondary"
 
 
 def test_benchmark_config_exposes_ordered_quota_attempts_without_repeating_quota_models():

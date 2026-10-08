@@ -126,8 +126,9 @@ def test_live_benchmark_covers_meeting_hesitation_and_safety_boundaries():
 def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit():
     scenario = next(item for item in SCENARIOS if item["id"] == "declining_engagement")
     required_markers = scenario["reply_must_contain_any"]
-    closing_markers = scenario["reply_must_end_with_any"]
     assert scenario["no_follow_up_questions"] is True
+    assert scenario["no_follow_up_pressure"] is True
+    assert scenario["max_reply_sentences"] == 2
     contact_text = scenario["messages"][-1]["content"]
     result = {
         "strategy": {
@@ -136,17 +137,27 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
             "evidence": [contact_text],
             "invite_example": None,
         },
-        "replies": ["了解です。また話したくなったら、また話しましょう。"],
+        "replies": ["了解です。また話そう。"],
     }
 
     assert required_markers
-    assert closing_markers
     assert expectation_met(scenario, result)
+
+    for natural_reply in (
+        "そうですね。また話しましょう。",
+        "また話したくなったら話しましょう。",
+    ):
+        result["replies"] = [natural_reply]
+        assert expectation_met(scenario, result), natural_reply
 
     for reply in (
         "了解です。今日は何してました？",
+        "了解です。何してるの。また話そう。",
+        "了解です。どう思う。また話そう。",
         "そうなんですね。何かあったなら教えてください、もっと話したいです。",
-        "今日は仕事が忙しかったです。また話しましょう。",
+        "了解です。何かあったなら教えて。また話そう。",
+        "今日は仕事が忙しかったです。また話そう。",
+        "了解です。そうなんですね。無理せず、また話したくなったら話しましょう。",
         "なんで返事が短くなったの？今度カフェに行きませんか？",
     ):
         result["replies"] = [reply]

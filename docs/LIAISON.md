@@ -351,6 +351,8 @@
 - 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Bench、Tapple 3ケースを実行する。ケースごとの既定待機は6秒。artifactはローカルの一時領域へ保存する
 - 実装commitは`61ec2fe`（作業branchにローカル保存、未push）。API復旧と品質評価が終わるまでGitHubへのpushは保留する
 - アプリ本体でファイルを直接使う場合は、実行環境の`.env`に`GEMINI_API_KEY_FILE=<gemini2.md>`と`GEMINI_SECONDARY_API_KEY_FILE=<gemini3.md>`を設定する。DBに登録された主キーはファイルより優先する。キー値は`.env`や資料へコピーしない
+- 主3.5と主3.1がどちらも`rate_limit`のときだけ別アカウントへ切り替え、予備3.5→3.1の順で試すコード経路は回帰テスト済み。実APIキーでの疎通・切替は未確認で、API品質評価と合わせて実施する
+- Tapple調査を更新。2026年8月の公式共同調査は共有体験や会話の具体性を検討する補助資料として扱うが、自己申告・対象者限定の結果であり、遊園地デートの因果効果や固定の誘い時期を示すものではない。現行validatorの安全制約は維持
 
 ```powershell
 python scripts/check_tapple_api_connectivity.py --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"

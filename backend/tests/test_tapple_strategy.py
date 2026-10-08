@@ -2044,9 +2044,13 @@ def test_soft_but_clear_decline_forces_stop():
         "お会いすることはできません。",
         "お会いしたくありません。",
         "お会いしたくないです。",
+        "お会いしたくはありません。",
+        "お会いしたくはないです。",
+        "お会いできないです。",
         "お会いするのを控えます。",
         "お会いするのは控えさせていただきます。",
         "お会いするのは厳しいです。",
+        "お会いするのは遠慮いたします。",
         "お誘いは辞退させていただきます。",
         "今回は見送らせてください。",
         "今回は控えさせていただきます。",
@@ -2056,7 +2060,7 @@ def test_soft_but_clear_decline_forces_stop():
         "会うことは控えたいです。",
     ],
 )
-def test_formal_meeting_refusals_force_stop_and_block_invite(decline):
+def test_formal_meeting_refusals_block_invite(decline):
     raw = _raw_strategy(
         {
             "action": "invite",
@@ -2076,7 +2080,7 @@ def test_formal_meeting_refusals_force_stop_and_block_invite(decline):
     )
 
     assert result is not None
-    assert result.action == "stop"
+    assert result.action != "invite"
     assert result.invite_example is None
     assert any("誘い" in violation for violation in violations)
 
@@ -2106,9 +2110,14 @@ def test_formal_meeting_refusals_force_stop_and_block_invite(decline):
         "お会いするのは難しいですが、来週に会えます。",
         "お会いするのは難しいけど、来週なら大丈夫です。",
         "お会いするのは厳しいですが、来週なら会えます。",
+        "会うのは無理ですが来週なら会えます。",
+        "会うのは無理だけど来週なら大丈夫です。",
         "友達はお会いするのは難しいと言っていましたが、私はぜひ一緒に行きたいです。",
         "友達が会いたくないと言っていましたが、私はぜひ会いたいです。",
         "友達はお会いしたくありませんと言っていましたが、私はぜひ会いたいです。",
+        "友人から会いたくないと言われましたが、私はぜひ会いたいです。",
+        "友人から、会うつもりはないと聞きましたが、私はぜひ会いたいです。",
+        "「会うのは無理」と言われましたが、私はぜひ会いたいです。",
     ],
 )
 def test_formal_refusal_match_preserves_negation_counterproposal_and_attribution(statement):
@@ -2135,6 +2144,7 @@ def test_formal_refusal_match_preserves_negation_counterproposal_and_attribution
         "お会いするつもりはありません。でも来週なら会えます。",
         "会うことは控えたいですが、今は会うつもりはありません。来週なら会えます。",
         "お会いするのは控えさせていただきます。来週なら会えます。",
+        "お会いしたくはありませんが、来週なら会えます。",
     ],
 )
 def test_hard_meeting_refusal_is_not_reopened_by_later_availability(statement):

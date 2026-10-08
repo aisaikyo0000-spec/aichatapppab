@@ -323,6 +323,30 @@ def test_unrelated_recent_question_does_not_supply_shared_activity_engagement():
     assert result.action == "wait"
 
 
+def test_recent_disinterest_blocks_invite_from_reusing_an_older_shared_activity():
+    conversation = (
+        "相手: カフェ巡りが好きです\n"
+        "自分: 僕もカフェが好きです\n"
+        "相手: パンケーキは何が好きですか？\n"
+        "自分: プリンが好きです。カフェはあまり好きではないです\n"
+        "相手: 駅前のカフェに行ってみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手が行きたい場所なので誘います。",
+            "evidence": ["駅前のカフェに行ってみたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
 def test_generic_hontouni_does_not_count_as_shared_book_interest():
     conversation = (
         "相手: 本当に？\n"

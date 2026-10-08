@@ -10,7 +10,7 @@
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（Tappleの最終コードcommitは`f2cc261`。資料を含むpushは`e5fde508`までforkとSHA一致を確認済み）
+- 作業ブランチ: `codex/chat-quality-20261008`（Tappleの最終コードcommitは`f2cc261`。Gemini別アカウント経路修正commit `38e6d4a`までforkとSHA一致を確認済み）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
 - 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tappleの質問・催促・話題逸脱チェックと自然な会話終了の評価を修正し、今回の2アカウント切替修正も独立ReviewerがPASS。全backend **862 passed / 2 warnings**、frontend build、compileall、CLI `--help`、PowerShell AST parse、`git diff --check`もPASS。実API評価は未実施
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を朝の確認後に行う。完了条件がそろうまでStep 18-R4は合格としない

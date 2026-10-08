@@ -3,17 +3,26 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 Iteration 22 の検証結果を追記
+最終更新: 2026-10-09 / Step 18-R4 Iteration 26 の検証結果を追記
 
 ---
 
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（fork上。最新コードcommitは`9bd4682`、資料更新も公開済み）
+- 作業ブランチ: `codex/chat-quality-20261008`（fork上。最新ローカルコードcommitは`14d7cb5`。今回の更新は未push）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4 Iteration 22。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tapple境界修正、独立レビュー、全体テストはPASS。WIPをforkへ公開済み
+- 進行状況: Step 18-R4 Iteration 26。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tapple境界修正に加え、ベンチ中のquota切替と直近の成功経路からの再開を追加。実API評価は未実施
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を再開可能な時間帯に行う。完了条件がそろうまでStep 18-R4は合格としない
+
+## Step 18-R4 進捗（Iteration 26）
+
+- ベンチの各ケースで毎回メイン3.5から試し直していたため、同一run内で直近に成功したモデル・アカウントを記録し、次のケースはその経路から再開するよう変更。3.5でquotaになればメイン3.1、続いて予備アカウントの3.5、3.1へ進む
+- 接続確認は最大4回で、3.5メイン→3.1メイン→3.5予備→3.1予備の順。quota以外のエラーでは別モデル・アカウントへ切り替えない。APIキーはログ・artifactへ出力しない
+- 朝の実行手順を修正し、疎通で成功したモデルとアカウントを後続ベンチへ渡す。70ケースから返信例8件を表示して人が確認し、Contact/Tappleの返信artifactも確認してからPASSを入力する
+- 回帰: `python -m pytest backend/tests -q` → **849 passed**（FastAPI非推奨警告2件）。`frontend`の `npm run build`、`compileall`、ベンチCLIの `--help`、`git diff --check` → **PASS**。quota切替対象テストは **23 passed**
+- Python Reviewer: **PASS**。予備アカウントを含む順序、quota以外のエラーで切り替えないこと、後続ケースの再開位置を確認。別々に起動する3つのベンチ間では経路状態を共有しないため、後のベンチ開始時にquota済みの経路を一度試す可能性が残る
+- 実API呼び出し、最新70ケース、Contact Bench、Tapple実生成は未実施。quota状況は朝の疎通確認で判断する。Iteration 26の変更は検証済みコードcommit `14d7cb5` を含み、この時点では未push
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）
 
@@ -373,19 +382,35 @@ New-Item -ItemType Directory -Path $runDir | Out-Null
 $pipelineOut = Join-Path $runDir 'pipeline.json'
 $contactOut = Join-Path $runDir 'contact.json'
 $tappleOut = Join-Path $runDir 'tapple.json'
-python scripts/check_tapple_api_connectivity.py --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
-if ($LASTEXITCODE -ne 0) { throw '疎通に失敗したため、追加のAPI呼び出しを止めます。' }
-python scripts/run_pipeline_benchmark.py --out $pipelineOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
+$probeOutput = & python scripts/check_tapple_api_connectivity.py --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile 2>&1
+if ($LASTEXITCODE -ne 0) { throw "疎通に失敗したため追加呼び出しを止めます。$probeOutput" }
+$probeMatch = [regex]::Match(($probeOutput -join "`n"), 'PASS model=(\S+) account=(primary|secondary)')
+if (-not $probeMatch.Success) { throw "疎通結果を読み取れません。追加呼び出しを止めます。$probeOutput" }
+$activeModel = $probeMatch.Groups[1].Value
+$activeAccount = $probeMatch.Groups[2].Value
+if ($activeAccount -eq 'primary') {
+    $activeKeyFile = $primaryKeyFile
+    $secondaryKeyArgs = @('--secondary-env-file', $secondaryKeyFile)
+} else {
+    $activeKeyFile = $secondaryKeyFile
+    $secondaryKeyArgs = @()
+}
+Write-Output "評価開始: model=$activeModel account=$activeAccount"
+python scripts/run_pipeline_benchmark.py --out $pipelineOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs
 if ($LASTEXITCODE -ne 0) { throw "70ケース評価が未完了です。artifact: $pipelineOut" }
 python scripts/verify_pipeline_benchmark.py --artifact $pipelineOut
 if ($LASTEXITCODE -ne 0) { throw '70件の網羅性、artifact指標、6つの閾値のいずれかが不合格です。' }
-if ((Read-Host '返信実例も確認し、不自然さや文脈ずれがなければPASS') -cne 'PASS') { throw '実例の品質を確認できないためContact Benchを止めます。' }
-python scripts/run_contact_benchmark.py --out $contactOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
+$pipelineArtifact = Get-Content -Raw $pipelineOut | ConvertFrom-Json
+$sampleIndices = @(0, 9, 19, 29, 39, 49, 59, 69) | Where-Object { $_ -lt $pipelineArtifact.cases.Count }
+$pipelineArtifact.cases[$sampleIndices] | Select-Object id, contact, candidates, issues | ConvertTo-Json -Depth 6
+if ((Read-Host '上の返信例とpipeline.jsonを確認し、文脈・事実性・自然さに問題がなければPASS') -cne 'PASS') { throw '実例の品質を確認できないためContact Benchを止めます。' }
+python scripts/run_contact_benchmark.py --out $contactOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs
 if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。artifact: $contactOut" }
 Get-Content -Raw $contactOut
 if ((Read-Host '全9返信を読み、A/B/Cの文体差と文脈・自然さ・非コピー基準をすべて満たせばPASS') -cne 'PASS') { throw 'Contact Benchの品質基準が3/3に達していないためTapple評価を止めます。' }
-python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
+python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs
 if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が8/8でないか実行未完了です。artifact: $tappleOut" }
+Get-Content -Raw $tappleOut
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
 python -m pytest backend/tests -q
 if ($LASTEXITCODE -ne 0) { throw 'backend全テストがPASSしていません。' }

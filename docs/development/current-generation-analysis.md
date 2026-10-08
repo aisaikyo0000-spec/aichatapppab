@@ -1,5 +1,11 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-09 Tapple Iteration 26: quota経路の継続と朝の評価手順
+
+ベンチ各ケースの呼び出しで、前のケースが成功したモデル・アカウントから再開するようにした。quotaに当たった場合は、メイン3.5→メイン3.1→予備3.5→予備3.1の残りの経路を順に試す。疎通確認もこの順で最大4回まで行い、quota以外のエラーでは切り替えない。経路状態は個々のベンチ実行内で保持する。pipeline、Contact、Tappleの別プロセス間では共有しないため、後続ベンチが制限済み経路を一度試す可能性がある。
+
+朝のPowerShell手順は疎通に成功したモデル・アカウントを後続ベンチへ渡し、70ケースからの返信例8件、Contact Bench全返信、Tapple全返信を画面に表示して確認できるようにした。`python -m pytest backend/tests -q` は**849 passed**、frontend production build・`compileall`・CLI `--help`・`git diff --check`もPASS。Python Reviewerは**PASS**。APIは呼び出していないため、実生成評価と最新のquota状態は未確認。コードcommitは`14d7cb5`。Step 18-R4は継続中。
+
 ## 2026-10-09 Tapple Iteration 25: 迷い・安全懸念時の再勧誘ガード
 
 実生成ベンチに「会うこと自体に迷いがある」「安全面に不安がある」の2会話を加え、計8シナリオにした。懸念に触れるだけの一般文が合格しないよう、返信に求める表現も具体化した。さらに本体と同じ`validate_candidate_replies`を実行し、ベンチと本番validatorの判定差を減らした。

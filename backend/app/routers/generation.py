@@ -568,9 +568,7 @@ _TAPPLE_SHARED_ACTIVITY_TERMS = (
     "展示", "美術館", "水族館", "動物園", "遊園地", "ライブ", "音楽", "旅行", "温泉",
     "散歩", "公園", "スポーツ", "サッカー", "野球", "ゲーム", "読書", "小説", "文庫", "料理",
 )
-_TAPPLE_ACTIVITY_DISINTEREST_RE = re.compile(
-    r"^(?:(?:は|が|も|には|に|では|なら|だと)[、,：:\s]*)?"
-    r"(?:あまり|そんなに|全然|もう|最近は|最近|ちょっと)?"
+_TAPPLE_ACTIVITY_DISINTEREST_PREDICATE = (
     r"(?:好き(?:では|じゃ)(?:ありません|ない(?!わけ|こと))|"
     r"得意(?:では|じゃ)(?:ありません|ない(?!わけ|こと))|"
     r"苦手(?!(?:(?:では|じゃ)(?:ない|ありません)|というわけではない|というほどではない))|"
@@ -580,6 +578,18 @@ _TAPPLE_ACTIVITY_DISINTEREST_RE = re.compile(
     r"行く気が(?:ありません|ない(?!わけ|こと))|"
     r"行かなくな(?:った|りました)|"
     r"気になりません|気にならない(?!わけ|こと))"
+)
+_TAPPLE_ACTIVITY_DISINTEREST_PREFIX = (
+    r"(?:あまり|そんなに|全然|もう|最近は|最近|ちょっと)?"
+)
+_TAPPLE_ACTIVITY_DISINTEREST_RE = re.compile(
+    rf"^(?:(?:(?:は|が|も|には|に|では|なら|だと)[、,：:\s]*)?"
+    rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREFIX}"
+    rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREDICATE}|"
+    rf"(?:に|へ|を)?(?:行く|行ってみる|訪れる|見る|観る|食べる|する)"
+    rf"(?:の|こと)(?:は|が)[、,：:\s]*"
+    rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREFIX}"
+    rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREDICATE})"
 )
 
 

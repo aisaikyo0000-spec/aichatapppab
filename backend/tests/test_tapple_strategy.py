@@ -380,6 +380,53 @@ def test_disinterest_in_another_activity_does_not_block_shared_activity_invite()
     assert result.action == "invite"
 
 
+@pytest.mark.parametrize(
+    ("latest_self_reply", "latest_contact_message", "expected_action"),
+    [
+        (
+            "プリンが好きです。カフェはあまり得意じゃないです",
+            "今度一緒にカフェに行きたいです",
+            "wait",
+        ),
+        (
+            "プリンが好きです。カフェは好きです、でも映画は嫌いです",
+            "今度一緒にカフェに行きたいです",
+            "invite",
+        ),
+        (
+            "プリンが好きです。カフェはあまり好きではないです",
+            "今度一緒に映画を見に行きたいです",
+            "invite",
+        ),
+    ],
+)
+def test_recent_disinterest_only_blocks_direct_invitation_for_same_activity(
+    latest_self_reply, latest_contact_message, expected_action
+):
+    conversation = (
+        "相手: カフェ巡りが好きです\n"
+        "自分: 僕もカフェが好きです\n"
+        "相手: パンケーキは何が好きですか？\n"
+        f"自分: {latest_self_reply}\n"
+        f"相手: {latest_contact_message}"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手が一緒に行きたいと言っているため提案します。",
+            "evidence": [latest_contact_message],
+            "invite_example": "よかったら一緒に行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == expected_action
+    if expected_action == "wait":
+        assert result.invite_example is None
+
+
 def test_generic_hontouni_does_not_count_as_shared_book_interest():
     conversation = (
         "相手: 本当に？\n"

@@ -3,7 +3,17 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / quota fallback修正、backend 1,084件を確認
+最終更新: 2026-10-09 / Step 18-R4安全境界・ベンチ検証を更新
+
+## 2026-10-09 最新状況
+
+- GitHub `main`確認時のSHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`、最新製品コードcommitは`2382a64`。未pushのコミットと資料変更があり、push後にリモートSHAを追記する。
+- Tapple安全レビューで、否定が重なる警戒表現を見逃す問題と、仕事・試験・天候など無関係な不安を会う不安として扱う問題を順に発見。REDテスト追加後に修正し、Tapple suiteは**563 passed**、backend全体は**1,143 passed / 2 warnings**。独立安全ReviewerとPython Reviewerは両方**PASS**。Python側の追加重点テストは**600 passed**。`ruff`と`mypy`は環境になく未実行。
+- ベンチ応答が候補文と利用者向け質問を同時に返す不正形を、runner・verifierで失敗扱いにした。手動レビューartifactに代表ケースの返信本文も入れる。ベンチ評価ロジックを変えず、既存fixtureを維持した。
+- quota切替focused suiteは**45 passed**。順序は主3.5→主3.1→別アカウント3.5→別アカウント3.1で、`rate_limit`の場合だけ次へ進む。設定上の別キーはgemini3.mdから読む。APIキーの値は表示・保存していない。
+- frontend production build、Python `compileall`、`git diff --check`はPASS。Gemini APIは呼び出していない。利用制限と朝の再開確認を待っており、実API疎通・70ケース・Contact Bench・Tapple実生成文の評価は未完了。
+- [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)を追加。公式調査は自己申告の傾向として扱い、学術研究と利用者の逸話は一般化し過ぎず、固定メッセージ数や返信速度で誘う時期を決めない方針を記録した。
+- Step 18-R4は未完成。70ケースRegression、Contact Bench 3/3、実生成文の人手確認、独立Reviewer全員のPASSを揃えていないため、Step 19へは進まない。
 
 ---
 

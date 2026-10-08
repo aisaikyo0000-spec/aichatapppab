@@ -1,5 +1,14 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-09 最新レビュー追記
+
+- API応答に候補返信と利用者向け確認質問が同時に入る不正形式を、ベンチ実行時と成果物検証時の両方で不合格にする。手動レビュー用artifactには、代表ケースの返信本文も記録する。
+- 独立レビューv10で、否定が重なった「警戒しなくても大丈夫とは思えない」等が招待を止められない不具合を検出。回帰テストを先に失敗させ、修正後は安全側の`wait`になることを確認した。
+- 続くレビューv11では、無関係な予定不安や仕事の面接・試験の緊張まで安全上の懸念と誤判定する境界が見つかった。無関係な懸念と、会うこと自体への懸念を区別するテストを追加し、修正後の関連テストは**19 passed**。修正commitは`2382a64`。新規の安全ReviewerとPython Reviewerは**PASS**、Tapple strategy suiteは**563 passed**、backend全体は**1,143 passed / 2 warnings**。コード差分の追加重点テストは**600 passed**。
+- `backend/tests/test_model_fallback.py`等の切替関連テストは**45 passed**。切替順はprimary 3.5→primary 3.1→secondary 3.5→secondary 3.1で、`rate_limit`だけで次に進む。実APIは呼び出していない。
+- 調査メモ[`tapple-dating-strategy-research.md`](tapple-dating-strategy-research.md)を追加。タップル公式助言・7,014人の自己申告調査、安全ガイドライン、オンラインデート研究、利用者の逸話を根拠の種類ごとに分け、メッセージ数や返信速度だけで誘わない方針を記録した。
+- 現HEADの製品コードは`2382a64`。frontend production build、Python `compileall`、`git diff --check`はPASS。Gemini APIは呼び出していないため、実API生成、70ケース、Contact Bench、Tapple実生成文の全文確認は未実施。したがってStep 18-R4は未完成。
+
 ## 2026-10-09 受け入れ準備の追加レビュー
 
 Tappleの招待提案には、AIが相手の信頼性や実際の安全性を判定できないことを明記し、利用者自身が安全だと感じる場合に限り検討するよう表示する。返信が繰り返し短くなり話題の展開も減ったケースを9件目として追加し、返信速度だけで関心を推測しない方針をpromptとベンチに反映した。これはsynthetic caseの期待動作であり、実APIでの遵守は未検証。

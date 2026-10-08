@@ -131,6 +131,7 @@ _TAPPLE_DECLINE_RE = re.compile(
     r"(?:会う|お会いする|行く).{0,8}つもりは(?:ない|ありません)|"
     r"(?:お会いする|ご一緒する|会うことは).{0,12}(?:難し(?!くない|くはない|くはありません|くありません|"
     r"かった|くなかった|くはなかった|くはありませんでした|くありませんでした|"
+    r"ければ|いなら|いならば|いだったら|いであれば|"
     r"いと言われるかもしれ(?:ない|ません)|いとは言われるかもしれ(?:ない|ません)|"
     r"いかもしれ(?:ない|ません)|いとは言えません|いとは言い切れません|"
     r"いとは限りません|いわけではない|"
@@ -140,10 +141,11 @@ _TAPPLE_DECLINE_RE = re.compile(
     r"いと思ってない|いとは思えない|いとは思えません|いと思えない|いと思えません|"
     r"いと感じない|いと感じません|いことではない|いことではありません|"
     r"いことはない|いことはありません)|"
-    r"無理(?!ではない|ではありません|じゃない|じゃありません|じゃなく|かもしれ(?:ない|ません)|"
+    r"無理(?!ではない|ではありません|じゃない|じゃありません|じゃなく|なら|ならば|だったら|であれば|"
+    r"かもしれ(?:ない|ません)|"
     r"(?:だ)?とは思(?:いません|わない|っていません|ってない|えません)|(?:だ)?と思われたくない)|"
     r"厳し(?!くない|くありません|くはない|くはありません|かった|くなかった|くはなかった|"
-    r"いかもしれ(?:ない|ません)|"
+    r"ければ|いなら|いならば|いだったら|いであれば|いかもしれ(?:ない|ません)|"
     r"いとは言われるかもしれ(?:ない|ません)|いと言われるかもしれ(?:ない|ません)|"
     r"いとは言えない|いとは言えません|"
     r"いとは限らない|いとは限りません|いわけではない|いわけではありません|"
@@ -157,6 +159,7 @@ _TAPPLE_DECLINE_RE = re.compile(
     r"いただければと思います|いただきたい(?:です)?))|"
     r"会う.{0,12}(?:難し(?!くない|くはない|くはありません|くありません|"
     r"かった|くなかった|くはなかった|くはありませんでした|くありませんでした|"
+    r"ければ|いなら|いならば|いだったら|いであれば|"
     r"いと言われるかもしれ(?:ない|ません)|いとは言われるかもしれ(?:ない|ません)|いとは言えません|"
     r"いとは言い切れません|いかもしれ(?:ない|ません)|いとは限りません|"
     r"いわけではない|いわけではありません|"
@@ -165,9 +168,11 @@ _TAPPLE_DECLINE_RE = re.compile(
     r"いとは思ってない|いと思っていない|いと思っていません|いと思ってない|"
     r"いとは思えない|いとは思えません|いと思えない|いと思えません|いと感じない|"
     r"いと感じません|いことではない|いことではありません|いことはない|いことはありません)|"
-    r"無理(?!ではない|ではありません|じゃない|じゃありません|じゃなく|かもしれ(?:ない|ません)|"
+    r"無理(?!ではない|ではありません|じゃない|じゃありません|じゃなく|なら|ならば|だったら|であれば|"
+    r"かもしれ(?:ない|ません)|"
     r"(?:だ)?とは思(?:いません|わない|っていません|ってない|えません)|(?:だ)?と思われたくない)|"
     r"厳し(?!くない|くありません|くはない|くはありません|かった|くなかった|くはなかった|"
+    r"ければ|いなら|いならば|いだったら|いであれば|"
     r"いかもしれ(?:ない|ません)|"
     r"いとは言われるかもしれ(?:ない|ません)|いと言われるかもしれ(?:ない|ません)|"
     r"いとは言えない|いとは言えません|"
@@ -186,9 +191,10 @@ _TAPPLE_DECLINE_RE = re.compile(
     r"(?:ご?遠慮(?:します|いたします|したい(?:です)?|させてください|させていただきます|"
     r"させてもらいます|ください|願います|いただけますか|いただけませんか|"
     r"いただければと思います|いただきたい(?:です)?)|お断り(?:します|いたします|申し上げます|"
-    r"したい(?:です)?|させてください|させていただきます|させてもらいます))|"
-    r"今回は.{0,4}お断り(?:します|いたします|申し上げます|したい(?:です)?|"
-    r"させてください|させていただきます|させてもらいます)|"
+    r"したい(?:です)?|させてください|させていただきます|させてもらいます|"
+    r"です(?=。|$)|(?=。|$)))|"
+    r"今回は.{0,12}お断り(?:します|いたします|申し上げます|したい(?:です)?|"
+    r"させてください|させていただきます|させてもらいます|です(?=。|$)|(?=。|$))|"
     r"(?:デート|お出かけ).{0,12}(?:難し|無理|できな|したくな)|"
     r"(?:会えない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません|かな|かも)|"
     r"会えません(?!か|わけではありません|とは言えません)|"
@@ -268,6 +274,12 @@ _TAPPLE_DISRESPECTFUL_REPLY_RE = re.compile(
     r"気持ち悪い|うざい|ウザい|頭悪すぎ|メンヘラ|地雷女|ブス|性格終わって|"
     r"(?:^|[。！？!?])クソ(?:$|[。！？!?]))"
 )
+_TAPPLE_PAST_MEETING_REAFFIRMATION_RE = re.compile(
+    r"(?:前回|前は|先日|以前|この前).{0,14}"
+    r"(?:会えなかった|会えませんでした|会うのは無理だった|会うのは難しかった|会うのは厳しかった)"
+    r".{0,16}(?:今度|次回|改めて).{0,8}"
+    r"(?:会いたい|会え(?:ます|る)|一緒に行きたい)"
+)
 
 
 def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
@@ -278,6 +290,7 @@ def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
     third_party_declines = list(_TAPPLE_THIRD_PARTY_DECLINE_RE.finditer(text))
     quoted_declines = list(_TAPPLE_QUOTED_DECLINE_RE.finditer(text))
     reported_declines = list(_TAPPLE_REPORTED_DECLINE_RE.finditer(text))
+    past_reaffirmations = list(_TAPPLE_PAST_MEETING_REAFFIRMATION_RE.finditer(text))
     return [
         decline
         for decline in declines
@@ -298,6 +311,10 @@ def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
             report.start() <= decline.start() < report.end()
             for report in reported_declines
         )
+        and not any(
+            reaffirmation.start() <= decline.start() < reaffirmation.end()
+            for reaffirmation in past_reaffirmations
+        )
         and not _has_reaffirmed_tapple_intent_after_decline(
             text, decline, quoted_declines
         )
@@ -311,10 +328,8 @@ def _has_reaffirmed_tapple_intent_after_decline(
     quoted_declines: list[re.Match[str]],
 ) -> bool:
     for positive in _TAPPLE_INVITE_POSITIVE_RE.finditer(text, decline.end()):
-        if not re.search(
-            r"(?:今は|今なら|今度は|現在は|でも|けど|けれど|ものの|ですが|が|ただ)",
-            text[decline.end() : positive.start()],
-        ):
+        transition = text[decline.end() : positive.start()]
+        if not re.search(r"(?:今は|現在は|今なら)", transition):
             continue
         if any(
             quote.start() <= decline.start() < quote.end()
@@ -333,7 +348,7 @@ def _has_linked_tapple_counterproposal(
 ) -> bool:
     if not any(
         marker in decline.group(0)
-        for marker in ("難し", "厳し", "無理", "お会いできません")
+        for marker in ("難し", "厳し", "無理", "会えません", "お会いできません")
     ):
         return False
     continuation = text[decline.end() : decline.end() + 48]
@@ -398,7 +413,8 @@ _TAPPLE_REPORTED_DECLINE_RE = re.compile(
 
 
 _TAPPLE_DIRECT_COUNTERPROPOSAL_RE = re.compile(
-    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日)"
+    r"(?:今日|明日|土曜|土曜日|日曜|日曜日|平日|週末|"
+    r"来週|今週|今月|来月|再来月|別の日|別日)"
     r".{0,8}(?:なら|は|に).{0,10}"
     r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
     r"都合がつきます|都合がつく|都合が合います|都合が合う)"
@@ -910,7 +926,8 @@ _TAPPLE_FIRST_PERSON_COUNTERPROPOSAL_RE = re.compile(
     r"都合がつきます|都合がつく|都合が合います|都合が合う)"
 )
 _TAPPLE_DATE_UNAVAILABILITY_RE = re.compile(
-    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日)"
+    r"(?:今日|明日|前回|前は|先日|土曜|土曜日|日曜|日曜日|平日|週末|"
+    r"来週|今週|今月|来月|再来月|別の日|別日)"
     r".{0,12}(?:難し|無理|会えない|会えません|行けない|行けません|"
     r"予定があって|予定があり|予定が合わな|都合が悪|空いていない|空いてません|厳し)"
 )

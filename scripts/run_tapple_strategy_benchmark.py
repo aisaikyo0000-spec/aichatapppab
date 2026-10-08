@@ -112,6 +112,10 @@ SCENARIOS = (
         "expected_action": "wait",
         "allowed_actions": ["wait"],
         "no_reinvitation": True,
+        "reply_must_contain_any": [
+            "そうなんですね", "そうなんだ", "わかりました", "分かりました", "了解",
+            "無理せず", "また話したく", "また話せる", "気が向いたら",
+        ],
     },
     {
         "id": "counterproposal",

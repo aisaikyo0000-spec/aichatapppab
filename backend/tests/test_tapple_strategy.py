@@ -1004,6 +1004,24 @@ def test_slightly_positive_meeting_emotion_is_not_misread_as_decline():
         assert result.invite_example is None, statement
 
 
+def test_explicit_interest_with_safety_concern_does_not_authorize_invite():
+    statement = "ぜひ一緒に行きたいですが、安全面が心配です。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": [statement],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
 def test_ambiguous_reply_or_response_speed_cannot_authorize_invite():
     conversation = "相手: いいですね！\n相手: 返信早いですね"
     raw = _raw_strategy(

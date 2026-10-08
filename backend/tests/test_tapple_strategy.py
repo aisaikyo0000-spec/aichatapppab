@@ -1125,12 +1125,14 @@ def test_thinking_about_meeting_logistics_is_not_hesitation():
         "会う日がいつか迷っています。ぜひ一緒に行きたいです。",
         "会う日をどちらにするか悩んでいます。ぜひ一緒に行きたいです。",
         "一緒に行きたいけど、会う日の候補で迷っています。",
+        "会うのが楽しみですが、何を着ていくか迷っています。ぜひ一緒に行きたいです。",
+        "会う前に何を話すか悩んでいます。ぜひ一緒に行きたいです。",
     ):
         raw = _raw_strategy(
             {
                 "action": "invite",
                 "rationale": "一緒に行きたいという意思があります。",
-                "evidence": ["ぜひ一緒に行きたいです"],
+                "evidence": ["一緒に行きたい"],
                 "invite_example": "人の多いカフェでお茶しませんか？",
             }
         )
@@ -1304,6 +1306,8 @@ def test_unrelated_work_problem_does_not_block_date_scheduling():
     [
         "ぜひ一緒に行きたいけど、仕事のことで悩んでいます。",
         "一緒に行きたいけど、会う日の候補で迷っています。",
+        "会うのが楽しみですが、何を着ていくか迷っています。ぜひ一緒に行きたいです。",
+        "会う前に何を話すか悩んでいます。ぜひ一緒に行きたいです。",
     ],
 )
 def test_post_acceptance_unrelated_or_date_choice_concern_allows_scheduling(

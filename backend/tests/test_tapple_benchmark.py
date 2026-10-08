@@ -80,3 +80,35 @@ def test_tapple_artifact_does_not_claim_completion_for_duplicate_scenario_ids(tm
     assert summary["complete"] is False
     assert summary["quality_pass"] is False
     assert summary["exit_code"] == 2
+
+
+def test_tapple_expectation_summary_rejects_error_even_when_all_actions_match():
+    results = [
+        {"id": "explicit_interest", "expectation_met": True, "error": "HTTP 502", "error_code": "rate_limit"},
+        {"id": "ambiguous_interest", "expectation_met": True},
+        {"id": "decline", "expectation_met": True},
+    ]
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["complete"] is False
+    assert summary["quality_pass"] is False
+    assert summary["stopped_reason"] == "rate_limit_exhausted"
+    assert summary["exit_code"] == 2
+
+
+def test_interim_artifact_with_all_cases_has_incomplete_reason(tmp_path):
+    results = [
+        {"id": "explicit_interest", "expectation_met": True},
+        {"id": "ambiguous_interest", "expectation_met": True},
+        {"id": "decline", "expectation_met": True},
+    ]
+    artifact_path = tmp_path / "interim.json"
+
+    _write_artifact(artifact_path, results, complete=False)
+
+    summary = json.loads(artifact_path.read_text(encoding="utf-8"))["summary"]
+    assert summary["complete"] is False
+    assert summary["stopped_reason"] == "incomplete"
+    assert summary["quality_pass"] is False
+    assert summary["exit_code"] == 2

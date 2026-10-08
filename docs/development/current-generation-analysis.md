@@ -1932,3 +1932,11 @@ API疎通・70ケース・Contact Benchは依然未実施。API回復後はま�
 主・予備キーをファイルのまま読み込む経路を統合テストした。`GEMINI_API_KEY_FILE`にgemini2.md、`GEMINI_SECONDARY_API_KEY_FILE`にgemini3.mdを設定すると、主キーの3.5→3.1を試した後、両方がレート制限の場合に予備キーへ進む。DBの主キーが登録済みなら設定ファイルよりDBを優先する。設定APIには主・予備キーの有無だけを返す。
 
 ファイル読込を使うテストは**16 passed**、backend全体は**509 passed / 2 warnings**。frontend build、`git diff --check`、対象Python compileは**PASS**。独立Python Reviewerも**PASS**。実装commitは`51c14aa`、GitHub main基点は`a75ba76`で、WIPはpushしていない。API実生成は保留中のため、Step 18-R4は未完成。
+
+## Tapple API実生成の再開手順
+
+Gemini復旧後にタップル戦略を確認するため、独立スクリプト`run_tapple_strategy_benchmark.py`を追加した。アプリ本体と同じ生成・検証処理を通し、明確な参加意思、曖昧な反応、明示的な断りを各1件試す。結果から返信、戦略、使用モデル、期待した行動との一致を記録する。実データや本番DBには触れず、一時DBを使う。鍵は出力しない。
+
+期待値チェックの単体テスト2件、`--help`、独立Python Reviewerは**PASS**。最新backend全体は**511 passed / 2 warnings**、frontend buildも**PASS**。APIはまだ呼び出していない。API再開時は疎通を1回だけ実施し、70ケース、Contact Bench、Tapple 3ケースの順に回す。各artifactはローカル一時領域へ保存し、失敗ケースも残してReviewerへ渡す。
+
+なお、主キー側で3.5と3.1の両方がレート制限になったときだけ予備アカウントへ移り、予備側でも3.5→3.1を試す。主アカウントの3.1が成功した場合はアカウントを切り替えない。この分岐は回帰テストで確認済み。

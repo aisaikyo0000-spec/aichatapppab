@@ -347,8 +347,8 @@
 ## Gemini benchmarkの2アカウントfallback
 
 - API復旧後に使う`run_pipeline_benchmark.py`と`run_contact_benchmark.py`が予備キーを受け取っていなかったため、両スクリプトに任意の`--secondary-env-file`を追加した。主キーを使った3.5→3.1の後、両方が`rate_limit`なら予備キーの3.5→3.1へ進む設定をアプリ本体へ渡す
-- 設定組み立ての単体テストは**2 passed**。両CLIのhelp表示も確認済み。最新全backend suiteは**506 passed / 2 warnings**、frontend build・`git diff --check`・対象Python compileも**PASS**。独立Python Reviewer **PASS**
-- 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Benchを実行する。両スクリプトの既定待機はケースごとに6秒。artifactは共有せずローカルの一時領域へ保存する
+- 設定組み立ての単体テストは**2 passed**。両CLIのhelp表示も確認済み。Tapple API実生成ベンチを追加し、専用テスト2件と独立Python Reviewerが**PASS**。最新全backend suiteは**511 passed / 2 warnings**、frontend build・`git diff --check`・対象Python compileも**PASS**
+- 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Bench、Tapple 3ケースを実行する。ケースごとの既定待機は6秒。artifactはローカルの一時領域へ保存する
 - 実装commitは`61ec2fe`（作業branchにローカル保存、未push）。API復旧と品質評価が終わるまでGitHubへのpushは保留する
 - アプリ本体でファイルを直接使う場合は、実行環境の`.env`に`GEMINI_API_KEY_FILE=<gemini2.md>`と`GEMINI_SECONDARY_API_KEY_FILE=<gemini3.md>`を設定する。DBに登録された主キーはファイルより優先する。キー値は`.env`や資料へコピーしない
 
@@ -356,6 +356,7 @@
 python scripts/check_tapple_api_connectivity.py --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
 python scripts/run_pipeline_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
 python scripts/run_contact_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
+python scripts/run_tapple_strategy_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
 ```
 
 ## Gemini主キーのファイル読込

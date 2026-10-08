@@ -357,6 +357,13 @@
 - Step 18-R4の過去Reviewer指摘だった「少数の本人Goldを同一相手Silverが上書きする」条件を現HEADで再監査。focused test **36 passed**、Gold優先を確認し、独立Reviewer **PASS**
 - 生成APIエラー後は各ベンチを停止し、部分artifactに実行数・期待数・停止理由を記録して終了コード2を返す。70件目の失敗も`complete: false`になる。RED test commit `e38fe63`、GREEN commit `8f0e78d`、独立Reviewer **PASS**
 
+## Gemini予備アカウント設定の実行環境確認
+
+- 作業環境のGit管理外`.env`に主キー・予備キーのファイル参照を設定。キー本体はコピー・表示していない
+- アプリ設定の読込結果はGemini 3.5 primary、Gemini 3.1 fallback、主・予備キーあり、両キー相違を確認。`test_api_key_file.py`と`test_model_fallback.py`は**25 passed / 2 warnings**
+- APIへの疎通リクエストは未実施。よって実際のquota切替、最新70ケース、Contact Bench、Tapple実生成は未確認。Step 18-R4は未完成・未push
+- 現HEAD `a343449`。この確認自体によるコード変更・commitはなし。`.env`は`.gitignore`対象
+
 ```powershell
 python scripts/check_tapple_api_connectivity.py --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
 python scripts/run_pipeline_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"

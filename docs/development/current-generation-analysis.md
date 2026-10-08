@@ -1958,3 +1958,5 @@ Step 18-R4 Iteration 1 ReviewerのGold優先FAILを現在のHEADで独立再監�
 70ケース評価で全モデル・全アカウントのquotaを使い切った後、残りケースでも同じ失敗を繰り返す経路を修正した。pipeline、Contact Bench、Tapple Benchは生成APIが失敗した時点で後続ケースを呼ばず、途中結果を保存する。artifactには完了数・予定数・停止理由を残し、未完了または失敗時は終了コード2を返す。全ケース数を処理していても最終ケースにエラーがあれば`complete: false`になる。
 
 新設`benchmark_response.py`の判定テストで、quota失敗・別のprovider error・最終ケース失敗・途中終了・全件成功を確認した。関連focused testsは**12 passed**、全backend suiteは**517 passed / 2 warnings**。frontend buildと4つのCLI `--help`も**PASS**。独立Python Reviewer **PASS**。APIは呼んでいない。RED commitは`e38fe63`、GREEN commitは`8f0e78d`。
+
+Geminiの実行設定として、Git管理外の`.env`から主・予備のキー参照ファイルを読み込めることも確認した。現在の作業環境では両ファイルを別アカウントとして解決し、モデル設定は3.5 primary／3.1 fallbackとなっている。`test_api_key_file.py`と`test_model_fallback.py`は**25 passed / 2 warnings**。キー本体は出力・複製していない。APIへの実リクエストは行っていないため、実quota時の切替が動作したという意味ではない。

@@ -23,6 +23,9 @@ DEFAULT_TIMEOUT = 90.0
 
 # 推論(thinking)が出力トークンを消費するため、最低限の出力を確保する。
 MIN_MAX_TOKENS = 2048
+QUOTA_FALLBACK_MODELS = frozenset(
+    {"gemini-3.5-flash-lite", "gemini-3.1-flash-lite"}
+)
 
 
 class GeminiProvider(AIProvider):
@@ -116,12 +119,12 @@ class GeminiProvider(AIProvider):
             try:
                 return self._parse_response(resp, body_text)
             except AIError as e:
-                # The production 3.5 Flash Lite -> 3.1 Flash Lite route uses
-                # the next request for the fallback model as soon as quota is
-                # exhausted; repeating 3.5 would only consume time and RPD.
+                # The production 3.5 Flash Lite -> 3.1 Flash Lite route switches
+                # models/accounts as soon as quota is exhausted. Repeating
+                # either quota-chain model only delays fallback and spends RPD.
                 if (
                     e.code == "rate_limit"
-                    and model != "gemini-3.5-flash-lite"
+                    and model not in QUOTA_FALLBACK_MODELS
                     and attempt < self.MAX_RETRIES - 1
                 ):
                     delay = self.RETRY_BASE_DELAY * (2 ** attempt)

@@ -36,6 +36,7 @@ def _artifact(*, human=0.95, complete=True):
                     {
                         "context_fit": 0.7,
                         "human_chat_fit": human,
+                        "personal_style_fit": None,
                         "conversation_fit": 0.97,
                     }
                     for _ in range(3)
@@ -198,3 +199,35 @@ def test_pipeline_verifier_cli_does_not_accept_case_set_override(monkeypatch):
         main()
 
     assert exc_info.value.code == 2
+
+
+def test_pipeline_verifier_requires_complete_four_axis_record():
+    artifact = _artifact()
+    artifact["cases"][0]["four_axis"][0].pop("personal_style_fit")
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "case_metrics_invalid" in report["failures"]
+
+
+def test_pipeline_verifier_rejects_invalid_synthetic_personal_style_value():
+    artifact = _artifact()
+    artifact["cases"][0]["four_axis"][0]["personal_style_fit"] = "unknown"
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "case_metrics_invalid" in report["failures"]
+
+
+def test_pipeline_verifier_rejects_boolean_error_count_and_string_metrics():
+    artifact = _artifact()
+    artifact["summary"]["errors"] = False
+    artifact["summary"]["issues"]["ai_like_rate"] = "0.0"
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "case_errors_present" in report["failures"]
+    assert "reported_metrics_mismatch" in report["failures"]

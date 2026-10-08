@@ -1152,6 +1152,9 @@ def test_hesitation_in_separate_sentence_after_positive_interest_blocks_invite()
     [
         "ぜひ一緒に行きたいです。仕事は忙しいけど、会うのは迷っています。",
         "ぜひ一緒に行きたいです。場所はいいけど、会うのは少し迷っています。",
+        "ぜひ一緒に行きたいです。会いたいけど少し迷う。",
+        "ぜひ一緒に行きたいです。会うかどうか迷う。",
+        "ぜひ一緒に行きたいです。会うのは少し悩んでる。",
     ],
 )
 def test_explicit_meeting_hesitation_survives_unrelated_or_logistics_context(statement):
@@ -1203,6 +1206,27 @@ def test_work_anxiety_does_not_count_as_meeting_safety_concern():
         "仕事については不安がないとは言えませんが、ぜひ一緒に行きたいです。",
         "仕事についての不安は消えないけど、ぜひ一緒に行きたいです。",
         "仕事の安全について不安ですが、会うことは楽しみです。ぜひ一緒に行きたいです。",
+    ):
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたいです"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
+
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+        assert result is not None, statement
+        assert result.action == "invite", statement
+        assert result.invite_example is not None, statement
+
+
+def test_unrelated_work_hesitation_does_not_block_invite():
+    for statement in (
+        "ぜひ一緒に行きたいです。仕事のことで悩んでいないとは言えません。",
+        "まだ仕事のことで迷っていますが、ぜひ一緒に行きたいです。",
     ):
         raw = _raw_strategy(
             {
@@ -1612,6 +1636,22 @@ def test_unrelated_workload_worry_does_not_block_date_scheduling():
     )
 
     assert not any("誘い" in violation for violation in violations)
+
+
+def test_qualified_or_leading_work_hesitation_does_not_block_date_scheduling():
+    for counterpart_message in (
+        "ぜひ一緒に行きたいです。仕事のことで悩んでいないとは言えません。",
+        "まだ仕事のことで迷っていますが、ぜひ一緒に行きたいです。",
+    ):
+        violations = validate_candidate_replies(
+            ["日曜はどうですか？"],
+            1,
+            counterpart_message=counterpart_message,
+            strategy_mode="tapple",
+            tapple_action="continue",
+        )
+
+        assert not any("誘い" in violation for violation in violations), counterpart_message
 
 
 @pytest.mark.parametrize(

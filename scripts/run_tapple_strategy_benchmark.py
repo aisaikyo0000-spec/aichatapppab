@@ -56,35 +56,45 @@ def expectation_met(scenario: dict, action: str | None) -> bool:
 def summarize_expectations(results: list[dict], *, complete: bool) -> dict:
     expected_ids = [scenario["id"] for scenario in SCENARIOS]
     results_by_id = {result.get("id"): result for result in results}
+    scenario_coverage_complete = (
+        len(results) == len(expected_ids)
+        and len(results_by_id) == len(expected_ids)
+        and set(results_by_id) == set(expected_ids)
+    )
     failures = [
         scenario_id
         for scenario_id in expected_ids
         if results_by_id.get(scenario_id, {}).get("expectation_met") is not True
     ]
     expectations_met = len(expected_ids) - len(failures)
-    quality_pass = (
-        complete
-        and len(results) == len(expected_ids)
-        and set(results_by_id) == set(expected_ids)
-        and not failures
-    )
-    exit_code = 0 if quality_pass else 2 if not complete else 3
+    run_complete = complete and scenario_coverage_complete
+    quality_pass = run_complete and not failures
+    exit_code = 0 if quality_pass else 2 if not run_complete else 3
     return {
+        "complete": run_complete,
         "expectations_met": expectations_met,
         "expectation_total": len(expected_ids),
         "expectation_failures": failures,
         "quality_pass": quality_pass,
+        "stopped_reason": (
+            "scenario_coverage_mismatch"
+            if complete and not scenario_coverage_complete
+            else None
+        ),
         "exit_code": exit_code,
     }
 
 
 def _write_artifact(path: Path, results: list[dict], *, complete: bool) -> None:
     run_state = benchmark_run_state(results, len(SCENARIOS))
-    effective_complete = complete and run_state["complete"]
+    expectation_summary = summarize_expectations(
+        results,
+        complete=complete and run_state["complete"],
+    )
     summary = {
         **run_state,
-        "complete": effective_complete,
-        **summarize_expectations(results, complete=effective_complete),
+        **expectation_summary,
+        "stopped_reason": expectation_summary["stopped_reason"] or run_state["stopped_reason"],
         "errors": sum(1 for result in results if "error" in result),
     }
     path.parent.mkdir(parents=True, exist_ok=True)

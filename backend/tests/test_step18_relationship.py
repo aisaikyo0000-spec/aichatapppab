@@ -148,6 +148,19 @@ def test_single_contact_gold_does_not_replace_global_gold_style(client):
     assert profile["active_profile"].keigo_ratio > profile["active_profile"].tame_ratio
 
 
+@pytest.mark.parametrize("gold_count", (1, 2))
+def test_isolated_sparse_contact_gold_does_not_define_global_style(client, gold_count):
+    cid = _seed_gold(client, "孤立した少数Gold", TAME_PAIRS[:gold_count])
+
+    profile = style.compute_hierarchical_profile(cid)
+
+    assert profile["hierarchy_tier"] == "sparse_manual_gold_fallback"
+    assert profile["same_contact_gold_samples"] == gold_count
+    assert profile["active_profile"].sample_count == 0
+    assert profile["active_profile"].tame_ratio < 0.5
+    assert profile["active_profile"].laugh_ratio == pytest.approx(0.4)
+
+
 def test_same_contact_gold_adapts_without_fully_replacing_global_gold(client):
     _seed_gold(client, "全体の丁寧な相手", KEIGO_PAIRS)
     cid = _seed_gold(client, "Goldが3件の相手", TAME_PAIRS[:3])

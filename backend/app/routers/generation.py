@@ -569,13 +569,15 @@ _TAPPLE_SHARED_ACTIVITY_TERMS = (
     "散歩", "公園", "スポーツ", "サッカー", "野球", "ゲーム", "読書", "小説", "文庫", "料理",
 )
 _TAPPLE_ACTIVITY_DISINTEREST_RE = re.compile(
-    r"(?:あまり|そんなに|全然|もう|最近は|ちょっと)?"
-    r"(?:好き(?:では|じゃ)?ありません|好き(?:では|じゃ)?ない(?!わけ|こと)|"
-    r"得意(?:では|じゃ)?ありません|得意(?:では|じゃ)?ない(?!わけ|こと)|"
-    r"苦手(?!ではない|じゃない)|嫌い(?!ではない|じゃない)|"
-    r"興味(?:が)?ありません|興味(?:が)?ない(?!わけ|こと)|"
-    r"行きたくありません|行きたくない(?!わけ|こと)|"
-    r"行く気がありません|行く気がない(?!わけ|こと)|"
+    r"^(?:(?:は|が|も|には|に|では|なら|だと)[、,：:\s]*)?"
+    r"(?:あまり|そんなに|全然|もう|最近は|最近|ちょっと)?"
+    r"(?:好き(?:では|じゃ)(?:ありません|ない(?!わけ|こと))|"
+    r"得意(?:では|じゃ)(?:ありません|ない(?!わけ|こと))|"
+    r"苦手(?!(?:(?:では|じゃ)(?:ない|ありません)|というわけではない|というほどではない))|"
+    r"嫌い(?!(?:(?:では|じゃ)(?:ない|ありません)|というわけではない|というほどではない))|"
+    r"興味(?:が)?(?:ありません|ない(?!わけ|こと))|"
+    r"行きたく(?:ありません|ない(?!わけ|こと))|"
+    r"行く気が(?:ありません|ない(?!わけ|こと))|"
     r"行かなくな(?:った|りました)|"
     r"気になりません|気にならない(?!わけ|こと))"
 )
@@ -596,26 +598,19 @@ def _has_recent_self_disinterest_in_tapple_activity(
         "",
     )
     for clause in re.split(r"[。！？!?\n]", latest_self_text):
-        term_position = clause.find(activity_term)
-        if term_position < 0:
-            continue
-        following_activity_text = clause[
-            term_position + len(activity_term) :
-        ][:12]
-        disinterest_match = _TAPPLE_ACTIVITY_DISINTEREST_RE.search(
-            following_activity_text
-        )
-        preceding_activity_context = following_activity_text[
-            : disinterest_match.start()
-        ] if disinterest_match else ""
-        if disinterest_match and not any(
-            other_term in following_activity_text[: disinterest_match.start()]
-            for other_term in _TAPPLE_SHARED_ACTIVITY_TERMS
-            if other_term != activity_term
-        ) and not re.search(
-            r"(?:好き(?:です|だ|だけど|ですが|だけれど)|気になって)",
-            preceding_activity_context,
-        ):
+        for term_match in re.finditer(re.escape(activity_term), clause):
+            following_activity_text = clause[term_match.end() :]
+            disinterest_match = _TAPPLE_ACTIVITY_DISINTEREST_RE.match(
+                following_activity_text
+            )
+            if disinterest_match is None:
+                continue
+            later_interest = following_activity_text[disinterest_match.end() :]
+            if re.search(
+                r"(?:また|今度|これから).{0,8}(?:行きたい|行ってみたい|気になって|興味)",
+                later_interest,
+            ):
+                continue
             return True
     return False
 

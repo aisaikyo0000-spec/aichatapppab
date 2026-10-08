@@ -1122,21 +1122,25 @@ def test_explicit_hesitation_before_positive_interest_blocks_invite():
 
 
 def test_hesitation_in_separate_sentence_after_positive_interest_blocks_invite():
-    statement = "ぜひ一緒に行きたいです。少し迷っています。"
-    raw = _raw_strategy(
-        {
-            "action": "invite",
-            "rationale": "一緒に行きたいという意思があります。",
-            "evidence": ["ぜひ一緒に行きたいです"],
-            "invite_example": "人の多いカフェでお茶しませんか？",
-        }
-    )
+    for statement in (
+        "ぜひ一緒に行きたいです。少し迷っています。",
+        "ぜひ一緒に行きたいです。最近いろいろ考えていました。まだ迷っています。",
+        "ぜひ一緒に行きたいです。日程のことを確認しました。まだ迷っています。",
+    ):
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたいです"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
 
-    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
 
-    assert result is not None
-    assert result.action == "wait"
-    assert result.invite_example is None
+        assert result is not None, statement
+        assert result.action == "wait", statement
+        assert result.invite_example is None, statement
 
 
 def test_thinking_about_meeting_logistics_is_not_hesitation():
@@ -1146,7 +1150,11 @@ def test_thinking_about_meeting_logistics_is_not_hesitation():
         "会う日の候補で迷っています。ぜひ一緒に行きたいです。",
         "会う日がいつか迷っています。ぜひ一緒に行きたいです。",
         "ぜひ一緒に行きたいです。会う日で迷っています。",
-        "ぜひ会いたいです。どこで会うか迷っています。",
+        "ぜひ一緒に行きたいです。会う日取りで迷っています。",
+        "ぜひ一緒に行きたいです。会う曜日で迷っています。",
+        "ぜひ一緒に行きたいです。どこで会うか迷っています。",
+        "ぜひ一緒に行きたいです。何を着るか迷っています。",
+        "ぜひ一緒に行きたいです。何を話すか悩んでいます。",
         "会う日をどちらにするか悩んでいます。ぜひ一緒に行きたいです。",
         "一緒に行きたいけど、会う日の候補で迷っています。",
         "会う日の候補はいいけど、少し迷っています。ぜひ一緒に行きたいです。",
@@ -1337,7 +1345,11 @@ def test_unrelated_work_problem_does_not_block_date_scheduling():
         "ぜひ一緒に行きたいけど、仕事のことで悩んでいます。",
         "一緒に行きたいけど、会う日の候補で迷っています。",
         "ぜひ一緒に行きたいです。会う日で迷っています。",
-        "ぜひ会いたいです。どこで会うか迷っています。",
+        "ぜひ一緒に行きたいです。会う日取りで迷っています。",
+        "ぜひ一緒に行きたいです。会う曜日で迷っています。",
+        "ぜひ一緒に行きたいです。どこで会うか迷っています。",
+        "ぜひ一緒に行きたいです。何を着るか迷っています。",
+        "ぜひ一緒に行きたいです。何を話すか悩んでいます。",
         "会う日の候補はいいけど、少し迷っています。ぜひ一緒に行きたいです。",
         "会うのが楽しみですが、何を着ていくか迷っています。ぜひ一緒に行きたいです。",
         "会う前に何を話すか悩んでいます。ぜひ一緒に行きたいです。",
@@ -1370,15 +1382,20 @@ def test_hesitation_after_positive_interest_still_blocks_date_scheduling():
 
 
 def test_hesitation_in_separate_sentence_after_acceptance_blocks_date_scheduling():
-    violations = validate_candidate_replies(
-        ["ぜひ！日曜はどうですか？"],
-        1,
-        counterpart_message="ぜひ一緒に行きたいです。少し迷っています。",
-        strategy_mode="tapple",
-        tapple_action="continue",
-    )
+    for counterpart_message in (
+        "ぜひ一緒に行きたいです。少し迷っています。",
+        "ぜひ一緒に行きたいです。最近いろいろ考えていました。まだ迷っています。",
+        "ぜひ一緒に行きたいです。日程のことを確認しました。まだ迷っています。",
+    ):
+        violations = validate_candidate_replies(
+            ["ぜひ！日曜はどうですか？"],
+            1,
+            counterpart_message=counterpart_message,
+            strategy_mode="tapple",
+            tapple_action="continue",
+        )
 
-    assert any("誘い" in violation for violation in violations)
+        assert any("誘い" in violation for violation in violations), counterpart_message
 
 
 @pytest.mark.parametrize(

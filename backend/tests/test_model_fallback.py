@@ -16,6 +16,8 @@ def test_fresh_install_defaults_to_gemini_35_with_gemini_31_fallback(client, mon
         "AI_FALLBACK_PROVIDER",
         "AI_FALLBACK_MODEL",
         "AI_FALLBACK_API_KEY",
+        "GEMINI_SECONDARY_API_KEY",
+        "GEMINI_SECONDARY_API_KEY_FILE",
         "GEMINI_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -81,6 +83,30 @@ def test_explicit_fallback_environment_key_is_reported_as_environment_source(
     assert settings.status_code == 200
     assert settings.json()["fallback_api_key_env"] is True
     assert "fallback-env-secret" not in settings.text
+
+
+def test_secondary_gemini_key_file_is_loaded_without_exposing_its_value(
+    client, monkeypatch, tmp_path
+):
+    key_file = tmp_path / "gemini3.md"
+    secret = "secondary-gemini-key-for-test"
+    key_file.write_text(f"{secret}\n", encoding="utf-8")
+    monkeypatch.setenv("GEMINI_SECONDARY_API_KEY_FILE", str(key_file))
+    monkeypatch.delenv("GEMINI_SECONDARY_API_KEY", raising=False)
+    database.set_setting("ai_provider", "gemini")
+    database.set_setting("ai_model", "gemini-3.5-flash-lite")
+    database.set_setting("api_key_gemini", "primary-test-key")
+    database.set_setting("ai_fallback_provider", "gemini")
+    database.set_setting("ai_fallback_model", "gemini-3.1-flash-lite")
+    database.set_setting("ai_fallback_api_key", "")
+
+    cfg = get_ai_config()
+    response = client.get("/api/settings")
+
+    assert cfg["secondary_api_key"] == secret
+    assert response.status_code == 200
+    assert response.json()["has_secondary_api_key"] is True
+    assert secret not in response.text
 
 
 def _configure_generation(

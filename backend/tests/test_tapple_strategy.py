@@ -330,6 +330,8 @@ def test_decline_response_cannot_include_a_reinvitation():
         "ぜひ来週会いましょう。",
         "ぜひ会いましょう。",
         "会いましょう。",
+        "お会いしましょう。",
+        "ぜひお会いしませんか？",
     ],
 )
 def test_tapple_wait_strategy_rejects_soft_reinvitations(reply):

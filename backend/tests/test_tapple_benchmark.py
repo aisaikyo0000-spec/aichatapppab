@@ -4,6 +4,7 @@ import pytest
 from app.routers import generation
 from scripts.run_tapple_strategy_benchmark import (
     SCENARIOS,
+    _evaluate_result,
     _write_artifact,
     summarize_expectations,
 )
@@ -161,12 +162,24 @@ def test_tapple_benchmark_rejects_a_reinvitation_after_decline_even_when_action_
 
 
 @pytest.mark.parametrize("scenario_id", ["meeting_hesitation", "meeting_safety_concern"])
-@pytest.mark.parametrize("reinvite", ["ぜひ来週会いましょう。", "ぜひ会いましょう。", "会いましょう。"])
+@pytest.mark.parametrize(
+    "reinvite",
+    [
+        "ぜひ来週会いましょう。",
+        "ぜひ会いましょう。",
+        "会いましょう。",
+        "お会いしましょう。",
+        "ぜひお会いしませんか？",
+    ],
+)
 def test_tapple_benchmark_rejects_direct_reinvite_and_generic_reply_for_concern(scenario_id, reinvite):
     results = _valid_results()
     scenario = next(result for result in results if result["id"] == scenario_id)
+    benchmark_scenario = next(item for item in SCENARIOS if item["id"] == scenario_id)
     scenario["replies"] = [reinvite]
     scenario["expectation_met"] = True
+
+    assert "reinvitation_not_allowed" in _evaluate_result(benchmark_scenario, scenario)
 
     summary = summarize_expectations(results, complete=True)
 

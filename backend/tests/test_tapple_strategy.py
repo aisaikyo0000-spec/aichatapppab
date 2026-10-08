@@ -1080,6 +1080,31 @@ def test_explicit_hesitation_before_positive_interest_blocks_invite():
 
 
 @pytest.mark.parametrize(
+    "statement",
+    [
+        "ぜひ一緒に行きたいですが、もう少しメッセージで話してから会いたいです。",
+        "ぜひ一緒に行きたいけど、もう少しやり取りしてから会いたいです。",
+        "ぜひ一緒に行きたいですが、会うのはまだ早いと思います。",
+    ],
+)
+def test_invite_gate_respects_request_to_delay_meeting(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["ぜひ一緒に行きたい"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
+@pytest.mark.parametrize(
     "statement,evidence",
     [
         ("ぜひ一緒に行きたいですが、身元が分からず不安です。", "一緒に行きたい"),
@@ -1154,6 +1179,18 @@ def test_explicit_hesitation_before_positive_interest_blocks_scheduling():
         ["ぜひ！日曜はどうですか？"],
         1,
         counterpart_message="まだ迷っていますが、ぜひ一緒に行きたいです。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_request_to_talk_more_before_meeting_blocks_date_scheduling():
+    violations = validate_candidate_replies(
+        ["ぜひ！日曜はどうですか？"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいですが、もう少しメッセージで話してから会いたいです。",
         strategy_mode="tapple",
         tapple_action="continue",
     )

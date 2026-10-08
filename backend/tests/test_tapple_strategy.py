@@ -829,6 +829,17 @@ def test_tapple_benchmark_includes_a_receptive_but_not_yet_agreed_invitation_cas
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
 
 
+def test_tapple_benchmark_covers_recent_disinterest_in_the_proposed_activity():
+    scenario = next(
+        scenario
+        for scenario in run_tapple_strategy_benchmark.SCENARIOS
+        if scenario["id"] == "recent_activity_disinterest"
+    )
+
+    assert scenario["expected_action"] == "wait"
+    assert "最近はあまり好きではない" in scenario["messages"][-2]["content"]
+
+
 @pytest.mark.parametrize(
     "scenario_id, parsed_action",
     [

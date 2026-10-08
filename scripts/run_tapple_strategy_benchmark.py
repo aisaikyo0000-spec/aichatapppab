@@ -52,7 +52,10 @@ SCENARIOS = (
         ],
         "allowed_actions": ["wait"],
         "no_reinvitation": True,
-        "reply_must_contain_any": ["大丈夫", "無理", "ゆっくり", "話"],
+        "reply_must_contain_any": [
+            "迷う", "迷って", "無理に会わ", "無理せず", "急がず", "焦らず",
+            "自分のペース", "メッセージで",
+        ],
     },
     {
         "id": "meeting_safety_concern",
@@ -63,7 +66,10 @@ SCENARIOS = (
         ],
         "allowed_actions": ["wait", "continue"],
         "no_reinvitation": True,
-        "reply_must_contain_any": ["大丈夫", "無理", "話", "安心"],
+        "reply_must_contain_any": [
+            "不安", "安心", "安全", "無理に会わ", "無理せず", "ゆっくり",
+            "自分のペース", "メッセージで",
+        ],
     },
     {
         "id": "ambiguous_interest",
@@ -163,6 +169,16 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
             failures.append("external_contact_request")
         if scenario.get("no_reinvitation") and generation._TAPPLE_REINVITATION_RE.search(reply):
             failures.append("reinvitation_not_allowed")
+        if scenario.get("no_reinvitation"):
+            violations = generation.validate_candidate_replies(
+                [reply],
+                1,
+                counterpart_message=latest_contact,
+                strategy_mode="tapple",
+                tapple_action=action,
+            )
+            if violations:
+                failures.append("reply_validation_failed")
         required_reply_markers = scenario.get("reply_must_contain_any", [])
         if required_reply_markers and not any(marker in reply for marker in required_reply_markers):
             failures.append("reply_not_contextual")

@@ -114,6 +114,8 @@ def test_pipeline_verifier_rejects_unhashable_generation_account_label():
 
 def test_manual_review_bundle_includes_representative_and_flagged_outputs():
     artifact = _artifact()
+    artifact["cases"][0]["contact"] = "相手の代表ケース本文"
+    artifact["cases"][0]["candidates"] = ["代表候補A", "代表候補B", "代表候補C"]
     flagged_case = artifact["cases"][1]
     flagged_case["contact"] = "相手の元発言"
     flagged_case["candidates"][1] = "根拠のない候補"
@@ -136,6 +138,12 @@ def test_manual_review_bundle_includes_representative_and_flagged_outputs():
     assert bundle["representative_cases"] == [
         CANONICAL_IDS[index] for index in (0, 9, 19, 29, 39, 49, 59, 69)
     ]
+    assert bundle["representative_outputs"][0] == {
+        "case_id": CANONICAL_IDS[0],
+        "contact": "相手の代表ケース本文",
+        "candidates": ["代表候補A", "代表候補B", "代表候補C"],
+        "safe_user_question": None,
+    }
     assert bundle["flagged_candidates"] == [
         {
             "case_id": CANONICAL_IDS[1],

@@ -23,8 +23,11 @@
 - ローカル設定の安全確認では、provider=Gemini、標準3.5、予備モデル3.1、メイン・予備キーともに読み込み済み。キーの値は表示していない。実際にAPIが受け付けるかは朝の疎通確認まで未確定
 - 朝の実行手順を修正し、疎通で成功したモデルとアカウントを後続ベンチへ渡す。70ケースから返信例8件を表示して人が確認し、Contact/Tappleの返信artifactも確認してからPASSを入力する
 - route-state共有テストを追加し、修正前に失敗することを確認した。不正なUTF-8、キー設定の変更、fingerprintのない旧形式を含む状態ファイルは無視する。quota関連focused suiteは **27 passed**。全backend suiteは**853 passed / 2 warnings**。frontend build、compileall、3つのCLI `--help`、`git diff --check`、PowerShell受け入れ手順の構文検査はPASS。Tapple safety Reviewerとroute-state設定指紋Reviewerはともに**PASS**
-- 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全8シナリオを画面に表示する
-- ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。オフライン準備分は独立レビュー後にforkへpushし、SHA一致を確認した
+- 朝の実行用PowerShellでは共通route-stateファイルを作り、3つのベンチすべてへ渡す。返信サンプル8件、Contact全9返信、Tapple全9シナリオを画面に表示する
+- 独立Tapple調査で、会話文から相手の信頼性や実際の安全性をAIが判定できるように読める点と、返信の温度低下時の対応が未検証である点を指摘された。招待提案にはAIの安全性判断の限界と本人の判断を促す注意を付け、短い返答・話題展開の減少が続く場合に追いかけず待つ9件目のシナリオを追加した
+- 70ケースの目視確認用出力は固定8件だけでなく、検証器が注意候補と本人確認分岐をすべて列挙する。注意候補は自動不合格ではなく、人が返信全体とartifactを照合するための目印
+- 独立レビューで検出されたTappleの9件目fixture漏れと不正UTF-8 artifactのtracebackを回帰テストで再現して修正。Tapple・検証器・モデルfallbackのfocused suiteは**373 passed**。全backend suiteは**858 passed / 2 warnings**、frontend build・compileall・`git diff --check`・PowerShell AST parseは**PASS**。新規のread-only Python Reviewerは修正後の差分に**PASS**
+- ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。オフライン準備分は独立レビュー後にforkへpushし、SHA一致を確認する
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）
 
@@ -418,7 +421,7 @@ if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。art
 Get-Content -Raw $contactOut
 if ((Read-Host '全9返信を読み、A/B/Cの文体差と文脈・自然さ・非コピー基準をすべて満たせばPASS') -cne 'PASS') { throw 'Contact Benchの品質基準が3/3に達していないためTapple評価を止めます。' }
 python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
-if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が8/8でないか実行未完了です。artifact: $tappleOut" }
+if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が9/9でないか実行未完了です。artifact: $tappleOut" }
 Get-Content -Raw $tappleOut
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
 python -m pytest backend/tests -q
@@ -444,7 +447,7 @@ if ($localSha -ne $remoteSha) { throw "fork SHAが一致しません。local=$lo
 Write-Output "fork branch verified at $localSha"
 ```
 
-疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 8シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
+疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 9シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
 
 Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run_status.complete`はA/B/Cの生成完了だけを示す。JSON内の9返信をすべて読み、どの連絡先にも送れる自然な返信になっていること、入力内容に答えて不要な質問や根拠のない事実を足していないこと、相手の語句をそのまま写していないことを確認する。さらにAは手入力Goldに沿って短く砕けた傾向、Bは自然な丁寧さと相対的に十分な文量、Cは中間の文量と丁寧・砕けた表現の混在が返信群に表れることを確認する。固定文字数やsignatureの差だけでは合格にせず、3者の実際の返信群すべてが条件を満たす場合だけ3/3とする。
 
@@ -456,7 +459,7 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 
 ## Step 18-R4 Iteration 36: 評価artifactの品質ゲート
 
-- Tapple Benchは期待戦略が8/8揃わない場合に終了コード3、シナリオ不足・重複・生成エラーの場合は終了コード2を返す。artifactの`complete`も8種類の一意なIDとエラーなしを要求する。Tapple返信文の自然さ・文脈・安全性は別途目視レビューする
+- Tapple Benchは期待戦略が9/9揃わない場合に終了コード3、シナリオ不足・重複・生成エラーの場合は終了コード2を返す。artifactの`complete`も9種類の一意なIDとエラーなしを要求する。Tapple返信文の自然さ・文脈・安全性は別途目視レビューする
 - `verify_pipeline_benchmark.py`を追加。リポジトリ内の正規70ケースIDの完全一致・一意性、候補3件または安全な利用者確認、全候補のissue/four-axisレコード、summaryと再計算値の一致、6閾値を検証する。任意のケース集合で正規ベンチを置き換えるCLIオプションは設けていない
 - Gemini 3.5/3.1 Flash Liteの429はプロバイダー内で再試行せず、上位のモデル・アカウント切替へ即時返す。他モデルの既存再試行動作は維持
 - 関連commit: Tapple品質ゲート `fddd813`→`3347108`→`011f384`→`940949c`→`9778dde`→`d5ac1ef`、正規70ケース検証器 `1ed1802`→`a25684d`→`786644c`→`325ccfe`→`3b01f3c`→`98f2e55`、quota時の即時切替 `dc81496`→`febd5da`

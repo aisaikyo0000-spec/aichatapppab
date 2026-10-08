@@ -255,6 +255,25 @@ def test_pipeline_verifier_cli_does_not_accept_case_set_override(monkeypatch):
     assert exc_info.value.code == 2
 
 
+def test_pipeline_verifier_cli_returns_json_for_invalid_utf8_artifact(tmp_path, monkeypatch, capsys):
+    from verify_pipeline_benchmark import main
+
+    artifact_path = tmp_path / "invalid.json"
+    artifact_path.write_bytes(b"\xff")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["verify_pipeline_benchmark.py", "--artifact", str(artifact_path)],
+    )
+
+    assert main() == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "quality_pass": False,
+        "exit_code": 2,
+        "failures": ["UnicodeDecodeError"],
+    }
+
+
 def test_pipeline_verifier_requires_complete_four_axis_record():
     artifact = _artifact()
     artifact["cases"][0]["four_axis"][0].pop("personal_style_fit")

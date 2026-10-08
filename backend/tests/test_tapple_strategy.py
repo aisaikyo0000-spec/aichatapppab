@@ -180,7 +180,7 @@ def test_strategy_accepts_exact_conversation_evidence_and_explicit_interest():
     assert result is not None
     assert result.action == "invite"
     assert result.evidence == ["今度一緒に行きたいです"]
-    assert "AIは相手の信頼性を判断できません" in result.rationale
+    assert "AIは相手の信頼性や実際の安全性を判断できません" in result.rationale
 
 
 def test_tapple_benchmark_requires_wait_after_engagement_declines():

@@ -1,5 +1,13 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-09 受け入れ準備の追加レビュー
+
+Tappleの招待提案には、AIが相手の信頼性や実際の安全性を判定できないことを明記し、利用者自身が安全だと感じる場合に限り検討するよう表示する。返信が繰り返し短くなり話題の展開も減ったケースを9件目として追加し、返信速度だけで関心を推測しない方針をpromptとベンチに反映した。これはsynthetic caseの期待動作であり、実APIでの遵守は未検証。
+
+70ケースの手動確認では、代表8ケースに加え、検証器が注意を示した候補と本人確認への分岐を全て出力する。注意候補は品質不合格の自動判定ではなく、人が元の会話・返信・評価artifactを照合するための確認リストである。不正なUTF-8 artifactを読み込んでも検証器がtracebackで終了しないよう、JSON形式の構造化エラーにする。
+
+独立レビューの初回判定は、Tappleシナリオ追加に対するテストfixture漏れと不正UTF-8入力時のクラッシュを指摘したためFAIL。両方をREDテストで再現して修正し、新規Reviewerの再確認は**PASS**。focused suiteは**373 passed**、全backend suiteは**858 passed / 2 warnings**、frontend build・`compileall`・`git diff --check`・PowerShell AST parseもPASS。Geminiの経路はprimary 3.5→primary 3.1→secondary 3.5→secondary 3.1で、次の経路へ進む条件はquota/rate limitに限定する。API疎通、最新70ケース、Contact Bench、Tappleの実生成はまだ行っていない。
+
 ## 2026-10-09 オフライン受け入れ準備
 
 pipeline・Contact・Tappleの各ベンチが、同じrun専用`quota-route.json`で直近の成功アカウント・モデルを共有する。状態にはアカウントとモデルに加え、APIキー本体を含まないキー設定のSHA-256 fingerprintを記録する。別キー設定で読み込んだ状態は無視し、runフォルダ名にはGUIDを含める。追加したREDテストは修正前に再現した。不正なUTF-8やfingerprintのない旧形式の状態ファイルも無視する。README冒頭には旧仕様の記録であることを明記し、現行コードと分析資料、LIAISONへの参照を置いた。focused suiteは**27 passed**、backend全体は**853 passed / 2 warnings**。Tapple safety Reviewerとroute-state設定指紋Reviewerは**PASS**。実APIの疎通、最新70ケース、Contact Bench、Tapple実生成と文章確認はまだ行っていない。

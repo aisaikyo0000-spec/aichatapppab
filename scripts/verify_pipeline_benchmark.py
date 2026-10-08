@@ -308,7 +308,7 @@ def main() -> int:
         canonical_cases = json.loads(
             (ROOT / "backend" / "tests" / "step10_benchmark_inputs.json").read_text(encoding="utf-8")
         )
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(json.dumps({"quality_pass": False, "exit_code": 2, "failures": [type(exc).__name__]}))
         return 2
     if not isinstance(artifact, dict) or not isinstance(canonical_cases, list):

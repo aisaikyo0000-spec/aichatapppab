@@ -343,3 +343,16 @@
 - Tapple専用テスト **26 passed**、fallbackテスト **13 passed**。最新全backend suiteは**504 passed / 2 warnings**、frontend build、`git diff --check`、対象Python compileも**PASS**。新しい独立Python Reviewerは修正後の差分とfocused testを確認して**PASS**
 - APIは呼び出していない。Step 18-R4の最新70ケース、Contact Bench、Tapple実生成は依然未実施で、R4は未完成・pushなし
 - GitHub基点`main`: `a75ba76`。実装WIP commit: `c99f81f`（branch `codex/chat-quality-20261008`、未push）。RED確認用test checkpointから実装・テスト・資料をまとめてローカルcommitした。API依存評価が未完了のためGitHubへpushしていない
+
+## Gemini benchmarkの2アカウントfallback
+
+- API復旧後に使う`run_pipeline_benchmark.py`と`run_contact_benchmark.py`が予備キーを受け取っていなかったため、両スクリプトに任意の`--secondary-env-file`を追加した。主キーを使った3.5→3.1の後、両方が`rate_limit`なら予備キーの3.5→3.1へ進む設定をアプリ本体へ渡す
+- 設定組み立ての単体テストは**2 passed**。両CLIのhelp表示も確認済み。最新全backend suiteは**506 passed / 2 warnings**、frontend build・`git diff --check`・対象Python compileも**PASS**。独立Python Reviewer **PASS**
+- 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Benchを実行する。両スクリプトの既定待機はケースごとに6秒。artifactは共有せずローカルの一時領域へ保存する
+- 実装commitは`61ec2fe`（作業branchにローカル保存、未push）。API復旧と品質評価が終わるまでGitHubへのpushは保留する
+
+```powershell
+python scripts/check_tapple_api_connectivity.py --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
+python scripts/run_pipeline_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
+python scripts/run_contact_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
+```

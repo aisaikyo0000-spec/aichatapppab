@@ -1916,3 +1916,11 @@ REDを確認した後、Gold 1/2/3/4件それぞれと対象相手Silver 3件の
 最初の独立Reviewerはさらに「LINEしない？」等の短縮表現が拒否条件から漏れる点と、生成文を安全な確認文に置き換えた後も元の戦略を返す点を指摘してFAIL。双方の再現テストを追加した。外部連絡先名と「しない」「しません」等を組み合わせた提案を拒否する。決定論的な確認文へ候補を置き換えた場合は、対応するAI戦略がないため戦略カードを省く。
 
 Tapple専用テストは**26 passed**、Gemini fallbackテストは**13 passed**。最新全backend suiteは**504 passed / 2 warnings**。frontend build、`git diff --check`、対象Python compileは**PASS**。新しい独立Python Reviewerも修正後の差分とfocused testを確認して**PASS**。API呼び出しはしていない。Step 18-R4の最新70ケース、Contact Bench、Tapple実生成は引き続き未完了。
+
+## Geminiベンチマークの予備アカウントfallback
+
+朝に行う実生成評価でも、主アカウントの3.5と3.1が両方レート制限になった後に予備アカウントへ移れるよう、`run_pipeline_benchmark.py`と`run_contact_benchmark.py`に`--secondary-env-file`を追加した。両Runnerは主キー・予備キーを別ファイルから読み込み、APIキーを表示せずアプリのGemini設定へ渡す。3.5実行時のfallback設定は主アカウントの3.1のまま維持するため、アプリ本体のquota chainが主3.5→主3.1→予備3.5→予備3.1を適用する。
+
+共有設定関数のテスト**2 passed**、両CLIの`--help`も確認した。最新backend suiteは**506 passed / 2 warnings**。Frontend build、`git diff --check`、対象Python compileも**PASS**。独立Python Reviewerは両Runnerがキーを表示せず予備キーを渡し、従来の3.5→3.1順を維持することを確認して**PASS**。実装commitは`61ec2fe`で、未push。
+
+API疎通・70ケース・Contact Benchは依然未実施。API回復後はまず一回だけ疎通を確認し、3.5を指定して全70ケース、続いて3接触先のContact Benchを実行する。ケース間の既定待機時間は6秒。

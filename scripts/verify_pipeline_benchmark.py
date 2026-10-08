@@ -108,7 +108,8 @@ def _generation_provenance_is_valid(cases: list[dict[str, Any]]) -> bool:
         account = route.get("account")
         model = route.get("model")
         if (
-            account not in {"primary", "secondary"}
+            not isinstance(account, str)
+            or account not in {"primary", "secondary"}
             or not isinstance(model, str)
             or not model.strip()
         ):

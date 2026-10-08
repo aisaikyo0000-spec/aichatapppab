@@ -255,6 +255,7 @@ def test_pipeline_verifier_allows_explicit_safe_user_question_without_candidates
     case["candidates"] = []
     case["issues"] = []
     case["four_axis"] = []
+    case["models_used"] = []
     case["safe_user_question"] = "相手に好みを確認してください。"
     artifact["summary"]["issues"].update(
         {

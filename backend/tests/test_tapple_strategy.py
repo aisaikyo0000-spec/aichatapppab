@@ -1269,6 +1269,26 @@ def test_unrelated_work_hesitation_does_not_block_invite():
         assert result.invite_example is not None, statement
 
 
+def test_work_context_does_not_hide_explicit_meeting_hesitation():
+    for statement in (
+        "仕事もあるので会うのは少し迷っています。ぜひ一緒に行きたいです。",
+        "仕事が忙しいので会うのはまだ迷っています。ぜひ一緒に行きたいです。",
+    ):
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたいです"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
+
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+        assert result is not None, statement
+        assert result.action == "wait", statement
+
+
 def test_thinking_about_meeting_logistics_is_not_hesitation():
     for statement in (
         "来週会う日程を考えています。ぜひ一緒に行きたいです。",
@@ -1697,6 +1717,22 @@ def test_qualified_or_leading_work_hesitation_does_not_block_date_scheduling():
         )
 
         assert not any("誘い" in violation for violation in violations), counterpart_message
+
+
+def test_work_context_does_not_hide_meeting_hesitation_from_scheduler():
+    for counterpart_message in (
+        "仕事もあるので会うのは少し迷っています。ぜひ一緒に行きたいです。",
+        "仕事が忙しいので会うのはまだ迷っています。ぜひ一緒に行きたいです。",
+    ):
+        violations = validate_candidate_replies(
+            ["日曜はどうですか？"],
+            1,
+            counterpart_message=counterpart_message,
+            strategy_mode="tapple",
+            tapple_action="continue",
+        )
+
+        assert any("誘い" in violation for violation in violations), counterpart_message
 
 
 @pytest.mark.parametrize(

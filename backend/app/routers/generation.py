@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 
 from fastapi import APIRouter, HTTPException
 
@@ -39,7 +40,11 @@ def _strip_code_fence(text: str) -> str:
 def _extract_ai_question(raw: str) -> str | None:
     """出力全体が [AI_QUESTION]...[/AI_QUESTION] の場合のみ質問文を抽出する（fullmatch）。"""
     t = _strip_code_fence(raw).strip()
-    match = re.fullmatch(r"\[AI_QUESTION\]\s*(.+?)\s*(?:\[/AI_QUESTION\])?", t, re.DOTALL)
+    match = re.fullmatch(
+        r"\[AI_QUESTION\]\s*((?:(?!\[/AI_QUESTION\]).)+?)(?:\s*\[/AI_QUESTION\])?",
+        t,
+        re.DOTALL,
+    )
     if match:
         q = match.group(1).strip()
         if q:
@@ -89,6 +94,429 @@ def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
         return blocks
 
     return []
+
+
+_EXPERIENCE_ACTIONS: dict[str, tuple[str, ...]] = {
+    "visit": ("行ってきました", "行ってきた", "訪れてきました", "訪れてきた", "行けた", "行けて", "行った", "行きました", "行って", "行く", "行きます", "訪れた", "訪れました", "訪れる"),
+    "eat": ("食べてきました", "食べてきた", "食べた", "食べました", "食べて", "食べる", "食べます"),
+    "drink": ("飲んできました", "飲んできた", "飲んだ", "飲みました", "飲んで", "飲む", "飲みます"),
+    "watch": ("見てきました", "見てきた", "見た", "見ました", "見て", "見る", "見ます"),
+    "use": ("使ってきました", "使ってきた", "使った", "使いました", "使って", "使う", "使います"),
+    "ride": ("乗ってきました", "乗ってきた", "乗った", "乗りました", "乗って", "乗る", "乗ります"),
+    "reside": ("暮らしてきました", "暮らしてきた", "住んできました", "住んできた", "暮らした", "暮らしました", "住んだ", "住みました", "暮らして", "住んで"),
+}
+def _experience_action(text: str) -> tuple[str, re.Match[str]] | None:
+    """Return the rightmost supported experience verb (the active clause)."""
+    matches: list[tuple[int, str, re.Match[str]]] = []
+    for action, forms in _EXPERIENCE_ACTIONS.items():
+        pattern = re.compile("|".join(map(re.escape, sorted(forms, key=len, reverse=True))))
+        matches.extend((match.start(), action, match) for match in pattern.finditer(text))
+    if matches:
+        _, action, match = max(matches, key=lambda item: item[0])
+        return action, match
+    generic = re.search(r"経験(?:が)?(?:ある|あります|ない|ありません)", text)
+    if generic:
+        return "experience", generic
+    return None
+
+
+def _topic_before(text: str, end: int) -> str:
+    """Extract a compact Japanese topic immediately before an experience verb."""
+    prefix = text[:end].strip()
+    prefix = re.split(r"[、。！？!?\s]", prefix)[-1]
+    # Protect common temporal expressions from the delimiter "で" below.
+    prefix = re.sub(r"(?:今まで|これまで)", "", prefix)
+    prefix = re.split(r"(?:で|けど|けれど|だけど|ので|から|そして)", prefix)[-1]
+    prefix = re.sub(
+        r"^(?:(?:[0-9]+|[一二三四五六七八九十]+)年間?|(?:学生|高校|大学|社会人)時代|"
+        r"子どもの頃|この前|今まで|昔|以前|前|今|最近|一度|何度か|昨日|先日|たまに|よく|時々|ときどき|しょっちゅう|いつも)(?:に|は|から|頃)?",
+        "",
+        prefix,
+    )
+    prefix = re.sub(r"^(?:自分|私|わたし|僕|ぼく|俺)(?:も|は|が|の)?", "", prefix)
+    prefix = re.sub(r"(?:食べ|飲み|見|観|買い)に$", "", prefix)
+    prefix = re.sub(r"(?:まだ|もう|すでに|今まで|学生時代|昔|以前|前|今|最近|先日|この前)(?:に|は|から|頃)?$", "", prefix)
+    prefix = re.sub(r"(?:って|は|が|を|に|で|なら|とか|の)+$", "", prefix)
+    return prefix[-12:]
+
+
+def _experience_claim(text: str, default_topic: str, default_action: str) -> dict[str, str] | None:
+    """Classify the first direct answer claim, without borrowing polarity from later clauses."""
+    normalized = unicodedata.normalize("NFKC", text)
+    # Standalone yes/no answers can inherit the question's action. Do not mistake
+    # existential observations such as "そういう店ありますよね" for a yes-answer.
+    generic_answer = re.match(
+        r"^\s*(?:(?:うん|はい|ううん|いいえ|いや|そう|一応|実は|確か|たしか|多分|たぶん|まあ|"
+        r"自分も|私も|わたしも|僕も|ぼくも|俺も)[、,]?\s*)?"
+        r"(?:あります|ある|ありません|ない)(?:よ|ね|です|ですよ|ですね|ですよね|！|!|。|$)",
+        normalized,
+    )
+    if generic_answer:
+        answer = generic_answer.group(0)
+        return {
+            "topic": default_topic,
+            "action": default_action,
+            "polarity": "negative" if _is_negative_experience(answer, allow_bare=True) else "positive",
+            "strength": "single",
+        }
+
+    # Inspect one sentence at a time so a later third-party mention cannot change
+    # the polarity or subject of the user's direct answer.
+    clauses = _split_experience_clauses(normalized)
+    past_action_forms = {
+        "行った", "行きました", "訪れた", "訪れました", "食べた", "食べました",
+        "飲んだ", "飲みました", "見た", "見ました", "使った", "使いました",
+        "乗った", "乗りました", "行ってきた", "行ってきました",
+        "訪れてきた", "訪れてきました", "食べてきた", "食べてきました",
+        "飲んできた", "飲んできました", "見てきた", "見てきました",
+        "使ってきた", "使ってきました", "乗ってきた", "乗ってきました",
+        "暮らした", "暮らしました", "住んだ", "住みました",
+    }
+    for clause in clauses:
+        action_match = _experience_action(clause)
+        if not action_match:
+            continue
+        prefix = clause[:action_match[1].start()]
+        suffix = clause[action_match[1].end():]
+        # Exclude a locally attributed third-party claim, not a separate later mention.
+        if re.search(
+            r"(?:(?:彼氏|彼女|恋人|友達|友人|家族|相手|あの人|その人|彼)(?:は|が|も|には|にも|なら|にとって)|人|方)$",
+            prefix,
+        ):
+            continue
+        if re.search(
+            r"こと(?:が)?(?:ある|あります|ない|ありません)人(?:は|が|も|には|にも|なら|に|多い)|"
+            r"(?:こと(?:が)?(?:ない|ありません)|て(?:い)?(?:ない|ません))人(?:は|が|も|には|にも|なら|に)?|"
+            r"人(?:は|が|も|には|にも|なら|に|多い)",
+            action_match[0] + suffix,
+        ):
+            continue
+
+        action_key = action_match[0]
+        topic = _topic_before(clause, action_match[1].start()) or default_topic
+        has_past = bool(
+            action_match[1].group() in past_action_forms
+            or (
+                action_key == "reside"
+                and re.search(r"(?:住んで(?:います|いる|る)|暮らして(?:います|いる|る))", clause)
+            )
+            or re.search(
+                r"(?:この前|前に|最近|一度|何度か|昨日|先日|こと(?:が)?ある|こと(?:が)?ない|こと(?:が)?ありません|"
+                r"てきた|てきました|てない|ていない|てません|ていません|てる|てます|ています|ている|てた|ていた|"
+                r"行けた|行けて|"
+                r"した|しました|んだ|たよ|たね|たんです)",
+                clause,
+            )
+        )
+        is_habit = _has_habit_frequency(clause) or bool(re.search(r"て(?:る|ます|います|いる)", clause))
+        if not (has_past or is_habit):
+            continue
+        if re.search(r"(?:こと(?:が)?なくはない|なくはない|ないわけではない|ないこともない)", clause):
+            polarity = "ambiguous"
+        else:
+            polarity = "negative" if _is_negative_experience(clause) else "positive"
+        return {
+            "topic": topic, "action": action_key, "polarity": polarity,
+            "strength": "habit" if is_habit else "single",
+        }
+    return None
+
+
+def _has_habit_frequency(text: str) -> bool:
+    return bool(re.search(
+        r"(?:よく|たまに|時々|ときどき|しょっちゅう|いつも|普段|"
+        r"月に(?:一|１|[1-9１-９])度|毎月|週に?(?:一|１|[1-9１-９])回|毎週|"
+        r"週[1-9１-９]回|年に(?:一|１|[1-9１-９])度|毎年|て(?:る|ます|います|いる|た|いた))",
+        text,
+    ))
+
+
+def _is_negative_experience(text: str, *, allow_bare: bool = False) -> bool:
+    action_negation = re.search(
+        r"(?:こと(?:が|は)?(?:ない|ありません)|"
+        r"(?:行っ|行け|食べ|飲ん|見|使っ|乗っ)?て(?:い)?(?:ない|ません)|"
+        r"行かない|行きません|食べない|食べません|飲まない|飲みません|"
+        r"見ない|見ません|使わない|使いません|乗らない|乗りません|なかった)",
+        text,
+    )
+    if action_negation:
+        return True
+    return allow_bare and bool(re.search(r"(?:ありません|ない)(?:よ|ね|です|ですよ|ですね|！|!|。|$)", text))
+
+
+def _split_experience_clauses(text: str) -> list[str]:
+    clauses = re.split(r"(?<=[。！？!?、,])|(?:けれど|けど|だけど|でも)|[\r\n]", text)
+    split_clauses: list[str] = []
+    for clause in clauses:
+        split_clauses.extend(re.split(r"が(?=(?:今|最近|現在|行|訪れ|食べ|飲み|見|使い|乗|詳しく))", clause))
+    return split_clauses
+
+
+def _experience_topic_matches(claim_topic: str, fact_topic: str, is_generic_experience: bool) -> bool:
+    if not claim_topic or not fact_topic:
+        return False
+    if claim_topic == fact_topic:
+        return True
+    if not is_generic_experience:
+        return claim_topic in fact_topic or fact_topic in claim_topic
+
+    # A broad experience label can match a concrete travel/activity subtype, but
+    # not an unrelated use of the same word (e.g. overseas dramas vs. overseas trips).
+    subtypes = ("旅行", "出張", "留学", "滞在", "観光", "訪問", "渡航", "生活", "居住", "移住", "駐在", "屋")
+    if fact_topic.startswith(claim_topic):
+        return fact_topic[len(claim_topic):].startswith(subtypes)
+    if fact_topic.endswith(claim_topic):
+        prefix = fact_topic[:-len(claim_topic)]
+        return prefix in ("海外", "国内", "一人", "家族", "短期", "長期")
+    return False
+
+
+def _fact_supports_experience_claim(fact: str, claim: dict[str, str]) -> bool:
+    normalized = unicodedata.normalize("NFKC", fact)
+    fact_clauses = _split_experience_clauses(normalized)
+    for fact_clause in fact_clauses:
+        action_match = _experience_action(fact_clause)
+        if not action_match:
+            continue
+        action = action_match[0]
+        is_generic_experience = claim["action"] == "experience"
+        if not is_generic_experience and action != claim["action"]:
+            continue
+
+        fact_topic = _topic_before(fact_clause, action_match[1].start())
+        if not _experience_topic_matches(claim["topic"], fact_topic, is_generic_experience):
+            continue
+        if re.search(r"(?:こと(?:が)?なくはない|なくはない|ないわけではない|ないこともない)", fact_clause):
+            continue
+        polarity = "negative" if _is_negative_experience(fact_clause) else "positive"
+        if polarity != claim["polarity"]:
+            continue
+        if claim["strength"] == "habit" and not _has_habit_frequency(fact_clause):
+            continue
+        return True
+    return False
+
+
+def _last_experience_question(text: str) -> tuple[str, re.Match[str], str] | None:
+    """Return the action/topic from the last explicit experience-question clause."""
+    normalized = unicodedata.normalize("NFKC", text)
+    clauses = re.split(r"(?<=[?？。！!])", normalized)
+    for clause in reversed(clauses):
+        if not re.search(r"[?？]", clause):
+            continue
+        # Require the experience wording or the action itself to close the question;
+        # this excludes quoted history such as "行ったことあるって話したよね？".
+        if not re.search(
+            r"(?:(?:こと(?:が|は)?(?:ある|あります|ない|ありません)(?:んです|の|んだっけ|だっけ|かな|かも)?|"
+            r"こと(?:が|は)?(?:とか)?ある|こと(?:が|は)?あったりする|"
+            r"経験(?:が)?(?:ある|あります|ない|ありません)(?:んです|の|んだっけ|だっけ|かな|かも)?)(?:か)?|"
+            r"(?:行った|行きました|食べた|食べました|飲んだ|飲みました|見た|見ました|使った|使いました|乗った|乗りました)(?:の|んだっけ|だっけ|かな)?)\?\s*$",
+            clause,
+        ):
+            continue
+        action_match = _experience_action(clause)
+        if action_match:
+            return action_match[0], action_match[1], clause
+    return None
+
+
+def _needs_private_experience_confirmation(
+    counterpart_message: str,
+    known_self_facts: list[str] | None,
+) -> bool:
+    """Whether an experience question in the latest message lacks any known answer."""
+    experience_question = _last_experience_question(counterpart_message)
+    if not experience_question:
+        return False
+
+    action, action_match, question_clause = experience_question
+    topic = _topic_before(question_clause, action_match.start())
+    for polarity in ("positive", "negative"):
+        possible_answer = {
+            "topic": topic,
+            "action": action,
+            "polarity": polarity,
+            "strength": "single",
+        }
+        if any(
+            _fact_supports_experience_claim(fact, possible_answer)
+            for fact in (known_self_facts or [])
+            if fact
+        ):
+            return False
+    return True
+
+
+def _is_private_question_for_unknown_experience(
+    question_text: str,
+    counterpart_message: str,
+    known_self_facts: list[str] | None,
+) -> bool:
+    """Check that a private question actually asks about the unknown experience."""
+    if not _needs_private_experience_confirmation(counterpart_message, known_self_facts):
+        return False
+    experience_question = _last_experience_question(counterpart_message)
+    private_action = _experience_action(question_text)
+    if not experience_question or not private_action:
+        return False
+
+    expected_action, question_match, question_clause = experience_question
+    actual_action, private_match = private_action
+    if expected_action != actual_action:
+        return False
+
+    expected_topic = _topic_before(question_clause, question_match.start())
+    private_topic = _topic_before(question_text, private_match.start())
+    if not _experience_topic_matches(
+        expected_topic,
+        private_topic,
+        expected_action == "experience",
+    ):
+        return False
+
+    return bool(re.search(
+        r"(?:こと(?:が|は)?(?:ある|あります|ない|ありません)|経験(?:が)?(?:ある|あります|ない|ありません))",
+        unicodedata.normalize("NFKC", question_text),
+    ))
+
+
+_UNRESOLVED_STATUS_QUERY = re.compile(
+    r"(?:あれ|それ|その件|例の(?:話|件|やつ)?|あの件).{0,12}"
+    r"(?:どうな(?:った|りました|ってる|ってます|っている)|どう(?:してる|なってる)|進捗|状況)",
+)
+_STATUS_ASSERTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("progress", re.compile(r"(?:順調に進んで|順調に進行|進行中|進んで(?:い)?(?:る|ます|います|るよ|ますよ)|進んでる)")),
+    ("undecided", re.compile(r"(?:まだ|全然)?決まって(?:い)?(?:ない|なくて|ません|なかった)|未定")),
+    ("deciding", re.compile(r"(?:これから|今から|これから先)?決める(?:感じ|予定|ところ)?|検討中")),
+    ("decided", re.compile(r"(?:もう)?決ま(?:った|りました|ってる|っています)|決定した")),
+    ("completed", re.compile(r"(?:もう)?(?:終わった|終わりました|完了した|完了しました|済んだ|済みました)")),
+)
+
+
+def _unresolved_status_query(message: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", message or "")
+    return bool(_UNRESOLVED_STATUS_QUERY.search(normalized))
+
+
+def _status_claims(text: str) -> tuple[list[str], list[str]]:
+    """Return asserted statuses and status questions, preserving every claim.
+
+    Japanese questions such as 「まだ決まってないんですか？」 contain the
+    same lexical status pattern as an assertion, so classify them by the
+    clause ending instead of treating the first matching word as a claim.
+    """
+    normalized = unicodedata.normalize("NFKC", text or "")
+    assertions: list[str] = []
+    questions: list[str] = []
+    clauses = re.split(r"(?<=[。！？!?、,，])|(?:けれど|けど|だけど|でも)|[\r\n]", normalized)
+    for clause in clauses:
+        is_question = bool(re.search(
+            r"(?:ですか|ますか|でしょうか|ですかね|ますかね|かな|かも|んだっけ|だっけ|の)?\s*[?？]$|"
+            r"(?:ですかね|ますかね|ですか|ますか|でしょうか|かな|んだっけ|だっけ|の)\s*$",
+            clause.strip(),
+        ))
+        for status, pattern in _STATUS_ASSERTION_PATTERNS:
+            for _match in pattern.finditer(clause):
+                (questions if is_question else assertions).append(status)
+    return assertions, questions
+
+
+_HARMLESS_STATUS_PREFACES = {
+    "", "え、", "あ、", "うん、", "うーん、", "んー、", "そう、",
+    "今のところ", "今のところ、", "たぶん", "たぶん、", "おそらく", "おそらく、",
+}
+_STATUS_REPLY_ENDING = re.compile(
+    r"(?:かもしれないですね|かもしれないね|かもしれないですよ|かもしれないよ|かもしれないです|かもしれない|"
+    r"と思いますよね|と思いますよ|と思うよね|と思うよ|と思います|と思う|"
+    r"んですよね|んだよね|んですね|んですよ|んだよ|んだ|ですね|ですよ|です|ます|だよね|だよ|だね|よね|よ|ね|かな|かもね|かもよ|かも)?"
+    r"(?:笑|w|W|😊|😂|😅|🙂|！|!|。|〜|~)*"
+)
+
+
+def _is_single_supported_status_reply(text: str, supported_status: str) -> bool:
+    """既知の状態を一つだけ返す短文かを、候補全体で保守的に判定する。"""
+    normalized = unicodedata.normalize("NFKC", text or "").strip()
+    status_pattern = next(
+        (pattern for status, pattern in _STATUS_ASSERTION_PATTERNS if status == supported_status),
+        None,
+    )
+    if status_pattern is None:
+        return False
+    matches = list(status_pattern.finditer(normalized))
+    if len(matches) != 1:
+        return False
+    match = matches[0]
+    prefix = normalized[:match.start()].strip()
+    suffix = normalized[match.end():].strip()
+    return prefix in _HARMLESS_STATUS_PREFACES and bool(_STATUS_REPLY_ENDING.fullmatch(suffix))
+
+
+def _latest_prior_self_status(chat_history_text: str, counterpart_message: str) -> str | None:
+    """Only use one explicit status in the immediately preceding self turn.
+
+    Older status mentions may belong to another topic or have been superseded.
+    Requiring the last pre-query turn to be self-authored prevents stale facts
+    from grounding an ambiguous 「あれどうなった？」.
+    """
+    prior = _prior_history_before_latest_counterpart(chat_history_text, counterpart_message)
+    lines = [line.strip() for line in prior.splitlines() if line.strip()]
+    if not lines:
+        return None
+    match = re.match(r"^自分\s*:\s*(.*)$", lines[-1])
+    if not match:
+        return None
+    assertions, questions = _status_claims(match.group(1))
+    if questions or len(assertions) != 1:
+        return None
+    return assertions[0]
+
+
+_COUNTERPART_CLARIFICATION = re.compile(
+    r"(?:(?:え|あ)[、,]\s*|(?:あれ|それ)(?:って)?[、,]?\s*)?"
+    r"(?:何のこと|何の話(?:のこと)?|どの話(?:のこと)?|どの件(?:のこと)?|何の件(?:のこと)?|何について|どれのこと)"
+    r"(?:だった)?(?:ですか|ますか|でしたっけ|だったっけ|だっけ|かな)?[?？]?"
+    r"(?:笑|w|W|😊|😂|😅|🙂)*"
+)
+
+
+def _is_short_counterpart_clarification(text: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", text or "").strip()
+    return (
+        len(normalized) <= 45
+        and bool(_COUNTERPART_CLARIFICATION.fullmatch(normalized))
+        and bool(re.search(
+            r"(?:[?？]|(?:ですか|ますか|でしたっけ|だったっけ|だっけ|かな))"
+            r"(?:笑|w|W|😊|😂|😅|🙂)*$",
+            normalized,
+        ))
+    )
+
+
+def _prior_history_before_latest_counterpart(chat_history_text: str, counterpart_message: str) -> str:
+    """Return transcript text before the latest matching counterpart message."""
+    lines = (chat_history_text or "").splitlines()
+    target = unicodedata.normalize("NFKC", counterpart_message or "").strip()
+    matching_line = None
+    for index, line in enumerate(lines):
+        match = re.match(r"^\s*相手:\s*(.*)$", line)
+        if match and unicodedata.normalize("NFKC", match.group(1)).strip() == target:
+            matching_line = index
+    if matching_line is None:
+        return "\n".join(lines)
+    return "\n".join(lines[:matching_line])
+
+
+def _is_unresolved_reference_clarification_set(
+    replies: list[str], mode: str, counterpart_message: str, chat_history_text: str
+) -> bool:
+    return (
+        mode == "normal"
+        and _unresolved_status_query(counterpart_message)
+        and _latest_prior_self_status(chat_history_text, counterpart_message) is None
+        and _last_experience_question(counterpart_message) is None
+        and bool(replies)
+        and all(_is_short_counterpart_clarification(reply) for reply in replies)
+    )
 
 
 # 許可する顔・表情系絵文字のパターン
@@ -312,6 +740,10 @@ def validate_candidate_replies(
     condition: str = "",
     mode: str = "normal",
     current_datetime: datetime | None = None,
+    last_self_message: str = "",
+    counterpart_message: str = "",
+    known_self_facts: list[str] | None = None,
+    chat_history_text: str = "",
 ) -> list[str]:
     """返信案のHardバリデーションを行い、違反内容のリストを返す。空リストなら合格。
 
@@ -346,7 +778,10 @@ def validate_candidate_replies(
             violations.append(f"案{i}にAI_QUESTIONタグ [AI_QUESTION] が混入しています。")
 
     # 1つの返信の3分割（fragmentation）チェック
-    if _is_fragmented_split(replies):
+    clarification_only_set = _is_unresolved_reference_clarification_set(
+        replies, mode, counterpart_message, chat_history_text
+    )
+    if _is_fragmented_split(replies) and not clarification_only_set:
         violations.append("1つの返信が3分割されて出力されています。3案それぞれが単体で送信できる独立した完成品となるよう作成してください。")
 
     # トーン検査
@@ -355,10 +790,70 @@ def validate_candidate_replies(
 
     # 追いメッセージ時の催促表現禁止チェック
     if mode == "followup":
+        def normalize_for_echo_check(text: str) -> str:
+            normalized = unicodedata.normalize("NFKC", text).casefold()
+            return "".join(
+                char for char in normalized
+                if not char.isspace() and not unicodedata.category(char).startswith("P")
+            )
+
+        last_self_normalized = normalize_for_echo_check(last_self_message)
+        if last_self_normalized:
+            for i, rep in enumerate(replies, start=1):
+                if normalize_for_echo_check(rep) == last_self_normalized:
+                    violations.append(
+                        f"案{i}が直近の自分のメッセージをそのまま繰り返しています。"
+                        "話題の単なる再掲ではなく、新しい自然な反応にしてください。"
+                    )
+
         pressure_keywords = ["返信まだ", "返事まだ", "返事待って", "返信待って", "既読スルー", "未読スルー", "返信ない", "返事ない", "無視", "忙しいですか？", "忙しい？"]
         for i, rep in enumerate(replies, start=1):
             if any(pk in rep for pk in pressure_keywords):
                 violations.append(f"案{i}に催促や返信を問い詰める表現が含まれています。追いメッセージでは催促を避け、自然な口実や軽い話題で作成してください。")
+
+    # Normal mode: verify claims against the last direct personal-experience question.
+    if mode == "normal":
+        if _unresolved_status_query(counterpart_message):
+            supported_status = _latest_prior_self_status(chat_history_text, counterpart_message)
+            for i, rep in enumerate(replies, start=1):
+                asserted_statuses, _question_statuses = _status_claims(rep)
+                unsupported_statuses = [
+                    status for status in asserted_statuses if status != supported_status
+                ]
+                if (
+                    unsupported_statuses
+                    or len(asserted_statuses) > 1
+                    or (
+                        asserted_statuses
+                        and not _is_single_supported_status_reply(rep, supported_status or "")
+                    )
+                ):
+                    violations.append(
+                        f"案{i}に状況を確認できる情報がありません。"
+                        "直前の関連する会話から状態を確認できないため、"
+                        "推測で断定せず、相手に短く確認してください。"
+                    )
+                elif not asserted_statuses and not _is_short_counterpart_clarification(rep):
+                    violations.append(
+                        f"案{i}は不明な参照先への確認になっていません。"
+                        "相手に短く確認する質問だけを返信候補にしてください。"
+                    )
+
+        experience_question = _last_experience_question(counterpart_message)
+        if experience_question:
+            default_action, question_match, question_clause = experience_question
+            topic = _topic_before(question_clause, question_match.start())
+            for i, rep in enumerate(replies, start=1):
+                claim = _experience_claim(rep, topic, default_action)
+                if claim and not any(
+                    _fact_supports_experience_claim(fact, claim)
+                    for fact in (known_self_facts or [])
+                    if fact
+                ):
+                    violations.append(
+                        f"案{i}に本人の経験を確認できる情報がありません。"
+                        "事実を作った返信をせず、アプリ利用者への確認を [AI_QUESTION]質問内容[/AI_QUESTION] で返してください。"
+                    )
 
     # 「〜とのこと」「〜と拝見」等の機械的AI表現の禁止チェック
     robotic_keywords = ["とのこと", "と拝見", "と書かれてい", "とありました"]
@@ -396,14 +891,93 @@ def validate_candidate_replies(
             if any(w in rep for w in summer_words):
                 violations.append(f"案{i}に季節外れの表現（冬なのに暑さ・猛暑等）が含まれています。現在の季節（冬・{cur_month}月）に合わせた表現に修正してください。")
 
+    # 参照先が曖昧な場合は確認文の意味が必然的に近くなるため、
+    # すべてが安全な相手向け確認質問なら、重複率だけで候補を落とさない。
     # 候補間の重複・極端な高類似の検知
     for j in range(len(replies)):
         for k in range(j + 1, len(replies)):
             sim = _jaccard_similarity(replies[j], replies[k])
-            if sim >= 0.85:
+            if sim >= 0.85 and not clarification_only_set:
                 violations.append(f"案{j+1}と案{k+1}の内容・表現が重複しています（類似度 {sim:.2f}）。異なる会話ルートを作成してください。")
 
     return violations
+
+
+_SAFE_REFERENCE_CLARIFICATION_FALLBACKS = (
+    "え、どの件だっけ？",
+    "何の話だったっけ？",
+    "あれって何のこと？",
+)
+
+
+def _is_reference_clarification_only_failure(violations: list[str]) -> bool:
+    allowed_markers = (
+        "状況を確認できる情報がありません",
+        "不明な参照先への確認になっていません",
+        "内容・表現が重複しています",
+    )
+    return bool(violations) and all(any(marker in violation for marker in allowed_markers) for violation in violations)
+
+
+def _build_safe_reference_clarification_candidates(
+    replies: list[str],
+    expected_candidates: int,
+    *,
+    counterpart_message: str,
+    known_self_facts: list[str] | None,
+    chat_history_text: str,
+    tone: str,
+    condition: str,
+    current_datetime: datetime | None,
+    mode: str = "normal",
+) -> list[str] | None:
+    """曖昧なstatus照会に限り、安全な相手向け確認文で不足案を埋める。"""
+    if (
+        expected_candidates < 1
+        or mode != "normal"
+        or not _unresolved_status_query(counterpart_message)
+        or _latest_prior_self_status(chat_history_text, counterpart_message) is not None
+        or _last_experience_question(counterpart_message) is not None
+    ):
+        return None
+
+    def is_safe_clarification(candidate: str) -> bool:
+        normalized = unicodedata.normalize("NFKC", candidate).strip()
+        if not _is_short_counterpart_clarification(normalized) or normalized in safe:
+            return False
+        if validate_candidate_replies(
+            [normalized],
+            expected_candidates=1,
+            tone=tone,
+            condition=condition,
+            mode="normal",
+            current_datetime=current_datetime,
+            counterpart_message=counterpart_message,
+            known_self_facts=known_self_facts,
+            chat_history_text=chat_history_text,
+        ):
+            return False
+        return True
+
+    safe: list[str] = []
+    for candidate in replies:
+        normalized = unicodedata.normalize("NFKC", candidate).strip()
+        if is_safe_clarification(normalized):
+            safe.append(normalized)
+    # 生成側から最低1案の安全な確認質問が出ている場合にだけ補う。
+    # 1案もない完全な失敗では、通常の502/no-history動作を維持する。
+    if not safe:
+        return None
+    if len(safe) >= expected_candidates:
+        return safe[:expected_candidates]
+
+    for candidate in _SAFE_REFERENCE_CLARIFICATION_FALLBACKS:
+        normalized = unicodedata.normalize("NFKC", candidate).strip()
+        if is_safe_clarification(normalized):
+            safe.append(normalized)
+        if len(safe) == expected_candidates:
+            break
+    return safe if safe else None
 
 
 def _build_repair_messages(
@@ -414,12 +988,36 @@ def _build_repair_messages(
 ) -> list[dict[str, str]]:
     """修復用のメッセージリストを構築する。"""
     v_text = "\n".join(f"- {v}" for v in violations)
+    requires_private_experience_confirmation = any(
+        "本人の経験を確認できる情報がありません" in violation for violation in violations
+    )
+    requires_reference_clarification = any(
+        "参照先が会話履歴から特定できません" in violation
+        or "指示語の参照先が会話履歴から特定できません" in violation
+        or "状況を確認できる情報がありません" in violation
+        for violation in violations
+    )
+    if requires_private_experience_confirmation:
+        output_instruction = (
+            "本人の経験が会話履歴や本人情報で確認できません。返信候補を作らず、"
+            "アプリ利用者にだけ事実を確認する質問を [AI_QUESTION]質問内容[/AI_QUESTION] の形式で1つだけ出力してください。"
+            "相手に送る返信候補として確認質問を作らないこと。JSON repliesや説明文は出力しないこと。"
+        )
+    elif requires_reference_clarification:
+        output_instruction = (
+            f"参照先が不明なため、状況を推測せず、相手に送る短い確認質問を含む通常のJSON repliesを{candidates}案作ってください。"
+            "アプリ利用者向けの質問タグは使わないこと。"
+        )
+    else:
+        output_instruction = (
+            f"すべての不備を修正し、独立した完成品として{candidates}案を作成し、"
+            f"必ず JSON形式の {{\"replies\": [\"案1\", \"案2\", \"案3\"]}} で出力してください。"
+        )
     repair_instruction = (
         f"前回の出力に以下の不備が検知されました。\n"
         f"【不備内容】\n"
         f"{v_text}\n\n"
-        f"すべての不備を修正し、独立した完成品として{candidates}案を作成し、"
-        f"必ず JSON形式の {{\"replies\": [\"案1\", \"案2\", \"案3\"]}} で出力してください。\n"
+        f"{output_instruction}\n"
         f"※Step 17: 壊れている部分だけ直すこと。問題ない部分はそのまま残し、"
         f"文章全体を書き直さないこと（書き直すとAIっぽい説明文になりやすい）。"
     )
@@ -430,39 +1028,19 @@ def _build_repair_messages(
     ]
 
 
-def _align_followup_replies(replies: list[str]) -> list[str]:
-    """追いメッセージの3案を【案1: 行動報告】【案2: 軽快ツッコミ】【案3: 写真なし体験共有】の順序に確実に整列する。"""
-    if len(replies) != 3:
-        return replies
-
-    slot1 = None  # 行動報告
-    slot2 = None  # 軽快ツッコミ
-    slot3 = None  # 写真なし体験共有
-    unassigned = []
-
-    for r in replies:
-        is_tsukkomi = any(k in r for k in ["冬眠", "夏眠", "生きて", "バタバタ", "息抜き", "休めそう", "忙しかった", "生きてます", "暑さ", "夏バテ"])
-        is_photo_share = any(k in r for k in ["思わず共有", "今日食べた", "今日作った", "今日見つけた", "濃厚", "ボリューム", "我ながら", "美味しすぎて", "大きすぎて", "看板", "パフェ", "ラーメンが", "パスタが", "スイーツが", "デザートが", "お肉のお店"])
-
-        if is_tsukkomi and slot2 is None:
-            slot2 = r
-        elif is_photo_share and slot3 is None:
-            slot3 = r
-        elif not is_tsukkomi and not is_photo_share and slot1 is None:
-            slot1 = r
-        else:
-            unassigned.append(r)
-
-    res = [slot1, slot2, slot3]
-    for i in range(3):
-        if res[i] is None and unassigned:
-            res[i] = unassigned.pop(0)
-
-    for i in range(3):
-        if res[i] is None:
-            res[i] = replies[i]
-
-    return res
+def _rank_followup_candidates(
+    scored_items: list[dict], counterpart_msg: str = ""
+) -> list[dict]:
+    """追いメッセージ案も、体験を連想させる語ではなく品質スコア順に並べる。"""
+    for item in scored_items:
+        item["mild_issues"] = naturalness.count_mild_issues(
+            item["reply"], counterpart_msg
+        )
+    return sorted(
+        scored_items,
+        key=lambda item: (item["final"], -item.get("mild_issues", 0)),
+        reverse=True,
+    )
 
 
 def build_user_reply_pairs() -> list[dict]:
@@ -1277,11 +1855,16 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     last_contact_turn = ""
     last_contact_msg = ""
     last_contact_msg_id = None
+    last_self_msg = ""
     if messages:
         for m in reversed(messages):
             if m["sender"] == "contact":
                 last_contact_msg = m["content"]
                 last_contact_msg_id = m["id"]
+                break
+        for m in reversed(messages):
+            if m["sender"] == "self":
+                last_self_msg = m["content"]
                 break
 
     for t in reversed(turns):
@@ -1339,6 +1922,16 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         )
 
     self_profile = database.get_user_profile()
+    known_self_facts = [
+        str(m["content"] or "").strip()
+        for m in messages
+        if m["sender"] == "self" and str(m["content"] or "").strip()
+    ]
+    if self_profile.get("my_info", "").strip():
+        known_self_facts.append(self_profile["my_info"].strip())
+    user_knowledge_text = database.get_user_knowledge_text()
+    if user_knowledge_text.strip():
+        known_self_facts.append(user_knowledge_text.strip())
     contact_info = {
         "name": contact["name"],
         "profile": contact["profile"],
@@ -1370,7 +1963,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         counterpart_length_tier=counterpart_length_tier,
         counterpart_length_chars=counterpart_length_chars,
         my_info=self_profile.get("my_info", ""),
-        user_knowledge=database.get_user_knowledge_text(),
+        user_knowledge=user_knowledge_text,
     )
 
     return {
@@ -1380,6 +1973,8 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         "chat_text": chat_text,
         "last_contact_msg": last_contact_msg,
         "last_contact_msg_id": last_contact_msg_id,
+        "last_self_msg": last_self_msg,
+        "known_self_facts": known_self_facts,
         "current_phase": current_phase,
         "pieces": {
             "phase": current_phase,
@@ -1553,7 +2148,32 @@ def _create_or_update_batch(
         conn.commit()
         return batch_id
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            # commit後のclose失敗でbatch_idを返せなくなると、後続失敗時に終端化できない。
+            logger.exception("Failed to close generation batch creation connection")
+
+
+def _mark_batch_failed(batch_id: int) -> None:
+    """失敗した生成バッチを終端状態にする。更新失敗で元の生成エラーは隠さない。"""
+    conn = None
+    try:
+        conn = database.get_conn()
+        conn.execute(
+            "UPDATE generation_batches SET outcome = 'generation_failed' "
+            "WHERE id = ? AND outcome = 'pending'",
+            (batch_id,),
+        )
+        conn.commit()
+    except Exception:
+        logger.exception("Failed to mark generation batch as failed: batch_id=%s", batch_id)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                logger.exception("Failed to close batch failure update connection: batch_id=%s", batch_id)
 
 
 def _record_history(
@@ -1688,6 +2308,17 @@ def get_learning_diagnostics():
 
 @router.post("/generate")
 def generate(body: GenerateRequest):
+    batch_state: dict[str, int] = {}
+    try:
+        return _generate_with_batch_tracking(body, batch_state)
+    except Exception:
+        batch_id = batch_state.get("batch_id")
+        if batch_id is not None:
+            _mark_batch_failed(batch_id)
+        raise
+
+
+def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, int]):
     ctx = _build_context(body.contact_id, body.condition, body.tone, body.mode)
     cfg = ctx["cfg"]
     provider = factory.get_provider(cfg["provider"], cfg["api_key"])
@@ -1701,6 +2332,7 @@ def generate(body: GenerateRequest):
         condition=body.condition,
         revision_instruction=body.revision_instruction,
     )
+    batch_state["batch_id"] = batch_id
 
     if body.revision_instruction.strip() or body.original_generated.strip():
         msgs = prompt.build_revision_messages(
@@ -1763,6 +2395,24 @@ def generate(body: GenerateRequest):
                     raise HTTPException(status_code=502, detail={"code": fb_exc.code, "message": fb_exc.message})
 
     contact_name = ctx.get("pieces", {}).get("contact", {}).get("name", "")
+    latest_counterpart_message = ctx.get("last_contact_msg", "")
+    has_unresolved_status_query = _unresolved_status_query(latest_counterpart_message)
+    known_self_facts = ctx.get("known_self_facts", [])
+    needs_private_experience_confirmation = _needs_private_experience_confirmation(
+        latest_counterpart_message,
+        known_self_facts,
+    )
+
+    def may_return_private_question(question_text: str | None) -> bool:
+        if not question_text:
+            return False
+        if not has_unresolved_status_query:
+            return True
+        return needs_private_experience_confirmation and _is_private_question_for_unknown_experience(
+            question_text,
+            latest_counterpart_message,
+            known_self_facts,
+        )
 
     MAX_ATTEMPTS = 3
     final_parsed_replies = None
@@ -1781,7 +2431,7 @@ def generate(body: GenerateRequest):
 
         # 1. AI_QUESTION 完全一致検知
         question_text = _extract_ai_question(raw)
-        if question_text:
+        if may_return_private_question(question_text):
             return {"replies": [], "history_ids": [], "question": question_text}
 
         # 2. Strict Parse & Auto-Sanitize (勝手に自動修正して不備を解消)
@@ -1803,6 +2453,10 @@ def generate(body: GenerateRequest):
             condition=body.condition,
             mode=body.mode,
             current_datetime=datetime.now(),
+            last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
+            counterpart_message=ctx.get("last_contact_msg", ""),
+            known_self_facts=ctx.get("known_self_facts", []),
+            chat_history_text=ctx.get("chat_text", ""),
         )
 
         # Step 16 §22: 初回のみ、質問不要なのに全案質問つきなら soft repair を促す。
@@ -1835,14 +2489,19 @@ def generate(body: GenerateRequest):
 
         # 3. 違反がある場合は1回 Repair を試行
         if not parsed_replies:
-            violations = [f"出力が正しいJSON形式（{{\"replies\": [...]}}）または期待される{body.candidates}案の形式になっていません。"]
+            if question_text and has_unresolved_status_query:
+                violations = [
+                    "参照先が会話履歴から特定できません。状況を推測せず、相手に送る短い確認質問を通常のJSON repliesに含めてください。"
+                ]
+            else:
+                violations = [f"出力が正しいJSON形式（{{\"replies\": [...]}}）または期待される{body.candidates}案の形式になっていません。"]
         logger.info("Attempt %d validation failed: %s. Attempting repair...", attempt, violations)
 
         repair_msgs = _build_repair_messages(msgs, raw, violations, body.candidates)
         try:
             repair_raw = _call_ai(repair_msgs)
             repair_question = _extract_ai_question(repair_raw)
-            if repair_question:
+            if may_return_private_question(repair_question):
                 return {"replies": [], "history_ids": [], "question": repair_question}
 
             repair_parsed = _parse_replies_strict(repair_raw, body.candidates)
@@ -1863,7 +2522,40 @@ def generate(body: GenerateRequest):
                 condition=body.condition,
                 mode=body.mode,
                 current_datetime=datetime.now(),
+                last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
+                counterpart_message=ctx.get("last_contact_msg", ""),
+                known_self_facts=ctx.get("known_self_facts", []),
+                chat_history_text=ctx.get("chat_text", ""),
             )
+            if (
+                repair_violations
+                and _is_reference_clarification_only_failure(repair_violations)
+            ):
+                safe_clarifications = _build_safe_reference_clarification_candidates(
+                    repair_parsed,
+                    body.candidates,
+                    counterpart_message=ctx.get("last_contact_msg", ""),
+                    known_self_facts=ctx.get("known_self_facts", []),
+                    chat_history_text=ctx.get("chat_text", ""),
+                    tone=body.tone,
+                    condition=body.condition,
+                    current_datetime=datetime.now(),
+                    mode=body.mode,
+                )
+                if safe_clarifications:
+                    repair_parsed = safe_clarifications
+                    repair_violations = validate_candidate_replies(
+                        repair_parsed,
+                        body.candidates,
+                        tone=body.tone,
+                        condition=body.condition,
+                        mode=body.mode,
+                        current_datetime=datetime.now(),
+                        last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
+                        counterpart_message=ctx.get("last_contact_msg", ""),
+                        known_self_facts=ctx.get("known_self_facts", []),
+                        chat_history_text=ctx.get("chat_text", ""),
+                    )
             if not repair_violations and repair_parsed and len(repair_parsed) == body.candidates:
                 final_parsed_replies = repair_parsed
                 break
@@ -1874,15 +2566,16 @@ def generate(body: GenerateRequest):
             logger.warning("Attempt %d repair AI call failed: %s. Rejecting all and retrying clean...", attempt, exc)
             last_violations = violations
 
-    # 万が一のフォールバック（ユーザーに0件エラー報告を出さず必ず案を届ける）
+    # Hard validation を通過した候補がない場合、不正候補を成功扱いで返さない。
     if not final_parsed_replies:
-        if parsed_replies and len(parsed_replies) == body.candidates:
-            final_parsed_replies = parsed_replies
-        elif 'repair_parsed' in locals() and repair_parsed and len(repair_parsed) == body.candidates:
-            final_parsed_replies = repair_parsed
-        else:
-            logger.warning("All retry attempts exhausted: %s. Using parsed fallback.", last_violations)
-            final_parsed_replies = parsed_replies or (repair_parsed if 'repair_parsed' in locals() and repair_parsed else [])
+        logger.warning("All retry attempts exhausted without valid candidates: %s", last_violations)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "candidate_validation_failed",
+                "message": "生成結果が検証基準を満たしませんでした。条件を変えて再度お試しください。",
+            },
+        )
 
     parsed_replies = [
         ensure_has_question(
@@ -1948,12 +2641,10 @@ def generate(body: GenerateRequest):
             "question_forced": _r6_forced,
         })
 
-    # 通常モードのみ最終スコア降順ソート（followupモードは役割スロット固定のため順序を整列）
+    # 通常モードと追いメッセージの両方で品質スコアを優先する。
     if body.mode == "followup":
-        # 3つの役割を正確な順序（案1: 行動報告, 案2: 軽快ツッコミ, 案3: 写真なし体験共有）に分類・配置
-        sorted_replies = _align_followup_replies([item["reply"] for item in scored_items])
-        by_reply = {item["reply"]: item for item in scored_items}
-        ordered_items = [by_reply.get(r, scored_items[i]) for i, r in enumerate(sorted_replies)]
+        ordered_items = _rank_followup_candidates(scored_items, counterpart_msg)
+        sorted_replies = [item["reply"] for item in ordered_items]
         style_scores = [item["score"] for item in ordered_items]
         naturalness_scores = [item["naturalness"] for item in ordered_items]
         human_fit_scores = [item["human_fit"] for item in ordered_items]
@@ -1989,12 +2680,17 @@ def generate(body: GenerateRequest):
     )
 
     # 6.5 自動評価の保存（人間評価列は NULL のまま。後から POST /api/evaluations で付与）
-    _save_auto_evaluations(
-        batch_id=batch_id,
-        history_ids=history_ids,
-        ordered_items=ordered_items,
-        counterpart_intent=(ledger.get("counterpart_intent") or "report"),
-    )
+    try:
+        _save_auto_evaluations(
+            batch_id=batch_id,
+            history_ids=history_ids,
+            ordered_items=ordered_items,
+            counterpart_intent=(ledger.get("counterpart_intent") or "report"),
+        )
+    except Exception:
+        # 履歴保存済みの返信自体は利用可能。補助的な評価保存だけの失敗で
+        # 生成を失敗扱いにすると、履歴があるのにbatchだけ失敗状態になる。
+        logger.exception("Failed to save auto evaluations: batch_id=%s", batch_id)
 
     effective_tone = body.tone or (
         "hybrid" if getattr(user_style_profile_data, "hybrid_ratio", 0.5) >= 0.5

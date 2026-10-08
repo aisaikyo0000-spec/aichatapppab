@@ -1044,20 +1044,23 @@ def test_invite_gate_checks_full_message_when_evidence_quotes_only_interest():
 
 
 @pytest.mark.parametrize(
-    "statement",
+    "statement,evidence",
     [
-        "ぜひ一緒に行きたいですが、身元が分からず不安です。",
-        "ぜひ一緒に行きたいですが、相手のことをよく知らなくて不安です。",
-        "ぜひ一緒に行きたいですが、安全かどうか分からないです。",
-        "ぜひ一緒に行きたいですが、安全か分からず迷っています。",
+        ("ぜひ一緒に行きたいですが、身元が分からず不安です。", "一緒に行きたい"),
+        ("ぜひ一緒に行きたいですが、相手のことをよく知らなくて不安です。", "一緒に行きたい"),
+        ("ぜひ一緒に行きたいですが、安全かどうか分からないです。", "一緒に行きたい"),
+        ("ぜひ一緒に行きたいですが、安全か分からず迷っています。", "一緒に行きたい"),
+        ("ぜひ一緒に行きたいですが、どんな方か分からず不安です。", "一緒に行きたい"),
+        ("ぜひ一緒に行きたいですが、どんな人か知らなくて不安です。", "一緒に行きたい"),
+        ("ぜひ一緒に行きたいですが、会ったことがなくて不安です。", "一緒に行きたい"),
     ],
 )
-def test_invite_gate_blocks_safety_and_familiarity_concerns(statement):
+def test_invite_gate_blocks_safety_and_familiarity_concerns(statement, evidence):
     raw = _raw_strategy(
         {
             "action": "invite",
             "rationale": "一緒に行きたいという意思があります。",
-            "evidence": [statement],
+            "evidence": [evidence],
             "invite_example": "人の多いカフェでお茶しませんか？",
         }
     )
@@ -1099,6 +1102,9 @@ def test_weather_worry_does_not_block_accepted_date_with_meeting_anticipation():
         "会うのは不安ではありません。ぜひ一緒に行きたいです。",
         "会うのは怖くないです。ぜひ一緒に行きたいです。",
         "安全面は心配していません。ぜひ一緒に行きたいです。",
+        "会うのは心配していないです。ぜひ一緒に行きたいです。",
+        "安全面は心配していないです。ぜひ一緒に行きたいです。",
+        "安全性に不安はないです。ぜひ一緒に行きたいです。",
     ],
 )
 def test_denied_meeting_safety_concern_does_not_block_explicit_invite(statement):

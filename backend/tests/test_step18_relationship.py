@@ -154,11 +154,11 @@ def test_same_contact_gold_adapts_without_fully_replacing_global_gold(client):
 
     profile = style.compute_hierarchical_profile(cid)
     active = profile["active_profile"]
-    global_gold = profile["gold_profile"]
+    other_contact_gold = profile["other_contact_gold_profile"]
     contact_gold = profile["same_contact_recent_gold_profile"]
 
     assert profile["hierarchy_tier"] == "same_contact_recent_manual_gold"
-    assert global_gold.tame_ratio < active.tame_ratio < contact_gold.tame_ratio
+    assert other_contact_gold.tame_ratio < active.tame_ratio < contact_gold.tame_ratio
     assert contact_gold.tame_ratio - active.tame_ratio >= 0.1
 
 

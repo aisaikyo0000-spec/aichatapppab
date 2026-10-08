@@ -203,6 +203,12 @@ def compute_hierarchical_profile(
     all_self_texts = [p.self_turn.text for p in valid_pairs]
     # 全 manual Gold
     gold_texts = [p.self_turn.text for p in valid_pairs if p.label == "gold"]
+    # Same-contact Gold is excluded from the prior used to blend that contact back in.
+    other_contact_gold_texts = [
+        p.self_turn.text
+        for p in valid_pairs
+        if p.label == "gold" and (not contact_id or p.contact_id != contact_id)
+    ]
 
     # same-contact の manual Gold
     same_contact_gold_pairs = [p for p in valid_pairs if contact_id and p.contact_id == contact_id and p.label == "gold"]
@@ -222,6 +228,7 @@ def compute_hierarchical_profile(
 
     global_prof = compute_style_metrics(all_self_texts)
     gold_prof = compute_style_metrics(gold_texts)
+    other_contact_gold_prof = compute_style_metrics(other_contact_gold_texts)
     same_contact_recent_gold_prof = compute_style_metrics(same_contact_recent_gold_texts)
     same_contact_all_gold_prof = compute_style_metrics(same_contact_gold_texts)
     recent_evidence_weight = (
@@ -244,7 +251,8 @@ def compute_hierarchical_profile(
     same_contact_gold_prof_count = same_contact_all_gold_prof.sample_count
     if same_contact_gold_prof_count >= 3:
         local_weight = min(0.75, same_contact_gold_prof_count / (same_contact_gold_prof_count + 5))
-        active_prof = _blend_style_profiles(gold_prof, same_contact_blended_gold_prof, local_weight, same_contact_gold_prof_count)
+        gold_prior_prof = other_contact_gold_prof if other_contact_gold_prof.sample_count else gold_prof
+        active_prof = _blend_style_profiles(gold_prior_prof, same_contact_blended_gold_prof, local_weight, same_contact_gold_prof_count)
         hierarchy_tier = "same_contact_recent_manual_gold"
     elif gold_prof.sample_count >= 5:
         active_prof = gold_prof
@@ -270,6 +278,7 @@ def compute_hierarchical_profile(
         "hierarchy_tier": hierarchy_tier,
         "global_profile": global_prof,
         "gold_profile": gold_prof,
+        "other_contact_gold_profile": other_contact_gold_prof,
         "same_contact_recent_gold_profile": same_contact_recent_gold_prof,
         "same_contact_all_gold_profile": same_contact_all_gold_prof,
         "same_contact_blended_gold_profile": same_contact_blended_gold_prof,

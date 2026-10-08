@@ -53,7 +53,7 @@ def test_runner_can_preserve_secondary_account_label_when_it_is_the_active_key()
     ]
 
 
-def test_secondary_active_account_falls_back_to_primary_after_both_models():
+def test_secondary_active_account_does_not_retry_primary_after_probe_exhausted_it():
     config = build_gemini_benchmark_config(
         primary_key="active-secondary-key",
         secondary_key="other-primary-key",
@@ -67,8 +67,6 @@ def test_secondary_active_account_falls_back_to_primary_after_both_models():
     ] == [
         ("secondary", "gemini-3.5-flash-lite", "active-secondary-key"),
         ("secondary", "gemini-3.1-flash-lite", "active-secondary-key"),
-        ("primary", "gemini-3.5-flash-lite", "other-primary-key"),
-        ("primary", "gemini-3.1-flash-lite", "other-primary-key"),
     ]
 
 

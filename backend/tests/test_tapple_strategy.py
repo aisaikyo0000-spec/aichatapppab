@@ -1126,6 +1126,7 @@ def test_hesitation_in_separate_sentence_after_positive_interest_blocks_invite()
         "ぜひ一緒に行きたいです。少し迷っています。",
         "ぜひ一緒に行きたいです。最近いろいろ考えていました。まだ迷っています。",
         "ぜひ一緒に行きたいです。日程のことを確認しました。まだ迷っています。",
+        "ぜひ一緒に行きたいです。会う日で迷っています。少し迷っています。",
     ):
         raw = _raw_strategy(
             {
@@ -1386,6 +1387,7 @@ def test_hesitation_in_separate_sentence_after_acceptance_blocks_date_scheduling
         "ぜひ一緒に行きたいです。少し迷っています。",
         "ぜひ一緒に行きたいです。最近いろいろ考えていました。まだ迷っています。",
         "ぜひ一緒に行きたいです。日程のことを確認しました。まだ迷っています。",
+        "ぜひ一緒に行きたいです。会う日で迷っています。少し迷っています。",
     ):
         violations = validate_candidate_replies(
             ["ぜひ！日曜はどうですか？"],

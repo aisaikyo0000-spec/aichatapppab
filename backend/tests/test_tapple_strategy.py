@@ -2443,6 +2443,50 @@ def test_explicit_interest_with_safety_concern_does_not_authorize_invite():
     assert result.invite_example is None
 
 
+def test_first_meeting_wary_interest_blocks_invite_strategy_and_reply():
+    statement = "ぜひ一緒に行きたいですが、初対面なので少し警戒しています。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["ぜひ一緒に行きたい"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+    violations = validate_candidate_replies(
+        ["ぜひ行きましょう。駅前のカフェでお茶しませんか？"],
+        1,
+        counterpart_message=statement,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_denied_first_meeting_wary_concern_does_not_block_invite():
+    statement = "初対面だけど警戒していません。ぜひ一緒に行きたいです。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["ぜひ一緒に行きたい"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example is not None
+
+
 def test_work_or_company_context_does_not_hide_date_safety_concern():
     for concern in (
         "仕事帰りに会うのは安全面で不安です。",

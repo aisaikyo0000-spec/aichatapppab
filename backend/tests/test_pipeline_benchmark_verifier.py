@@ -23,6 +23,12 @@ def _artifact(*, human=0.95, complete=True):
             {
                 "id": case_id,
                 "candidates": ["候補"] * 3,
+                "llm_calls": 1,
+                "models_used": ["gemini-3.5-flash-lite"],
+                "successful_route": {
+                    "account": "primary",
+                    "model": "gemini-3.5-flash-lite",
+                },
                 "issues": [
                     {
                         "unsupported_inference": 0,
@@ -73,6 +79,27 @@ def test_pipeline_verifier_accepts_only_full_canonical_70_with_all_thresholds():
     assert report["coverage"]["total"] == 70
     assert report["coverage"]["unique"] is True
     assert report["exit_code"] == 0
+
+
+def test_pipeline_verifier_rejects_candidates_without_live_generation_provenance():
+    artifact = _artifact()
+    artifact["cases"][12].pop("successful_route")
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "generation_provenance_invalid" in report["failures"]
+    assert report["exit_code"] != 0
+
+
+def test_pipeline_verifier_rejects_generated_candidates_without_model_history():
+    artifact = _artifact()
+    artifact["cases"][12]["models_used"] = []
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "generation_provenance_invalid" in report["failures"]
 
 
 def test_manual_review_bundle_includes_representative_and_flagged_outputs():

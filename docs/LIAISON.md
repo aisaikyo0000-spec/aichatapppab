@@ -7,7 +7,7 @@
 
 ## 2026-10-09 最新状況
 
-- GitHub `main`の基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。今回のオフラインコードcommitは`ef12671`、fork remoteはpush前の`aa2a249`。今回分はまだ未push。PR #1はOpenで未マージ。
+- GitHub `main`の基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。今回のオフラインコードcommitは`ef12671`、資料commit `2c897c2`までをforkへpushし、remote SHAとの一致を確認した。PR #1はOpenで未マージ。
 - Step 18-R4のオフライン作業として、少数の本人Goldを相手別Silverが上書きしないようにし、既知語彙にない趣味の抽出と最近の明示的な苦手意識を扱う境界を補った。語彙抽出で「美味しい」などの形容語を趣味として拾わない回帰も追加。Tapple実生成ベンチは**14シナリオ**になった。
 - `python -m pytest backend/tests -q`: **1,185 passed / 2 warnings**。Contact/Step 18/Tapple focused suite **669 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。警告は既存のFastAPI `on_event`非推奨通知。
 - fresh Reviewerは、同じ自己メッセージ内で肯定の後に苦手意識が続くと順序判定が逆転する不具合を指摘した。旧挙動を再現するテストは修正前にFAILし、イベント位置を会話全体の絶対位置に統一。新しいread-only Reviewerは実装・テスト・14件ベンチを確認して**PASS**。Gemini APIは呼び出していない。

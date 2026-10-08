@@ -610,7 +610,12 @@ def _has_recent_self_disinterest_in_tapple_activity(
         ),
         "",
     )
-    for clause in re.split(r"[。！？!?\n]", latest_self_text):
+    renewed_interest_re = re.compile(
+        r"(?:また|今度|これから|今は|今でも).{0,8}"
+        r"(?:好き|行きたい|行ってみたい|気になって|興味)"
+    )
+    for clause_match in re.finditer(r"[^。！？!?\n]+", latest_self_text):
+        clause = clause_match.group(0)
         for term_match in re.finditer(re.escape(activity_term), clause):
             following_activity_text = clause[term_match.end() :]
             disinterest_match = _TAPPLE_ACTIVITY_DISINTEREST_RE.match(
@@ -618,11 +623,17 @@ def _has_recent_self_disinterest_in_tapple_activity(
             )
             if disinterest_match is None:
                 continue
-            later_interest = following_activity_text[disinterest_match.end() :]
-            if re.search(
-                r"(?:また|今度|これから|今は|今でも).{0,8}"
-                r"(?:好き|行きたい|行ってみたい|気になって|興味)",
-                later_interest,
+            disinterest_end = (
+                clause_match.start()
+                + term_match.end()
+                + disinterest_match.end()
+            )
+            later_text = latest_self_text[disinterest_end:]
+            renewal_match = renewed_interest_re.search(later_text)
+            if renewal_match and not any(
+                other_term in later_text[: renewal_match.start()]
+                for other_term in _TAPPLE_SHARED_ACTIVITY_TERMS
+                if other_term != activity_term
             ):
                 continue
             return True

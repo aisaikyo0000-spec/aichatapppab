@@ -323,12 +323,22 @@ def test_unrelated_recent_question_does_not_supply_shared_activity_engagement():
     assert result.action == "wait"
 
 
-def test_recent_disinterest_blocks_invite_from_reusing_an_older_shared_activity():
+@pytest.mark.parametrize(
+    "latest_self_reply",
+    [
+        "プリンが好きです。カフェはあまり好きではないです",
+        "プリンが好きです。カフェはあまり得意じゃないです",
+        "プリンが好きです。最近カフェには行かなくなりました",
+    ],
+)
+def test_recent_disinterest_blocks_invite_from_reusing_an_older_shared_activity(
+    latest_self_reply,
+):
     conversation = (
         "相手: カフェ巡りが好きです\n"
         "自分: 僕もカフェが好きです\n"
         "相手: パンケーキは何が好きですか？\n"
-        "自分: プリンが好きです。カフェはあまり好きではないです\n"
+        f"自分: {latest_self_reply}\n"
         "相手: 駅前のカフェに行ってみたいです"
     )
     raw = _raw_strategy(
@@ -345,6 +355,29 @@ def test_recent_disinterest_blocks_invite_from_reusing_an_older_shared_activity(
     assert result is not None
     assert result.action == "wait"
     assert result.invite_example is None
+
+
+def test_disinterest_in_another_activity_does_not_block_shared_activity_invite():
+    conversation = (
+        "相手: カフェ巡りが好きです\n"
+        "自分: 僕もカフェが好きです\n"
+        "相手: パンケーキは何が好きですか？\n"
+        "自分: カフェは好きです、でも映画は嫌いです\n"
+        "相手: 駅前のカフェに行ってみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "二人ともカフェに関心を示しているため、断りやすく提案します。",
+            "evidence": ["駅前のカフェに行ってみたいです"],
+            "invite_example": "よかったら駅前のカフェに行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "invite"
 
 
 def test_generic_hontouni_does_not_count_as_shared_book_interest():

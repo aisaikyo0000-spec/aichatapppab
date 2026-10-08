@@ -51,6 +51,17 @@ def _env_api_key(provider: str) -> str:
     env_name = _PROVIDER_ENV_KEYS.get(p)
     if not env_name:
         return ""
+    if p == "gemini":
+        key_file = _read_dotenv("GEMINI_API_KEY_FILE") or os.getenv(
+            "GEMINI_API_KEY_FILE", ""
+        ).strip()
+        if key_file:
+            path = Path(key_file.strip().strip('"').strip("'")).expanduser()
+            if not path.is_absolute():
+                path = app_config.PROJECT_ROOT / path
+            file_key = read_gemini_api_key(path)
+            if file_key:
+                return file_key
     dotenv_val = _read_dotenv(env_name)
     if dotenv_val:
         return dotenv_val

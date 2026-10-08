@@ -19,6 +19,7 @@ def test_fresh_install_defaults_to_gemini_35_with_gemini_31_fallback(client, mon
         "GEMINI_SECONDARY_API_KEY",
         "GEMINI_SECONDARY_API_KEY_FILE",
         "GEMINI_API_KEY",
+        "GEMINI_API_KEY_FILE",
     ):
         monkeypatch.delenv(name, raising=False)
     cfg = get_ai_config()
@@ -41,6 +42,7 @@ def test_gemini_primary_key_is_reused_for_same_provider_fallback_without_exposur
 ):
     monkeypatch.delenv("AI_FALLBACK_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_FILE", raising=False)
     secret = "gemini-db-secret-for-test"
     database.set_setting("ai_provider", "gemini")
     database.set_setting("ai_model", "gemini-3.5-flash-lite")
@@ -108,6 +110,77 @@ def test_secondary_gemini_key_file_is_loaded_without_exposing_its_value(
     assert response.status_code == 200
     assert response.json()["has_secondary_api_key"] is True
     assert secret not in response.text
+
+
+def test_primary_gemini_key_file_is_loaded_without_exposing_its_value(
+    client, monkeypatch, tmp_path
+):
+    key_file = tmp_path / "gemini2.md"
+    secret = "primary-gemini-key-from-file"
+    key_file.write_text(f"GEMINI_API_KEY={secret}\n", encoding="utf-8")
+    monkeypatch.setenv("GEMINI_API_KEY_FILE", str(key_file))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    database.set_setting("ai_provider", "gemini")
+    database.set_setting("ai_model", "gemini-3.5-flash-lite")
+    database.set_setting("api_key_gemini", "")
+    database.set_setting("ai_fallback_provider", "gemini")
+    database.set_setting("ai_fallback_model", "gemini-3.1-flash-lite")
+    database.set_setting("ai_fallback_api_key", "")
+
+    cfg = get_ai_config()
+    response = client.get("/api/settings")
+
+    assert cfg["api_key"] == secret
+    assert cfg["fallback_api_key"] == secret
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is True
+    assert secret not in response.text
+
+
+def test_database_primary_key_takes_precedence_over_gemini_key_file(
+    client, monkeypatch, tmp_path
+):
+    key_file = tmp_path / "gemini2.md"
+    key_file.write_text("file-key-must-not-win\n", encoding="utf-8")
+    monkeypatch.setenv("GEMINI_API_KEY_FILE", str(key_file))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    database.set_setting("ai_provider", "gemini")
+    database.set_setting("ai_model", "gemini-3.5-flash-lite")
+    database.set_setting("api_key_gemini", "database-key-wins")
+
+    assert get_ai_config()["api_key"] == "database-key-wins"
+
+
+def test_primary_and_secondary_gemini_key_files_can_be_used_together(
+    client, monkeypatch, tmp_path
+):
+    primary_file = tmp_path / "gemini2.md"
+    secondary_file = tmp_path / "gemini3.md"
+    primary_secret = "primary-key-file-secret"
+    secondary_secret = "secondary-key-file-secret"
+    primary_file.write_text(f"{primary_secret}\n", encoding="utf-8")
+    secondary_file.write_text(f"GEMINI_API_KEY={secondary_secret}\n", encoding="utf-8")
+    monkeypatch.setenv("GEMINI_API_KEY_FILE", str(primary_file))
+    monkeypatch.setenv("GEMINI_SECONDARY_API_KEY_FILE", str(secondary_file))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_SECONDARY_API_KEY", raising=False)
+    database.set_setting("ai_provider", "gemini")
+    database.set_setting("ai_model", "gemini-3.5-flash-lite")
+    database.set_setting("api_key_gemini", "")
+    database.set_setting("ai_fallback_provider", "gemini")
+    database.set_setting("ai_fallback_model", "gemini-3.1-flash-lite")
+    database.set_setting("ai_fallback_api_key", "")
+
+    cfg = get_ai_config()
+    response = client.get("/api/settings")
+
+    assert cfg["api_key"] == primary_secret
+    assert cfg["fallback_api_key"] == primary_secret
+    assert cfg["secondary_api_key"] == secondary_secret
+    assert response.json()["has_api_key"] is True
+    assert response.json()["has_secondary_api_key"] is True
+    assert primary_secret not in response.text
+    assert secondary_secret not in response.text
 
 
 def _configure_generation(

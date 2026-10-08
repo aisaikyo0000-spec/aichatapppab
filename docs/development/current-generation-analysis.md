@@ -1997,7 +1997,7 @@ Tapple戦略ベンチでは、記号だけ・短すぎる根拠、招待方針�
 
 相手別Goldを除いたGold profileを基準値にしてから、対象相手のGoldを既存weightで混ぜるようにした。他相手Goldがなければ唯一のGold profileを維持する。修正前の再現テストは失敗し、修正後はContact Adaptation suite **27 passed**、backend全体 **697 passed / 2 warnings**、frontend production build **PASS**。独立Python Reviewerは**PASS**。quota時の主3.5→主3.1→予備3.5→予備3.1のfallback suiteは**29 passed**。
 
-Gemini APIはまだ呼び出していない。最新70ケース、Contact Bench 3/3、Tappleの実生成文レビューも未実施のため、Step 18-R4は未完成。再現テストcommitは`32a4e9d`、Gold修正commitは`0ab254d`、Tapple/quota修正commitは`e31bd8b`。作業branchへのWIP pushは`d44d347`まで完了した。GitHub main基点`a75ba76`は変更していない。
+Gemini APIはまだ呼び出していない。最新70ケース、Contact Bench 3/3、Tappleの実生成文レビューも未実施のため、Step 18-R4は未完成。再現テストcommitは`32a4e9d`、Gold修正commitは`0ab254d`、Tapple/quota修正commitは`e31bd8b`。コードWIPと進捗資料はforkの作業branchに公開済みで、GitHub main基点`a75ba76`は変更していない。
 
 ## 朝のContact Bench判定基準
 

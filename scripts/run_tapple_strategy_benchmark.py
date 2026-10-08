@@ -56,6 +56,7 @@ def expectation_met(scenario: dict, action: str | None) -> bool:
 def summarize_expectations(results: list[dict], *, complete: bool) -> dict:
     expected_ids = [scenario["id"] for scenario in SCENARIOS]
     results_by_id = {result.get("id"): result for result in results}
+    run_state = benchmark_run_state(results, len(expected_ids))
     scenario_coverage_complete = (
         len(results) == len(expected_ids)
         and len(results_by_id) == len(expected_ids)
@@ -67,20 +68,23 @@ def summarize_expectations(results: list[dict], *, complete: bool) -> dict:
         if results_by_id.get(scenario_id, {}).get("expectation_met") is not True
     ]
     expectations_met = len(expected_ids) - len(failures)
-    run_complete = complete and scenario_coverage_complete
+    run_complete = complete and run_state["complete"] and scenario_coverage_complete
     quality_pass = run_complete and not failures
     exit_code = 0 if quality_pass else 2 if not run_complete else 3
+    stopped_reason = run_state["stopped_reason"]
+    if stopped_reason is None and not run_complete:
+        stopped_reason = (
+            "scenario_coverage_mismatch"
+            if complete and run_state["complete"] and not scenario_coverage_complete
+            else "incomplete"
+        )
     return {
         "complete": run_complete,
         "expectations_met": expectations_met,
         "expectation_total": len(expected_ids),
         "expectation_failures": failures,
         "quality_pass": quality_pass,
-        "stopped_reason": (
-            "scenario_coverage_mismatch"
-            if complete and not scenario_coverage_complete
-            else None
-        ),
+        "stopped_reason": stopped_reason,
         "exit_code": exit_code,
     }
 

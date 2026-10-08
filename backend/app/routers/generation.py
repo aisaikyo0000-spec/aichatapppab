@@ -293,6 +293,9 @@ def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
         return []
     counterproposals = list(_TAPPLE_COUNTERPROPOSAL_RE.finditer(text))
     third_party_declines = list(_TAPPLE_THIRD_PARTY_DECLINE_RE.finditer(text))
+    reported_third_party_quotes = list(
+        _TAPPLE_REPORTED_THIRD_PARTY_QUOTE_RE.finditer(text)
+    )
     quoted_declines = list(_TAPPLE_QUOTED_DECLINE_RE.finditer(text))
     reported_declines = list(_TAPPLE_REPORTED_DECLINE_RE.finditer(text))
     past_reaffirmations = list(_TAPPLE_PAST_MEETING_REAFFIRMATION_RE.finditer(text))
@@ -307,6 +310,10 @@ def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
         and not any(
             third_party.start() <= decline.start() < third_party.end()
             for third_party in third_party_declines
+        )
+        and not any(
+            quote.start() <= decline.start() < quote.end()
+            for quote in reported_third_party_quotes
         )
         and not any(
             quote.start() <= decline.start() < quote.end()
@@ -356,27 +363,68 @@ def _has_current_tapple_intent_before_historical_decline(
     decline: re.Match[str],
     quoted_declines: list[re.Match[str]],
 ) -> bool:
-    if any(quote.start() <= decline.start() < quote.end() for quote in quoted_declines):
+    reported_quotes = list(_TAPPLE_REPORTED_THIRD_PARTY_QUOTE_RE.finditer(text))
+    third_party_declines = list(_TAPPLE_THIRD_PARTY_DECLINE_RE.finditer(text))
+    if any(
+        quote.start() <= decline.start() < quote.end()
+        for quote in [*quoted_declines, *reported_quotes, *third_party_declines]
+    ):
         return False
 
     for positive in _TAPPLE_INVITE_POSITIVE_RE.finditer(text, 0, decline.start()):
         current_context = text[max(0, positive.start() - 20) : positive.start()]
-        sentence_end = re.search(r"[。！？!?]", text[decline.end() :])
-        context_end = (
-            decline.end() + sentence_end.start()
-            if sentence_end is not None
-            else len(text)
-        )
-        historical_context = text[positive.end() : context_end]
         if not re.search(r"(?:今は|現在は|今なら)", current_context):
             continue
         if not _has_first_person_tapple_intent_evidence(
             text, positive.group(0), _TAPPLE_INVITE_POSITIVE_RE
         ):
             continue
-        if _TAPPLE_HISTORICAL_DECLINE_CONTEXT_RE.search(historical_context):
-            return True
+        for historical_decline in _TAPPLE_HISTORICAL_DECLINE_CONTEXT_RE.finditer(
+            text, positive.end()
+        ):
+            if (
+                historical_decline.start() <= decline.start()
+                and decline.end() <= historical_decline.end()
+            ):
+                return True
     return False
+
+
+def _tapple_text_without_superseded_historical_declines(text: str) -> str:
+    declines = list(_TAPPLE_DECLINE_RE.finditer(text))
+    quoted_declines = list(_TAPPLE_QUOTED_DECLINE_RE.finditer(text))
+    reported_quotes = list(_TAPPLE_REPORTED_THIRD_PARTY_QUOTE_RE.finditer(text))
+    third_party_declines = list(_TAPPLE_THIRD_PARTY_DECLINE_RE.finditer(text))
+    reported_declines = list(_TAPPLE_REPORTED_DECLINE_RE.finditer(text))
+    attributed_spans = [
+        *quoted_declines,
+        *reported_quotes,
+        *third_party_declines,
+        *reported_declines,
+    ]
+    removals: list[tuple[int, int]] = []
+
+    for decline in declines:
+        if _is_negated_tapple_decline(text, decline):
+            continue
+        if any(
+            span.start() <= decline.start() < span.end()
+            for span in attributed_spans
+        ):
+            continue
+        if _has_current_tapple_intent_before_historical_decline(
+            text, decline, quoted_declines
+        ) or _has_reaffirmed_tapple_intent_after_decline(
+            text, decline, quoted_declines
+        ):
+            removals.append((decline.start(), decline.end()))
+
+    if not removals:
+        return text
+    result = list(text)
+    for start, end in removals:
+        result[start:end] = " " * (end - start)
+    return "".join(result)
 
 
 def _has_linked_tapple_counterproposal(
@@ -899,6 +947,11 @@ _TAPPLE_THIRD_PARTY_PERSON_PATTERN = (
     r"いとこ|従兄弟|従姉妹|甥|姪|祖父|祖母|先輩|後輩|知人|別の人|他の人|ほかの人|"
     r"彼氏|彼女)"
 )
+_TAPPLE_REPORTED_THIRD_PARTY_QUOTE_RE = re.compile(
+    _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"(?:が|は).{0,12}[「『][^」』]{0,120}[」』](?:と|って)?"
+    + r"(?:言って|話して|聞いて|伝えて)"
+)
 
 
 _TAPPLE_THIRD_PARTY_INTEREST_RE = re.compile(
@@ -1161,7 +1214,9 @@ def _parse_tapple_strategy(
                     )
                 )
             )
-            and not _has_tapple_relevant_invite_hedge(last_contact)
+            and not _has_tapple_relevant_invite_hedge(
+                _tapple_text_without_superseded_historical_declines(last_contact)
+            )
             and not _has_tapple_explicit_hesitation(last_contact)
             and not _has_tapple_safety_concern(last_contact)
             and not _has_unresolved_tapple_safety_or_hesitation(

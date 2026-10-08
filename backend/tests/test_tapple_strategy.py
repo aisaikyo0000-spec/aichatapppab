@@ -1100,21 +1100,25 @@ def test_unrelated_work_problem_does_not_block_explicit_invite():
 
 
 def test_explicit_hesitation_before_positive_interest_blocks_invite():
-    statement = "まだ迷っていますが、ぜひ一緒に行きたいです。"
-    raw = _raw_strategy(
-        {
-            "action": "invite",
-            "rationale": "一緒に行きたいという意思があります。",
-            "evidence": ["ぜひ一緒に行きたいです"],
-            "invite_example": "人の多いカフェでお茶しませんか？",
-        }
-    )
+    for statement in (
+        "まだ迷っていますが、ぜひ一緒に行きたいです。",
+        "正直まだ迷っていますが、ぜひ一緒に行きたいです。",
+        "私はまだ迷っていますが、ぜひ一緒に行きたいです。",
+    ):
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたいです"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
 
-    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
 
-    assert result is not None
-    assert result.action == "wait"
-    assert result.invite_example is None
+        assert result is not None, statement
+        assert result.action == "wait", statement
+        assert result.invite_example is None, statement
 
 
 def test_thinking_about_meeting_logistics_is_not_hesitation():
@@ -1254,15 +1258,20 @@ def test_weather_worry_after_meeting_anticipation_does_not_block_scheduling():
 
 
 def test_explicit_hesitation_before_positive_interest_blocks_scheduling():
-    violations = validate_candidate_replies(
-        ["ぜひ！日曜はどうですか？"],
-        1,
-        counterpart_message="まだ迷っていますが、ぜひ一緒に行きたいです。",
-        strategy_mode="tapple",
-        tapple_action="continue",
-    )
+    for counterpart_message in (
+        "まだ迷っていますが、ぜひ一緒に行きたいです。",
+        "正直まだ迷っていますが、ぜひ一緒に行きたいです。",
+        "私はまだ迷っていますが、ぜひ一緒に行きたいです。",
+    ):
+        violations = validate_candidate_replies(
+            ["ぜひ！日曜はどうですか？"],
+            1,
+            counterpart_message=counterpart_message,
+            strategy_mode="tapple",
+            tapple_action="continue",
+        )
 
-    assert any("誘い" in violation for violation in violations)
+        assert any("誘い" in violation for violation in violations), counterpart_message
 
 
 def test_request_to_talk_more_before_meeting_blocks_date_scheduling():
@@ -1345,6 +1354,7 @@ def test_hesitation_after_positive_interest_still_blocks_date_scheduling():
         "会うのは心配していないです。ぜひ一緒に行きたいです。",
         "安全面は心配していないです。ぜひ一緒に行きたいです。",
         "安全性に不安はないです。ぜひ一緒に行きたいです。",
+        "安全面の不安は感じていません。ぜひ一緒に行きたいです。",
     ],
 )
 def test_denied_meeting_safety_concern_does_not_block_explicit_invite(statement):

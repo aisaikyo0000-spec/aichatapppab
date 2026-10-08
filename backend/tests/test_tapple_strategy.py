@@ -3442,6 +3442,7 @@ def test_explicit_meeting_hesitation_blocks_scheduling_after_logistics_context(
         "安全面は心配していないです。ぜひ一緒に行きたいです。",
         "安全性に不安はないです。ぜひ一緒に行きたいです。",
         "安全面の不安は感じていません。ぜひ一緒に行きたいです。",
+        "明日の予定が不安ではないとは言えません。ぜひ一緒に行きたいです。",
     ],
 )
 def test_denied_meeting_safety_concern_does_not_block_explicit_invite(statement):

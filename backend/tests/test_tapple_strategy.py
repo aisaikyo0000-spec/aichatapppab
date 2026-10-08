@@ -1254,6 +1254,8 @@ def test_invite_gate_respects_request_to_delay_meeting(statement):
         "ぜひ一緒に行きたいです。返事はもう少し考えてからしたいです。",
         "ぜひ一緒に行きたいです。返事をもう少し待ってもらえますか。",
         "ぜひ一緒に行きたいです。少し返事を待ってください。",
+        "ぜひ一緒に行きたいです。少し考えたいです。",
+        "ぜひ一緒に行きたいです。返事は明日まで待っていただけますか。",
     ],
 )
 def test_invite_gate_respects_request_for_time_to_decide(statement):
@@ -1277,6 +1279,7 @@ def test_invite_gate_respects_request_for_time_to_decide(statement):
     "statement",
     [
         "ぜひ一緒に行きたいです。会うかどうか迷っていません。",
+        "ぜひ一緒に行きたいです。会うかどうか迷っているとは言えません。",
         "ぜひ一緒に行きたいです。家族のことで悩んでいますが、会うこと自体は迷っていません。",
     ],
 )
@@ -1295,6 +1298,31 @@ def test_explicit_denial_of_meeting_hesitation_does_not_block_invite(statement):
     assert result is not None
     assert result.action == "invite"
     assert result.invite_example is not None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "ぜひ一緒に行きたいです。会うかどうか迷っていないとは言えません。",
+        "ぜひ一緒に行きたいです。会うかどうか迷っていないかもしれません。",
+        "ぜひ一緒に行きたいです。会うかどうか迷っていないわけではありません。",
+    ],
+)
+def test_ambiguous_denial_of_meeting_hesitation_still_blocks_invite(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["ぜひ一緒に行きたいです"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
 
 
 @pytest.mark.parametrize(
@@ -1409,6 +1437,8 @@ def test_request_to_talk_more_before_meeting_blocks_date_scheduling():
         "ぜひ一緒に行きたいです。返事はもう少し考えてからしたいです。",
         "ぜひ一緒に行きたいです。返事をもう少し待ってもらえますか。",
         "ぜひ一緒に行きたいです。少し返事を待ってください。",
+        "ぜひ一緒に行きたいです。少し考えたいです。",
+        "ぜひ一緒に行きたいです。返事は明日まで待っていただけますか。",
     ],
 )
 def test_request_for_time_to_decide_blocks_date_scheduling(counterpart_message):
@@ -1427,6 +1457,7 @@ def test_request_for_time_to_decide_blocks_date_scheduling(counterpart_message):
     "counterpart_message",
     [
         "ぜひ一緒に行きたいです。会うかどうか迷っていません。",
+        "ぜひ一緒に行きたいです。会うかどうか迷っているとは言えません。",
         "ぜひ一緒に行きたいです。家族のことで悩んでいますが、会うこと自体は迷っていません。",
     ],
 )
@@ -1442,6 +1473,28 @@ def test_explicit_denial_of_meeting_hesitation_allows_date_scheduling(
     )
 
     assert not any("誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "counterpart_message",
+    [
+        "ぜひ一緒に行きたいです。会うかどうか迷っていないとは言えません。",
+        "ぜひ一緒に行きたいです。会うかどうか迷っていないかもしれません。",
+        "ぜひ一緒に行きたいです。会うかどうか迷っていないわけではありません。",
+    ],
+)
+def test_ambiguous_denial_of_meeting_hesitation_blocks_date_scheduling(
+    counterpart_message,
+):
+    violations = validate_candidate_replies(
+        ["ぜひ！日曜はどうですか？"],
+        1,
+        counterpart_message=counterpart_message,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
 
 
 def test_unrelated_work_contrast_does_not_block_accepted_date_scheduling():

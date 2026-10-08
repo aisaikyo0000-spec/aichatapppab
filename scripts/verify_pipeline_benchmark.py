@@ -30,7 +30,6 @@ def _case_metrics(cases: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str
         issue
         for case in cases
         for issue in case.get("issues", [])
-        if isinstance(issue, dict)
     ]
     issue_metrics = summarize_issues(all_issues)
     axis_metrics: dict[str, float | None] = {}
@@ -45,6 +44,49 @@ def _case_metrics(cases: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str
         ]
         axis_metrics[axis] = round(sum(values) / len(values), 3) if values else None
     return issue_metrics, axis_metrics
+
+
+def _candidate_metrics_are_valid(cases: list[dict[str, Any]]) -> bool:
+    issue_flags = ("echo", "too_many_questions", "over_explanation")
+    axis_names = ("context_fit", "human_chat_fit", "conversation_fit")
+    for case in cases:
+        if not isinstance(case, dict):
+            return False
+        candidates = case.get("candidates")
+        issues = case.get("issues")
+        axes = case.get("four_axis")
+        if not isinstance(candidates, list) or not isinstance(issues, list) or not isinstance(axes, list):
+            return False
+        if any(not isinstance(candidate, str) or not candidate.strip() for candidate in candidates):
+            return False
+        safe_question = case.get("safe_user_question")
+        valid_candidate_count = len(candidates) == 3 or (
+            not candidates and isinstance(safe_question, str) and bool(safe_question.strip())
+        )
+        if not valid_candidate_count or len(issues) != len(candidates) or len(axes) != len(candidates):
+            return False
+        for issue in issues:
+            if not isinstance(issue, dict):
+                return False
+            if any(not isinstance(issue.get(flag), bool) for flag in issue_flags):
+                return False
+            for count_name in ("unsupported_inference", "ai_like"):
+                count = issue.get(count_name)
+                if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                    return False
+        for axis in axes:
+            if not isinstance(axis, dict):
+                return False
+            for name in axis_names:
+                value = axis.get(name)
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                    or not 0.0 <= value <= 1.0
+                ):
+                    return False
+    return True
 
 
 def _same_metric(left: Any, right: Any) -> bool:
@@ -91,8 +133,10 @@ def verify_pipeline_artifact(
         failures.append("incomplete_run")
     if summary.get("errors") != 0 or any("error" in case for case in cases if isinstance(case, dict)):
         failures.append("case_errors_present")
+    if not _candidate_metrics_are_valid(cases):
+        failures.append("case_metrics_invalid")
 
-    issue_metrics, axis_metrics = _case_metrics(cases)
+    issue_metrics, axis_metrics = _case_metrics(cases) if "case_metrics_invalid" not in failures else ({}, {})
     reported_issues = summary.get("issues")
     reported_axes = summary.get("four_axis_avg")
     if not isinstance(reported_issues, dict) or not isinstance(reported_axes, dict):
@@ -100,7 +144,7 @@ def verify_pipeline_artifact(
     else:
         metric_pairs = [
             (reported_issues.get(key), issue_metrics.get(key))
-            for key in ("ai_like_rate", "too_many_questions_rate", "echo_rate")
+            for key in ("candidates", "ai_like_rate", "too_many_questions_rate", "echo_rate")
         ] + [
             (reported_axes.get(key), axis_metrics.get(key))
             for key in ("context_fit", "human_chat_fit", "conversation_fit")
@@ -158,15 +202,12 @@ def verify_pipeline_artifact(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify the canonical 70-case live benchmark artifact")
     parser.add_argument("--artifact", type=Path, required=True)
-    parser.add_argument(
-        "--cases",
-        type=Path,
-        default=ROOT / "backend" / "tests" / "step10_benchmark_inputs.json",
-    )
     args = parser.parse_args()
     try:
         artifact = json.loads(args.artifact.read_text(encoding="utf-8"))
-        canonical_cases = json.loads(args.cases.read_text(encoding="utf-8"))
+        canonical_cases = json.loads(
+            (ROOT / "backend" / "tests" / "step10_benchmark_inputs.json").read_text(encoding="utf-8")
+        )
     except (OSError, json.JSONDecodeError) as exc:
         print(json.dumps({"quality_pass": False, "exit_code": 2, "failures": [type(exc).__name__]}))
         return 2

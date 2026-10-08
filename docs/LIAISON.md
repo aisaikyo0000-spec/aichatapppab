@@ -7,7 +7,7 @@
 
 ## 2026-10-09 最新状況
 
-- GitHub `main`確認時のSHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`、最新製品コードcommitは`2382a64`。未pushのコミットと資料変更があり、push後にリモートSHAを追記する。
+- GitHub `main`確認時のSHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。製品コード最新は`2382a64`、資料を含む最新commitは`c71b923`。forkのリモートbranchが同じSHAであることを確認済み。
 - Tapple安全レビューで、否定が重なる警戒表現を見逃す問題と、仕事・試験・天候など無関係な不安を会う不安として扱う問題を順に発見。REDテスト追加後に修正し、Tapple suiteは**563 passed**、backend全体は**1,143 passed / 2 warnings**。独立安全ReviewerとPython Reviewerは両方**PASS**。Python側の追加重点テストは**600 passed**。`ruff`と`mypy`は環境になく未実行。
 - ベンチ応答が候補文と利用者向け質問を同時に返す不正形を、runner・verifierで失敗扱いにした。手動レビューartifactに代表ケースの返信本文も入れる。ベンチ評価ロジックを変えず、既存fixtureを維持した。
 - quota切替focused suiteは**45 passed**。順序は主3.5→主3.1→別アカウント3.5→別アカウント3.1で、`rate_limit`の場合だけ次へ進む。設定上の別キーはgemini3.mdから読む。APIキーの値は表示・保存していない。

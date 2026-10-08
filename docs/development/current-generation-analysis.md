@@ -8,6 +8,7 @@
 - `backend/tests/test_model_fallback.py`等の切替関連テストは**45 passed**。切替順はprimary 3.5→primary 3.1→secondary 3.5→secondary 3.1で、`rate_limit`だけで次に進む。実APIは呼び出していない。
 - 調査メモ[`tapple-dating-strategy-research.md`](tapple-dating-strategy-research.md)を追加。タップル公式助言・7,014人の自己申告調査、安全ガイドライン、オンラインデート研究、利用者の逸話を根拠の種類ごとに分け、メッセージ数や返信速度だけで誘わない方針を記録した。
 - 現HEADの製品コードは`2382a64`。frontend production build、Python `compileall`、`git diff --check`はPASS。Gemini APIは呼び出していないため、実API生成、70ケース、Contact Bench、Tapple実生成文の全文確認は未実施。したがってStep 18-R4は未完成。
+- 資料を含む最新commitは`c71b923`。作業branchのforkリモートへのpushとSHA一致を確認した。GitHub `main`は`a75ba76998a377e527f1ea3bedaa655a6b89569c`のまま。
 
 ## 2026-10-09 受け入れ準備の追加レビュー
 

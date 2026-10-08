@@ -1118,21 +1118,37 @@ def test_explicit_hesitation_before_positive_interest_blocks_invite():
 
 
 def test_thinking_about_meeting_logistics_is_not_hesitation():
-    statement = "来週会う日程を考えています。ぜひ一緒に行きたいです。"
-    raw = _raw_strategy(
-        {
-            "action": "invite",
-            "rationale": "一緒に行きたいという意思があります。",
-            "evidence": ["ぜひ一緒に行きたいです"],
-            "invite_example": "人の多いカフェでお茶しませんか？",
-        }
+    for statement in (
+        "来週会う日程を考えています。ぜひ一緒に行きたいです。",
+        "来週会う日程で迷っています。ぜひ一緒に行きたいです。",
+        "会う日をどちらにするか悩んでいます。ぜひ一緒に行きたいです。",
+    ):
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたいです"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
+
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+        assert result is not None, statement
+        assert result.action == "invite", statement
+        assert result.invite_example is not None, statement
+
+
+def test_schedule_choice_does_not_block_confirming_an_accepted_meeting():
+    violations = validate_candidate_replies(
+        ["では金曜にしましょう。"],
+        1,
+        counterpart_message="会う日をどちらにするか悩んでいます。ぜひ一緒に行きたいです。",
+        strategy_mode="tapple",
+        tapple_action="continue",
     )
 
-    result = _parse_tapple_strategy(raw, f"相手: {statement}")
-
-    assert result is not None
-    assert result.action == "invite"
-    assert result.invite_example is not None
+    assert not any("誘い" in violation for violation in violations)
 
 
 @pytest.mark.parametrize(

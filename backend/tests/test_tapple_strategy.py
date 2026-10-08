@@ -12,6 +12,7 @@ from app.routers.generation import (
     _is_tapple_private_place_proposal,
     _parse_replies_strict,
     _parse_tapple_strategy as _parse_tapple_strategy_messages,
+    _unqualified_tapple_decline_matches,
     validate_candidate_replies,
 )
 from app.schemas import GenerateRequest
@@ -2243,6 +2244,31 @@ def test_hard_meeting_refusal_is_not_reopened_by_later_availability(statement):
     assert result.action in {"stop", "wait"}
     assert result.invite_example is None
     assert any("誘い" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "今は会いたいです。前は会うのは無理だと思っていました。でも今も会うのは無理です。",
+        "今は会いたいです。前は会うのは無理だと思っていましたが、今は会いたくありません。",
+    ],
+)
+def test_historical_decline_does_not_hide_later_current_refusal(statement):
+    declines = _unqualified_tapple_decline_matches(statement)
+
+    assert declines
+    assert declines[-1].group(0) in {"会うのは無理", "会いたくありません"}
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "友達が「今は会いたいです。前は会うのは無理だと思っていました」と言っていました。",
+        "彼女は「今は会いたいです。前は会うのは難しいと思っていました」と話していた。",
+    ],
+)
+def test_reported_third_party_quote_does_not_create_current_self_intent(statement):
+    assert _unqualified_tapple_decline_matches(statement) == []
 
 
 def test_third_party_availability_does_not_reopen_contact_meeting_difficulty():

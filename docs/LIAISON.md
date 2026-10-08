@@ -232,7 +232,7 @@
 - 3.5は日次RPD上限を返したため、APIが自動で3.1へ切替。70ケース評価はIteration 7コードで実行中。3.1の応答503は一部発生しており、case IDを固定して全件成功まで再試行予定
 - pytest/build・70指標・fresh reviewer結果を追記後に最終判定する。現時点では未完了・pushなし
 
-## Step 18-R4 最新進捗（Iteration 23–24）
+## Step 18-R4 最新進捗（Iteration 23–25）
 
 - GitHubのmainを基準に作業中。cloneの基点は `a75ba76998a377e527f1ea3bedaa655a6b89569c`、現在のローカルHEADは `150be15`。R4最終合格条件を満たしていないため、まだpushしていない
 - Iteration 22の独立Python Reviewerは、伝聞の「空いている」を確定予定と誤認するケースを指摘。修正したIteration 23のReviewerも、`聞いていた` / `言われてた` / `聞かされていない` 等の隣接表現を再検出し **FAIL**。範囲を広げた回帰テストを追加し、Iteration 24の新しいReviewerは **PASS**
@@ -348,7 +348,7 @@
 
 - API復旧後に使う`run_pipeline_benchmark.py`と`run_contact_benchmark.py`が予備キーを受け取っていなかったため、両スクリプトに任意の`--secondary-env-file`を追加した。主キーを使った3.5→3.1の後、両方が`rate_limit`なら予備キーの3.5→3.1へ進む設定をアプリ本体へ渡す
 - 設定組み立ての単体テストは**2 passed**。4つのCLIのhelp表示も確認済み。Tapple API実生成ベンチは3件の期待値テストと独立Python Reviewerが**PASS**。曖昧な反応では`continue`/`clarify`/`wait`だけを許容し、`invite`と`stop`を不合格にする。最新全backend suiteは**517 passed / 2 warnings**、frontend build・`git diff --check`・対象Python compileも**PASS**
-- 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Bench、Tapple 3ケースを実行する。ケースごとの既定待機は6秒。artifactはローカルの一時領域へ保存する
+- 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Bench、Tapple 8シナリオを実行する。ケースごとの既定待機は6秒。artifactはローカルの一時領域へ保存する
 - 実装commitは`61ec2fe`（作業branchにローカル保存、未push）。API復旧と品質評価が終わるまでGitHubへのpushは保留する
 - アプリ本体でファイルを直接使う場合は、実行環境の`.env`に`GEMINI_API_KEY_FILE=<gemini2.md>`と`GEMINI_SECONDARY_API_KEY_FILE=<gemini3.md>`を設定する。DBに登録された主キーはファイルより優先する。キー値は`.env`や資料へコピーしない
 - 主3.5と主3.1がどちらも`rate_limit`のときだけ別アカウントへ切り替え、予備3.5→3.1の順で試すコード経路は回帰テスト済み。実APIキーでの疎通・切替は未確認で、API品質評価と合わせて実施する
@@ -385,7 +385,7 @@ if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。art
 Get-Content -Raw $contactOut
 if ((Read-Host '全9返信を読み、A/B/Cの文体差と文脈・自然さ・非コピー基準をすべて満たせばPASS') -cne 'PASS') { throw 'Contact Benchの品質基準が3/3に達していないためTapple評価を止めます。' }
 python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
-if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が3/3でないか実行未完了です。artifact: $tappleOut" }
+if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が8/8でないか実行未完了です。artifact: $tappleOut" }
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
 python -m pytest backend/tests -q
 if ($LASTEXITCODE -ne 0) { throw 'backend全テストがPASSしていません。' }
@@ -399,7 +399,7 @@ if ($LASTEXITCODE -ne 0) { throw 'git diff --checkがPASSしていません。' 
 if ((Read-Host '最終diffを独立Python ReviewerとTapple safety ReviewerがPASSし、LIAISONと分析資料に実測値・判定・commitを記録済みならPASS') -cne 'PASS') { throw '全受け入れ条件が揃っていないためpushしません。' }
 ```
 
-疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 3ケースと返信全文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
+疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。主アカウントの3.5と3.1が両方レート制限になった場合は、別アカウントの3.5へ切り替える。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 8シナリオと全返信文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
 
 Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run_status.complete`はA/B/Cの生成完了だけを示す。JSON内の9返信をすべて読み、どの連絡先にも送れる自然な返信になっていること、入力内容に答えて不要な質問や根拠のない事実を足していないこと、相手の語句をそのまま写していないことを確認する。さらにAは手入力Goldに沿って短く砕けた傾向、Bは自然な丁寧さと相対的に十分な文量、Cは中間の文量と丁寧・砕けた表現の混在が返信群に表れることを確認する。固定文字数やsignatureの差だけでは合格にせず、3者の実際の返信群すべてが条件を満たす場合だけ3/3とする。
 
@@ -411,7 +411,7 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 
 ## Step 18-R4 Iteration 36: 評価artifactの品質ゲート
 
-- Tapple Benchは期待戦略が3/3揃わない場合に終了コード3、ケース不足・重複・生成エラーの場合は終了コード2を返す。artifactの`complete`も3種類の一意なIDとエラーなしを要求する。Tapple返信文の自然さ・文脈・安全性は別途目視レビューする
+- Tapple Benchは期待戦略が8/8揃わない場合に終了コード3、シナリオ不足・重複・生成エラーの場合は終了コード2を返す。artifactの`complete`も8種類の一意なIDとエラーなしを要求する。Tapple返信文の自然さ・文脈・安全性は別途目視レビューする
 - `verify_pipeline_benchmark.py`を追加。リポジトリ内の正規70ケースIDの完全一致・一意性、候補3件または安全な利用者確認、全候補のissue/four-axisレコード、summaryと再計算値の一致、6閾値を検証する。任意のケース集合で正規ベンチを置き換えるCLIオプションは設けていない
 - Gemini 3.5/3.1 Flash Liteの429はプロバイダー内で再試行せず、上位のモデル・アカウント切替へ即時返す。他モデルの既存再試行動作は維持
 - 関連commit: Tapple品質ゲート `fddd813`→`3347108`→`011f384`→`940949c`→`9778dde`→`d5ac1ef`、正規70ケース検証器 `1ed1802`→`a25684d`→`786644c`→`325ccfe`→`3b01f3c`→`98f2e55`、quota時の即時切替 `dc81496`→`febd5da`
@@ -455,3 +455,10 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - Tapple strategy **299 passed**、backend全体 **828 passed / 2 warnings**。主3.5→主3.1→予備3.5→予備3.1のAPIキー・quota fallback mock tests **26 passed**。frontend production build、Python compile、`git diff --check` はPASS
 - 最新差分への独立code reviewerとPython reviewerはともに **PASS**。実Gemini APIは未呼び出し。最新70ケース、Contact Bench、Tapple実生成文のレビューは未完了
 - 対応commit `9bd4682` をforkの作業branchへfast-forward push済み。GitHub main基点 `a75ba76` は変更していない。Step 18-R4は未完成
+
+## Step 18-R4 Iteration 25: 迷い・安全懸念時の再勧誘ゲート（2026-10-09）
+
+- Tapple実生成ベンチを6件から8件に拡張し、会うことへの迷いと安全面の不安がある会話を追加した。返信は話題に触れるだけでは通さず、懸念への配慮を示す表現を確認する。返信判定にはアプリ本体のTapple validatorも使う
+- 独立レビューで日付のない「ぜひ会いましょう」と丁寧語の「お会いしましょう」が再勧誘判定をすり抜ける問題を見つけた。REDテストで再現し、ベンチに失敗理由`reinvitation_not_allowed`が記録されることまで確認して修正した。修正後のfresh Python Reviewerは **PASS**
+- Tapple focused suite **337 passed**、backend全体 **844 passed / 2 warnings**。frontend production build、`compileall`、`git diff --check`も **PASS**。主3.5→主3.1→予備3.5→予備3.1のfallbackは既存mock suiteで検証済み
+- テストRED commits `2074291`、`53aa7e7`、`5ba125d`、シナリオ追加commit `777d05f`、実装commit `cf0e0d0`、`c854f16`、`36a54d8`。最新コードcommit `36a54d8`。GitHub main `a75ba76`は未変更。Gemini APIは呼び出しておらず、70ケース・Contact Bench・Tapple 8件の実生成と返信レビューは未実施。Step 18-R4は未完成

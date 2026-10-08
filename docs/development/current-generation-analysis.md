@@ -1,6 +1,14 @@
 # 現行返信生成アーキテクチャ分析
 
-> 初回調査は2026-09-27に実施しました。最新の実装・検証状況は「2026-10-08 返信品質・Geminiフォールバック更新」を参照してください。
+## 2026-10-09 Tapple Iteration 25: 迷い・安全懸念時の再勧誘ガード
+
+実生成ベンチに「会うこと自体に迷いがある」「安全面に不安がある」の2会話を加え、計8シナリオにした。懸念に触れるだけの一般文が合格しないよう、返信に求める表現も具体化した。さらに本体と同じ`validate_candidate_replies`を実行し、ベンチと本番validatorの判定差を減らした。
+
+独立Reviewerは、日付のない「ぜひ会いましょう」と丁寧語の「お会いしましょう」「ぜひお会いしませんか」が保留中の相手に対する再勧誘として検出されない問題を指摘した。追加テストが修正前に失敗することを確認し、修正後はベンチの失敗理由が`reinvitation_not_allowed`になることも確認した。最新差分のfresh Reviewerは**PASS**。Tapple focused suiteは**337 passed**、backend全体は**844 passed / 2 warnings**、frontend production build・`compileall`・`git diff --check`はPASS。
+
+Geminiのprimary 3.5、primary 3.1、予備アカウント3.5、予備3.1への切替経路はmockテストで確認済み。実APIは呼んでいないため、実際のquota状態は未確認。70ケースの最新実行、Contact Bench 3/3、Tapple 8シナリオの実返信と目視レビューも未実施であり、Step 18-R4は未完成。テストRED commitsは`2074291`、`53aa7e7`、`5ba125d`、シナリオ追加は`777d05f`、コードは`cf0e0d0`、`c854f16`、`36a54d8`。最新コードcommitは`36a54d8`で、GitHub main基点`a75ba76`は変更していない。
+
+> 初回調査は2026-09-27に実施しました。最新の実装・検証状況は、この冒頭の「2026-10-09 Tapple Iteration 25」を参照してください。
 
 ## 2026-10-08 返信品質・Geminiフォールバック更新
 
@@ -1941,7 +1949,7 @@ API疎通・70ケース・Contact Benchは依然未実施。API回復後はま�
 
 Gemini復旧後にタップル戦略を確認するため、独立スクリプト`run_tapple_strategy_benchmark.py`を追加した。アプリ本体と同じ生成・検証処理を通し、明確な参加意思、曖昧な反応、明示的な断りを各1件試す。結果から返信、戦略、使用モデル、期待した行動との一致を記録する。実データや本番DBには触れず、一時DBを使う。鍵は出力しない。
 
-期待値チェックの単体テスト2件、`--help`、独立Python Reviewerは**PASS**。最新backend全体は**511 passed / 2 warnings**、frontend buildも**PASS**。APIはまだ呼び出していない。API再開時は疎通を1回だけ実施し、70ケース、Contact Bench、Tapple 3ケースの順に回す。各artifactはローカル一時領域へ保存し、失敗ケースも残してReviewerへ渡す。
+期待値チェックの単体テスト2件、`--help`、独立Python Reviewerは**PASS**。最新backend全体は**511 passed / 2 warnings**、frontend buildも**PASS**。APIはまだ呼び出していない。API再開時は疎通を1回だけ実施し、70ケース、Contact Bench、Tapple 8シナリオの順に回す。各artifactはローカル一時領域へ保存し、失敗ケースも残してReviewerへ渡す。
 
 なお、主キー側で3.5と3.1の両方がレート制限になったときだけ予備アカウントへ移り、予備側でも3.5→3.1を試す。主アカウントの3.1が成功した場合はアカウントを切り替えない。この分岐は回帰テストで確認済み。
 

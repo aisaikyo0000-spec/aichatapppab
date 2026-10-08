@@ -1126,6 +1126,18 @@ def test_unrelated_work_contrast_does_not_block_accepted_date_scheduling():
     assert not any("誘い" in violation for violation in violations)
 
 
+def test_hesitation_after_positive_interest_still_blocks_date_scheduling():
+    violations = validate_candidate_replies(
+        ["ぜひ！日曜はどうですか？"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいですが、少し迷っています。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
 @pytest.mark.parametrize(
     "statement",
     [

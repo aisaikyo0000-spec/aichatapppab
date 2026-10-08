@@ -53,6 +53,17 @@ SCENARIOS = (
         "reply_must_contain_any": ["パンケーキ", "カフェ", "気になります", "おいしそう"],
     },
     {
+        "id": "unlisted_shared_hobby",
+        "messages": [
+            {"sender": "contact", "content": "ボルダリングに興味があります"},
+            {"sender": "self", "content": "僕もボルダリングが好きです"},
+            {"sender": "contact", "content": "最近はじめたところです。ボルダリングを体験してみたいです！"},
+        ],
+        "expected_action": "invite",
+        "allowed_actions": ["invite"],
+        "reply_must_contain_any": ["ボルダリング", "楽しそう", "やってみたい", "気になります"],
+    },
+    {
         "id": "shared_activity_low_reciprocity",
         "messages": [
             {"sender": "contact", "content": "カフェ巡りが好きです。パンケーキもよく食べます"},

@@ -574,15 +574,22 @@ _TAPPLE_GENERIC_INTEREST_TERMS = frozenset(
 
 
 def _extract_tapple_interest_terms(text: str) -> set[str]:
-    """Extract specific Japanese/foreign hobby names without a closed vocabulary."""
-    candidates = re.findall(
-        r"[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,}|[A-Za-z][A-Za-z0-9+#.-]{1,}",
-        text,
+    """Extract hobby terms only when they act as a specific activity noun."""
+    candidate_re = re.compile(
+        r"[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,}|"
+        r"[A-Za-z][A-Za-z0-9+#.-]{1,}"
+    )
+    activity_predicate_re = re.compile(
+        r"^(?:が|は|も|に|を|なら|とか|巡り|鑑賞|する|して|の)?"
+        r".{0,2}(?:好き|興味|関心|気にな|ハマ|はま|楽し|よく.{0,2}"
+        r"(?:行く|する|見る|食べる)|行きたい|行ってみたい|食べてみたい|"
+        r"見てみたい|試してみたい|体験|したい|趣味|おすすめ)"
     )
     return {
-        candidate
-        for candidate in candidates
-        if candidate not in _TAPPLE_GENERIC_INTEREST_TERMS
+        match.group(0)
+        for match in candidate_re.finditer(text)
+        if match.group(0) not in _TAPPLE_GENERIC_INTEREST_TERMS
+        and activity_predicate_re.search(text[match.end() :])
     }
 
 

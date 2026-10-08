@@ -265,7 +265,7 @@ def compute_hierarchical_profile(
     elif other_contact_gold_prof.sample_count:
         active_prof = other_contact_gold_prof
         hierarchy_tier = "sparse_manual_gold_fallback"
-    elif other_contact_texts:
+    elif other_contact_texts and not gold_prof.sample_count:
         active_prof = compute_style_metrics(other_contact_texts)
         hierarchy_tier = "global"
     elif gold_prof.sample_count:

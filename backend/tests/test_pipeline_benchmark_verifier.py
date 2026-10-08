@@ -70,6 +70,9 @@ def test_pipeline_verifier_accepts_only_full_canonical_70_with_all_thresholds():
     report = verify_pipeline_artifact(_artifact(), CANONICAL_IDS)
 
     assert report["quality_pass"] is True
+    assert report["coverage"]["total"] == 70
+    assert report["coverage"]["unique"] is True
+    assert report["exit_code"] == 0
 
 
 def test_manual_review_bundle_includes_representative_and_flagged_outputs():
@@ -83,6 +86,7 @@ def test_manual_review_bundle_includes_representative_and_flagged_outputs():
     flagged_case["ai_like_patterns"] = [[], ["formulaic_empathy"], []]
 
     safe_case = artifact["cases"][2]
+    safe_case["contact"] = "相手の好みの質問"
     safe_case["candidates"] = []
     safe_case["issues"] = []
     safe_case["four_axis"] = []
@@ -112,11 +116,18 @@ def test_manual_review_bundle_includes_representative_and_flagged_outputs():
             "question": "本人の好みを確認してください。",
         }
     ]
-    assert report["coverage"]["total"] == 70
-    assert report["coverage"]["unique"] is True
-    assert report["exit_code"] == 0
 
 
+def test_manual_review_bundle_handles_invalid_candidate_metrics():
+    artifact = _artifact()
+    issue = artifact["cases"][0]["issues"][0]
+    issue["unsupported_inference"] = "invalid"
+
+    bundle = verify_pipeline_benchmark.build_pipeline_manual_review_bundle(
+        artifact["cases"]
+    )
+
+    assert bundle["flagged_candidates"] == []
 def test_pipeline_verifier_rejects_subset_even_if_subset_claims_complete():
     artifact = _artifact()
     artifact["cases"] = artifact["cases"][:1]

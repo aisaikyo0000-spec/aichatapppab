@@ -21,7 +21,17 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
 
     assert expectation_met(scenarios["explicit_interest"], "invite")
     assert not expectation_met(scenarios["explicit_interest"], "wait")
+    assert expectation_met(scenarios["ambiguous_interest"], "continue")
+    assert expectation_met(scenarios["ambiguous_interest"], "clarify")
     assert expectation_met(scenarios["ambiguous_interest"], "wait")
     assert not expectation_met(scenarios["ambiguous_interest"], "invite")
+    assert not expectation_met(scenarios["ambiguous_interest"], "stop")
     assert expectation_met(scenarios["decline"], "stop")
     assert not expectation_met(scenarios["decline"], "invite")
+
+
+def test_tapple_benchmark_scenarios_include_chat_context_and_allowed_actions():
+    for scenario in SCENARIOS:
+        assert [turn["sender"] for turn in scenario["messages"]][-1] == "contact"
+        assert scenario["allowed_actions"]
+        assert "stop" not in scenario["allowed_actions"] or scenario["id"] == "decline"

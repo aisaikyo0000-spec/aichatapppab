@@ -1952,3 +1952,9 @@ Gemini復旧後にタップル戦略を確認するため、独立スクリプ�
 テストを先に追加した時点で2件が失敗し、修正後はTapple専用テスト**3 passed**、新しい独立Reviewer **PASS**。backend全体は**512 passed / 2 warnings**、frontend buildも**PASS**。`--help`と対象Python compileもPASSで、APIは呼んでいない。RED commitは`2d0c93b`、GREEN commitは`4325e9e`。API実生成・70ケース・Contact Benchは未実施であり、Step 18-R4は未完成。
 
 Step 18-R4 Iteration 1 ReviewerのGold優先FAILを現在のHEADで独立再監査した。focused `test_step18_relationship.py`は**36 passed**。同一相手のGoldが1〜2件でもSilverへ置き換わらず、Silverは手入力Goldが0件の場合のみfallbackとして使うことを確認し、Reviewerは**PASS**と判定した。
+
+## APIベンチのquota停止と未完了artifact
+
+70ケース評価で全モデル・全アカウントのquotaを使い切った後、残りケースでも同じ失敗を繰り返す経路を修正した。pipeline、Contact Bench、Tapple Benchは生成APIが失敗した時点で後続ケースを呼ばず、途中結果を保存する。artifactには完了数・予定数・停止理由を残し、未完了または失敗時は終了コード2を返す。全ケース数を処理していても最終ケースにエラーがあれば`complete: false`になる。
+
+新設`benchmark_response.py`の判定テストで、quota失敗・別のprovider error・最終ケース失敗・途中終了・全件成功を確認した。関連focused testsは**12 passed**、全backend suiteは**517 passed / 2 warnings**。frontend buildと4つのCLI `--help`も**PASS**。独立Python Reviewer **PASS**。APIは呼んでいない。RED commitは`e38fe63`、GREEN commitは`8f0e78d`。

@@ -347,7 +347,7 @@
 ## Gemini benchmarkの2アカウントfallback
 
 - API復旧後に使う`run_pipeline_benchmark.py`と`run_contact_benchmark.py`が予備キーを受け取っていなかったため、両スクリプトに任意の`--secondary-env-file`を追加した。主キーを使った3.5→3.1の後、両方が`rate_limit`なら予備キーの3.5→3.1へ進む設定をアプリ本体へ渡す
-- 設定組み立ての単体テストは**2 passed**。両CLIのhelp表示も確認済み。Tapple API実生成ベンチは3件の期待値テストと独立Python Reviewerが**PASS**。曖昧な反応では`continue`/`clarify`/`wait`だけを許容し、`invite`と`stop`を不合格にする。最新全backend suiteは**512 passed / 2 warnings**、frontend build・`git diff --check`・対象Python compileも**PASS**
+- 設定組み立ての単体テストは**2 passed**。4つのCLIのhelp表示も確認済み。Tapple API実生成ベンチは3件の期待値テストと独立Python Reviewerが**PASS**。曖昧な反応では`continue`/`clarify`/`wait`だけを許容し、`invite`と`stop`を不合格にする。最新全backend suiteは**517 passed / 2 warnings**、frontend build・`git diff --check`・対象Python compileも**PASS**
 - 朝の実行では3.5を主モデル、gemini2.mdを主キー、gemini3.mdを予備キーに指定する。70ケースを最後まで回してからContact Bench、Tapple 3ケースを実行する。ケースごとの既定待機は6秒。artifactはローカルの一時領域へ保存する
 - 実装commitは`61ec2fe`（作業branchにローカル保存、未push）。API復旧と品質評価が終わるまでGitHubへのpushは保留する
 - アプリ本体でファイルを直接使う場合は、実行環境の`.env`に`GEMINI_API_KEY_FILE=<gemini2.md>`と`GEMINI_SECONDARY_API_KEY_FILE=<gemini3.md>`を設定する。DBに登録された主キーはファイルより優先する。キー値は`.env`や資料へコピーしない
@@ -355,6 +355,7 @@
 - Tapple調査を更新。2026年8月の公式共同調査は共有体験や会話の具体性を検討する補助資料として扱うが、自己申告・対象者限定の結果であり、遊園地デートの因果効果や固定の誘い時期を示すものではない。現行validatorの安全制約は維持
 - ベンチは各ケースを本人・相手の会話ターン付きに変更。期待動作の許可リストで曖昧な返答を評価する。RED test commit `2d0c93b`、GREEN commit `4325e9e`。最新main基点`a75ba76`からのWIPは未push
 - Step 18-R4の過去Reviewer指摘だった「少数の本人Goldを同一相手Silverが上書きする」条件を現HEADで再監査。focused test **36 passed**、Gold優先を確認し、独立Reviewer **PASS**
+- 生成APIエラー後は各ベンチを停止し、部分artifactに実行数・期待数・停止理由を記録して終了コード2を返す。70件目の失敗も`complete: false`になる。RED test commit `e38fe63`、GREEN commit `8f0e78d`、独立Reviewer **PASS**
 
 ```powershell
 python scripts/check_tapple_api_connectivity.py --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"

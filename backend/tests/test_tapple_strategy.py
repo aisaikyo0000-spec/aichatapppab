@@ -1208,6 +1208,30 @@ def test_denied_meeting_safety_concern_does_not_block_explicit_invite(statement)
     assert result.invite_example is not None
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "会うのは怖くないとは言えません。ぜひ一緒に行きたいです。",
+        "不安ではないとは言えないですが、ぜひ一緒に行きたいです。",
+    ],
+)
+def test_qualified_denial_does_not_clear_safety_concern(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["ぜひ一緒に行きたいです"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
 def test_ambiguous_reply_or_response_speed_cannot_authorize_invite():
     conversation = "相手: いいですね！\n相手: 返信早いですね"
     raw = _raw_strategy(

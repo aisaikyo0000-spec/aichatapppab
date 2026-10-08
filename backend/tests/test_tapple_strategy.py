@@ -450,6 +450,8 @@ def test_explicit_later_refusal_overrides_earlier_acceptance_for_scheduling():
         "カフェは行きたいけど、まだ会うのは不安です。",
         "会いたいけど少し怖いです。",
         "会いたいけど少し不安です。",
+        "土曜は無理だけど日曜なら大丈夫です。でも会うのは少し怖いです。",
+        "土曜は難しいけど日曜なら大丈夫です。でも会うのは不安です。",
     ],
 )
 def test_scheduling_is_not_allowed_for_hearsay_or_hedged_interest(counterpart_message):

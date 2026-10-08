@@ -44,6 +44,28 @@ SCENARIOS = (
         "reply_must_contain_any": ["楽しみ", "嬉しい", "うれしい", "ありがとう", "日程", "予定", "いつ", "都合", "いいですね"],
     },
     {
+        "id": "meeting_hesitation",
+        "messages": [
+            {"sender": "contact", "content": "初対面の人と会うのは少し緊張します"},
+            {"sender": "self", "content": "無理せず、話しやすいペースで大丈夫です"},
+            {"sender": "contact", "content": "会いたい気持ちはありますが、実際に会うのはまだ少し迷っています"},
+        ],
+        "allowed_actions": ["wait"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["大丈夫", "無理", "ゆっくり", "話"],
+    },
+    {
+        "id": "meeting_safety_concern",
+        "messages": [
+            {"sender": "contact", "content": "カフェいいですね"},
+            {"sender": "self", "content": "駅前のカフェは人も多くて、初めてでも行きやすそうです"},
+            {"sender": "contact", "content": "ぜひ行きたいです。ただ、まだ直接会うのは安全面が少し不安です"},
+        ],
+        "allowed_actions": ["wait", "continue"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["大丈夫", "無理", "話", "安心"],
+    },
+    {
         "id": "ambiguous_interest",
         "messages": [
             {"sender": "self", "content": "コーヒー好きなんですね。駅前に気になるカフェができたみたいです。"},

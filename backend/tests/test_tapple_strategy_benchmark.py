@@ -98,7 +98,8 @@ def test_live_benchmark_covers_meeting_hesitation_and_safety_boundaries():
 
     for scenario_id in ("meeting_hesitation", "meeting_safety_concern"):
         scenario = scenarios[scenario_id]
-        assert scenario["allowed_actions"] == ["wait"]
+        assert "wait" in scenario["allowed_actions"]
+        assert set(scenario["allowed_actions"]) <= {"wait", "continue"}
         assert scenario["no_reinvitation"] is True
 
         latest_contact = next(

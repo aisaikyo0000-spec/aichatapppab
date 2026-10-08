@@ -2120,3 +2120,13 @@ Gemini APIは呼び出していない。最新70ケース、Contact Bench全9返
 過去のContact Bench 3/3 artifactはGold重複計上を修正する前の結果のため、現行実装の受入証拠から外した。再実行前に、同一probeをベンチと同じAPI経路へ通すmock統合テストを追加した。A/B/Cそれぞれの応答プロンプトに同じ入力、相手専用の手入力Gold、6件のGold数とsame-contact hierarchy tierが反映されること、短文・中間・長文および口調比率がfixtureどおりに分かれることを確認した。これは実Geminiの生成品質を評価するテストではない。
 
 `python -m pytest backend/tests -q`: **1,144 passed / 2 warnings**。Contact Bench focused testは**3 passed**、frontend production build、Python compileall、`git diff --check`もPASS。Gemini APIは呼び出していない。最新70ケース、Contact Bench実生成9返信の3/3人手確認、Tapple 11シナリオの実生成全文レビュー、今回差分のfresh Reviewerが残るためStep 18-R4は未完成。レビュー後にオフライン準備のWIPをfork作業branchへpushする予定で、GitHub mainには反映しない。
+
+## 2026-10-09 Step 18-R4 Tapple Iteration 28: 活動への関心・不関心の対象を分ける
+
+最近の自分の発言で特定の活動を「苦手」「好きではない」と伝えた後、相手から同じ活動に誘われても、古い共通関心だけを根拠に誘う戦略へ戻さないようにした。判定は直接的な誘いにも適用する。一方、未経験、否定を和らげる言い方、活動の属性（人混み・会話など）だけが苦手な場合、映画など別の活動への関心、後から同じ活動への関心を明示した場合は、対象の活動への不関心と混同しない。文を分けた再表明も対象に含める。
+
+独立レビューを重ね、節を越える再関心を別の活動の好みで誤って解除するケースを追加で発見した。ベンチに`different_activity_does_not_clear_disinterest`を加え、カフェへの苦手意識の後に映画への関心を示してもカフェの誘いは`wait`とする。Tapple benchmarkは**13シナリオ**になり、fixture一覧、パーサー統合テスト、評価出力も同期した。
+
+最終コードcommit `3f80fee`。`python -m pytest backend/tests -q`: **1,174 passed / 2 warnings**。Tapple strategy suite **593 passed**、strategy・artifact・benchmarkのfocused suite **631 passed**。Gemini model fallback suite **17 passed**、benchmark route-state suite **18 passed**。frontend production build、Python `compileall`、`git diff --check`もPASS。警告はFastAPI `on_event`の既存非推奨通知。`ruff`は環境にないため未実行。最新差分・資料へのfresh Python Reviewerは**PASS**。
+
+Gemini APIは呼び出していない。利用経路はprimary 3.5 → primary 3.1 → secondary 3.5 → secondary 3.1で、`rate_limit`時のみ次へ進む。primaryの3.5と3.1が両方制限された場合はsecondaryへ切り替える。API実測、70ケース、Contact Bench 9返信の3/3目視、Tapple 13シナリオと全返信の目視評価は残るため、Step 18-R4は未完成。GitHub mainの基点`a75ba76`は変更していない。コードと資料はfork作業branchへpushし、remote SHAを照合する。

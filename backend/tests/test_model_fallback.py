@@ -58,6 +58,7 @@ def test_gemini_primary_key_is_reused_for_same_provider_fallback_without_exposur
     body = settings.json()
     assert body["has_api_key"] is True
     assert body["has_fallback_api_key"] is True
+    assert body["fallback_api_key_env"] is False
     assert secret not in settings.text
     assert "api_key" not in body
     assert "fallback_api_key" not in body
@@ -117,6 +118,7 @@ def _configure_generation(
     fallback_behavior: str = "success",
     secondary_primary_behavior: str = "success",
     secondary_fallback_behavior: str = "success",
+    secondary_api_key: str = "",
 ):
     calls: list[tuple[str, str]] = []
     fallback_calls: list[str] = []
@@ -203,7 +205,7 @@ def _configure_generation(
             "fallback_provider": "gemini",
             "fallback_model": "gemini-3.1-flash-lite",
             "fallback_api_key": "fallback-key",
-            "secondary_api_key": "secondary-key",
+            "secondary_api_key": secondary_api_key,
         },
     )
     monkeypatch.setattr("app.routers.generation.time.sleep", lambda *_: None)
@@ -333,8 +335,8 @@ def test_generation_tries_secondary_account_only_after_both_primary_models_are_r
     calls, fallback_calls = _configure_generation(
         monkeypatch,
         primary_behavior="rate_limit",
-        fallback_behavior="rate_limit",
         secondary_primary_behavior="rate_limit",
+        secondary_api_key="secondary-key",
     )
 
     _cid, response = _generate_once(client)
@@ -342,11 +344,32 @@ def test_generation_tries_secondary_account_only_after_both_primary_models_are_r
     assert response.status_code == 200
     assert calls == [
         ("primary", "gemini-3.5-flash-lite"),
-        ("fallback", "gemini-3.1-flash-lite"),
+        ("primary", "gemini-3.1-flash-lite"),
         ("secondary", "gemini-3.5-flash-lite"),
         ("secondary", "gemini-3.1-flash-lite"),
     ]
-    assert fallback_calls == ["gemini-3.1-flash-lite"]
+    assert fallback_calls == []
+
+
+def test_generation_stops_at_secondary_primary_model_when_it_succeeds(client, monkeypatch):
+    calls, fallback_calls = _configure_generation(
+        monkeypatch,
+        primary_behavior="rate_limit",
+        secondary_api_key="secondary-key",
+    )
+
+    cid, response = _generate_once(client)
+
+    assert response.status_code == 200
+    assert calls == [
+        ("primary", "gemini-3.5-flash-lite"),
+        ("primary", "gemini-3.1-flash-lite"),
+        ("secondary", "gemini-3.5-flash-lite"),
+    ]
+    assert fallback_calls == []
+    history = client.get(f"/api/history?contact_id={cid}")
+    assert history.status_code == 200
+    assert history.json()[0]["model"] == "gemini-3.5-flash-lite"
 
 
 def test_generation_does_not_switch_accounts_when_primary_fallback_has_non_quota_error(

@@ -433,7 +433,7 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - 独立監査で、対象相手のGoldが全体Goldの基準値と相手別Goldの両方に含まれ、相手別の影響が設定値より強くなる問題を確認した。再現テストは修正前に失敗し、3件の相手Goldと5件の他相手Goldで、実際の相手別比率が想定の0.375ではなく0.61になることを確認した
 - 相手別のGoldを基準値から除いてから同じ相手のGoldを段階的に混ぜるよう変更した。他相手Goldがない場合は唯一のGoldを基準値に使い、データを捨てない。Contact Adaptation suite **27 passed**、backend全体 **697 passed / 2 warnings**、frontend production build **PASS**。独立Python Reviewer **PASS**
 - Gemini 3.5 primary→3.1 primary→予備アカウント3.5→3.1の順序と、quota時だけ切り替える制御も回帰テスト **29 passed**で確認した。APIは未呼び出し。最新70ケース、Contact Bench 3/3、Tapple実生成文の人手確認は未完了のため、Step 18-R4は未完成・未push
-- 再現テストcommit `32a4e9d`、Gold修正commit `0ab254d`、Tapple/quota修正commit `e31bd8b`。最新コードcommit `e31bd8b`はローカルWIPで未push。GitHub main基点 `a75ba76`
+- 再現テストcommit `32a4e9d`、Gold修正commit `0ab254d`、Tapple/quota修正commit `e31bd8b`。WIPはforkの作業branchへcommit `d44d347`までpush済み。GitHub main基点 `a75ba76`は変更していない
 
 ## Tapple Iteration 4: 代替日程後の再拒否と最終検証（2026-10-09）
 

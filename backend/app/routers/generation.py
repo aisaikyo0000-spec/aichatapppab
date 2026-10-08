@@ -631,7 +631,7 @@ def _has_recent_self_disinterest_in_tapple_activity(
             later_text = latest_self_text[disinterest_end:]
             renewal_match = renewed_interest_re.search(later_text)
             if renewal_match and not any(
-                other_term in later_text[: renewal_match.start()]
+                other_term in later_text[: renewal_match.end()]
                 for other_term in _TAPPLE_SHARED_ACTIVITY_TERMS
                 if other_term != activity_term
             ):

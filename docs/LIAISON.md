@@ -366,8 +366,8 @@
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$primaryKeyFile = '<gemini2.mdのパス>'
-$secondaryKeyFile = '<gemini3.mdのパス>'
+$primaryKeyFile = 'C:\Users\poiuy\Desktop\sanma_python\claude\API\gemini2.md'
+$secondaryKeyFile = 'C:\Users\poiuy\Desktop\sanma_python\claude\API\gemini3.md'
 $runDir = Join-Path $env:TEMP ("aichatapp-live-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $runDir | Out-Null
 $pipelineOut = Join-Path $runDir 'pipeline.json'
@@ -386,7 +386,19 @@ if ((Read-Host 'contact.jsonの実生成を確認し、Contact Bench 3/3ならPA
 python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
 if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が3/3でないか実行未完了です。artifact: $tappleOut" }
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
+python -m pytest backend/tests -q
+if ($LASTEXITCODE -ne 0) { throw 'backend全テストがPASSしていません。' }
+Push-Location frontend
+npm run build
+$frontendBuildExit = $LASTEXITCODE
+Pop-Location
+if ($frontendBuildExit -ne 0) { throw 'frontend buildがPASSしていません。' }
+git diff --check
+if ($LASTEXITCODE -ne 0) { throw 'git diff --checkがPASSしていません。' }
+if ((Read-Host '最終diffを独立Python ReviewerとTapple safety ReviewerがPASSし、LIAISONと分析資料に実測値・判定・commitを記録済みならPASS') -cne 'PASS') { throw '全受け入れ条件が揃っていないためpushしません。' }
 ```
+
+疎通確認は最大4回の単発リクエストで、主3.5→主3.1→予備3.5→予備3.1の順に進む。次のモデル／アカウントへ進むのは`rate_limit`の場合だけで、その他のエラーでは追加呼び出しをせず停止する。疎通確認がPASSしたら70ケースを実行し、失敗ケースを除外せず検証器で全件と全指標を確認する。以降は実例の目視確認、Contact Bench 3/3、Tapple 3ケースと返信全文の目視確認を行う。push前にはこのPowerShell手順末尾の全受け入れ条件を再確認し、いずれかが不合格・未完了ならpushしない
 
 ## Gemini主キーのファイル読込
 
@@ -403,3 +415,26 @@ if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・�
 - focused tests: Tapple artifact **7 passed**、Tapple strategy **26 passed**、70-case verifier **14 passed**、Gemini quota retry **3 passed**、account fallback **16 passed**。Fresh Python Reviewersは3項目とも **PASS**
 - 最終確認: `python -m pytest backend/tests -q` **541 passed / 2 warnings**、`frontend`の`npm run build` **PASS**、`git diff --check`・対象Python compile・validator/benchmark `--help` **PASS**
 - 実API評価は依然未実施。Step 18-R4の最新70ケース、Contact Bench 3/3、Tapple実生成と全文レビューが残るため未完成・未push。現HEAD `98f2e55`、main基点`a75ba76`
+
+## Tapple Iteration 3: 断り・日程調整境界とベンチ判定の強化（2026-10-09）
+
+- 独立レビューのFAILを受け、断りと代替日程の提案を区別した。「土曜は会えないけど日曜なら会えます」は`stop`にせず`continue`を保ち、明示的な参加意思を受けた後の日程確認も許可する
+- 保留・拒否の後に「日曜はどうですか」「来週なら都合つきますか」「今度そこ行こう」と誘い直す返信はvalidatorとTappleベンチの両方で検出する。友人の意向の伝聞や「行きたいけど不安」のような保留は本人の承諾として扱わない
+- ベンチは記号だけ・短すぎるevidence、招待方針と矛盾するrationale、明示的な話題転換を含む返信を不合格にする。シナリオごとに話題要素と応答要素も確認する。これは機械判定の補強であり、自然さや文脈の最終合格には生成文の人手レビューが必要
+- Tapple専用suite **76 passed**、主・予備アカウント切替suite **19 passed**、backend全体 **581 passed / 2 warnings**、frontend production build・`git diff --check`・対象Python compile **PASS**。fresh reviewer 2名の最終判定待ち
+- Gemini APIは呼び出していない。3.5→3.1→予備アカウント3.5→3.1の順で、各段階は`rate_limit`の場合だけ切り替える経路をテストで確認済み。実キーでの疎通と生成品質は未確認
+- 作業HEADは`64f5bf3`に未commit差分あり。main基点`a75ba76`からのWIPは未push。最新70ケース、Contact Bench、Tapple実生成・実例レビューが未完了のためStep 18-R4は未完成
+
+## Step 18-R4 Iteration 5: Contact Goldの二重加算修正
+
+- 独立監査で、対象相手のGoldが全体Goldの基準値と相手別Goldの両方に含まれ、相手別の影響が設定値より強くなる問題を確認した。再現テストは修正前に失敗し、3件の相手Goldと5件の他相手Goldで、実際の相手別比率が想定の0.375ではなく0.61になることを確認した
+- 相手別のGoldを基準値から除いてから同じ相手のGoldを段階的に混ぜるよう変更した。他相手Goldがない場合は唯一のGoldを基準値に使い、データを捨てない。Contact Adaptation suite **27 passed**、backend全体 **697 passed / 2 warnings**、frontend production build **PASS**。独立Python Reviewer **PASS**
+- Gemini 3.5 primary→3.1 primary→予備アカウント3.5→3.1の順序と、quota時だけ切り替える制御も回帰テスト **29 passed**で確認した。APIは未呼び出し。最新70ケース、Contact Bench 3/3、Tapple実生成文の人手確認は未完了のため、Step 18-R4は未完成・未push
+- 再現テストcommit `32a4e9d`、修正commit `0ab254d`。資料更新を含むWIPは未push。GitHub main基点 `a75ba76`
+
+## Tapple Iteration 4: 代替日程後の再拒否と最終検証（2026-10-09）
+
+- 独立レビューで見つかった境界を追加し、「来月は無理ですが再来月なら会えます。でも再来月も都合が悪いです」のように、代替日を一度示した後でその日も断る文面を拒否として扱う。拒否根拠のテスト期待値も実際の日本語表現に合わせた
+- 独立Reviewerが指摘した評価器差分をHEADと照合し、今回の作業差分から除去した。第三者の代替日と本人自身が提案した日程を区別し、返信側で本人の提案日を確認してから予定調整を許す。また「土曜は予定があって、日曜なら大丈夫」のような自然な代替日提案を拒否扱いしない。Tapple focused suite **190 passed**、全backend suite **696 passed / 2 warnings**、fallback focused suite **29 passed**。frontend production build、compileall、各benchmark `--help`、`git diff --check` **PASS**
+- この最終差分に対するfresh Python ReviewerとTapple safety reviewerは**PASS**。評価器スクリプトとthresholdに差分がないことも確認。朝の疎通・全ゲート手順も独立Reviewer **PASS**
+- APIは呼び出していない。実際のquota判定、最新70ケース、Contact Bench、Tapple生成文の確認は未実施。よってStep 18-R4は未完成で、WIPはpushしていない

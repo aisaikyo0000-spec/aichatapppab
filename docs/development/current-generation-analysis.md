@@ -1972,3 +1972,29 @@ Tapple戦略ベンチも、3ケースすべて生成できたことと戦略期�
 Gemini 3.5/3.1 Flash Liteの429応答は内部リトライをせず、generation routerへ即時返す。3.1のquota後に数秒待って同じモデルを再呼出しする経路がなくなり、設定済みの別アカウントchainへ進める。その他のGeminiモデルの既存リトライは変更していない。
 
 現HEADで`python -m pytest backend/tests -q`は**541 passed / 2 warnings**、frontend buildは**PASS**。独立Python ReviewerはTapple benchmark・正規70ケースvalidator・Gemini fallback retryをすべて**PASS**と判定した。APIを呼ばずに行った確認であり、最新70-case artifact、Contact Bench、Tapple実生成・文章レビューは未実施。Step 18-R4は引き続き未完成で、GitHubへpushしていない。
+
+### 2026-10-09 Tapple Iteration 4: 代替日程後の再拒否
+
+独立レビューで見つかった「一度は代替日を提案したものの、その日も都合が悪い」という会話を追加した。たとえば「来月は無理ですが再来月なら会えます。でも再来月も都合が悪いです」では、古い代替提案を根拠に誘い続けず、最終的な拒否を優先する。失敗していたテストの根拠表現も「都合が悪」を含めるように揃えた。
+
+独立Reviewerが指摘した評価器差分をHEADと照合し、今回の作業差分から除去した。第三者が伝えた日程と本人自身が提案した日程を区別し、返信に本人の提案日が含まれる場合だけ、その日程を調整対象として許可する。「土曜は予定があって、日曜なら大丈夫」のような、会話でよくある代替日の表現も拒否扱いしない。返信validatorが日曜への日程提案を通すこともテストした。Tapple focused suiteは**190 passed**、backend全体は**696 passed / 2 warnings**。fallback focused suiteは**29 passed**。frontend production build、対象Python compile、benchmark `--help`、`git diff --check`もPASS。最新差分に対するfresh Python Reviewerと独立Tapple safety reviewerはともに**PASS**。評価器スクリプトとthresholdに差分はない。
+
+Gemini APIは呼んでいない。3.5 primary→3.1 fallback→予備アカウント3.5→3.1の順で、各切替をrate limit時のみに制限するコード経路はテスト済みだが、実キーでの疎通は未確認。最新70-case regression、Contact Bench、Tapple実生成と生成文レビューが残るため、Step 18-R4は未完成・未push。
+
+朝の実行手順には、疎通後の70ケース評価・検証器、Contact Bench、Tapple実例レビューに加えて、push前のbackend全pytest、frontend build、`git diff --check`、最終差分に対する独立Reviewer二名のPASS、両進捗資料の実測値更新をまとめて記載した。手順とフォールバック経路は独立reviewer **PASS**。疎通は1モデル・アカウントあたり1回で最大4回。非quotaエラーなら即時停止する。実HTTP 429をmockしたテストでも、3.5/3.1それぞれ1回で止まることを確認した。gemini2.md/gemini3.mdは存在確認のみ行い、内容やキー値は出力していない。
+
+## 2026-10-09 オフライン品質ゲートの追加
+
+独立レビューで見つかったTapple戦略の境界誤判定を修正中。断りと代替日程を分け、拒否・保留後の直接的な再勧誘に加えて「日曜はどうですか」「今度そこ行こう」のような日程提案も拒否する。一方、明確な本人の承諾後や、相手自身が代替日を提案した場合の予定調整は許可する。友人の意向の伝聞や、前向きな希望と不安が同時にある文は承諾扱いしない。
+
+Tapple戦略ベンチでは、記号だけ・短すぎる根拠、招待方針と矛盾する説明、明示的な話題転換を含む返信を不合格にする。シナリオごとに話題要素と応答要素も検査する。ただし文字列ベースのゲートで意味の自然さを保証できるとはみなさず、ライブ生成例の人手レビューを必須にする。
+
+未commit差分を含む検証結果は、Tapple専用**76 passed**、fallback **19 passed**、backend全体**581 passed / 2 warnings**、frontend production build **PASS**。fresh reviewer 2名の最終判定待ち。Gemini 3.5 primary・3.1 fallbackと予備アカウントの経路はコードと回帰テストで確認したが、APIは呼び出していない。最新70ケース、Contact Bench、Tapple実生成例は未確認で、Step 18-R4は合格・pushともに未完了。
+
+## 2026-10-09 Contact Adaptation: Gold priorの重複を除去
+
+独立監査で、対象相手のGoldが全体Gold profileにも含まれたまま、同じGoldを相手別profileとして再度混ぜていることが分かった。テストでは他相手の丁寧なGoldが5件、対象相手のカジュアルGoldが3件のとき、設定上の相手別weightは0.375でも、重複によりカジュアル比率が0.61になった。
+
+相手別Goldを除いたGold profileを基準値にしてから、対象相手のGoldを既存weightで混ぜるようにした。他相手Goldがなければ唯一のGold profileを維持する。修正前の再現テストは失敗し、修正後はContact Adaptation suite **27 passed**、backend全体 **697 passed / 2 warnings**、frontend production build **PASS**。独立Python Reviewerは**PASS**。quota時の主3.5→主3.1→予備3.5→予備3.1のfallback suiteは**29 passed**。
+
+Gemini APIはまだ呼び出していない。最新70ケース、Contact Bench 3/3、Tappleの実生成文レビューも未実施のため、Step 18-R4は未完成・未push。再現テストcommitは`32a4e9d`、修正commitは`0ab254d`。資料更新を含むWIPは未push。

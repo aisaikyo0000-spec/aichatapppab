@@ -469,6 +469,11 @@ def test_disinterest_in_another_activity_does_not_block_shared_activity_invite()
             "invite",
         ),
         (
+            "プリンが好きです。カフェは苦手でした。今は映画が好きです",
+            "今度一緒にカフェに行きたいです",
+            "wait",
+        ),
+        (
             "プリンが好きです。カフェは最近行かなくなったけど、また行きたいです",
             "今度一緒にカフェに行きたいです",
             "invite",
@@ -1022,12 +1027,34 @@ def test_tapple_benchmark_covers_recent_disinterest_in_the_proposed_activity():
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
 
 
+def test_tapple_benchmark_does_not_use_another_interest_to_clear_disinterest():
+    scenario = next(
+        scenario
+        for scenario in run_tapple_strategy_benchmark.SCENARIOS
+        if scenario["id"] == "different_activity_does_not_clear_disinterest"
+    )
+
+    assert scenario["expected_action"] == "wait"
+    assert "今は映画が好き" in scenario["messages"][-2]["content"]
+    result = {
+        "strategy": {
+            "action": "wait",
+            "rationale": "映画への関心はカフェへの苦手意識を解消しないため、別の話題に応じます。",
+            "evidence": ["今度一緒にカフェに行きたいです"],
+            "invite_example": None,
+        },
+        "replies": ["映画が好きなんですね。最近観て印象に残った作品はありますか？"],
+    }
+    assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
+
+
 @pytest.mark.parametrize(
     "scenario_id, parsed_action",
     [
         ("mutual_activity_interest", "invite"),
         ("shared_activity_low_reciprocity", "wait"),
         ("recent_activity_disinterest", "wait"),
+        ("different_activity_does_not_clear_disinterest", "wait"),
     ],
 )
 def test_activity_interest_pair_runs_through_production_strategy_parser(scenario_id, parsed_action):

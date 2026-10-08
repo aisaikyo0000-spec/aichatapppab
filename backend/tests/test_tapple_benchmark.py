@@ -37,6 +37,7 @@ def _valid_results():
         "meeting_safety_concern": "不安な気持ちは大切にしたいです。無理せず話しましょう。",
         "declining_engagement": "そうなんですね。また話したくなったら話しましょう。",
         "recent_activity_disinterest": "誘ってくれてありがとう。今はプリンの話をするのも楽しそうですね。",
+        "different_activity_does_not_clear_disinterest": "映画が好きなんですね。最近観て印象に残った作品はありますか？",
     }
     results = []
     for scenario in SCENARIOS:

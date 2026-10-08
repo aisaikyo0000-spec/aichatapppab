@@ -81,6 +81,20 @@ SCENARIOS = (
         "reply_must_contain_any": ["カフェ", "プリン"],
     },
     {
+        "id": "different_activity_does_not_clear_disinterest",
+        "messages": [
+            {"sender": "contact", "content": "カフェ巡りが好きです"},
+            {"sender": "self", "content": "僕もカフェが好きです"},
+            {"sender": "contact", "content": "パンケーキは何が好きですか？"},
+            {"sender": "self", "content": "カフェは苦手でした。今は映画が好きです"},
+            {"sender": "contact", "content": "今度一緒にカフェに行きたいです"},
+        ],
+        "expected_action": "wait",
+        "allowed_actions": ["wait"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["カフェ", "映画"],
+    },
+    {
         "id": "accepted_invitation",
         "messages": [
             {"sender": "contact", "content": "コーヒー好きです"},

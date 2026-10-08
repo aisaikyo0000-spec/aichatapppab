@@ -377,12 +377,15 @@ python scripts/check_tapple_api_connectivity.py --env-file $primaryKeyFile --sec
 if ($LASTEXITCODE -ne 0) { throw '疎通に失敗したため、追加のAPI呼び出しを止めます。' }
 python scripts/run_pipeline_benchmark.py --out $pipelineOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
 if ($LASTEXITCODE -ne 0) { throw "70ケース評価が未完了です。artifact: $pipelineOut" }
-if ((Read-Host 'pipeline.jsonがcompleteで全6指標の基準を満たす場合はPASS') -cne 'PASS') { throw '品質基準を確認できないためContact Benchを止めます。' }
+python scripts/verify_pipeline_benchmark.py --artifact $pipelineOut
+if ($LASTEXITCODE -ne 0) { throw '70件の網羅性、artifact指標、6つの閾値のいずれかが不合格です。' }
+if ((Read-Host '返信実例も確認し、不自然さや文脈ずれがなければPASS') -cne 'PASS') { throw '実例の品質を確認できないためContact Benchを止めます。' }
 python scripts/run_contact_benchmark.py --out $contactOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
 if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。artifact: $contactOut" }
 if ((Read-Host 'contact.jsonの実生成を確認し、Contact Bench 3/3ならPASS') -cne 'PASS') { throw 'Contact Benchが3/3でないためTapple評価を止めます。' }
 python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
-if ($LASTEXITCODE -ne 0) { throw 'Tapple評価が未完了です。artifactを確認してください。' }
+if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が3/3でないか実行未完了です。artifact: $tappleOut" }
+if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }
 ```
 
 ## Gemini主キーのファイル読込
@@ -390,3 +393,13 @@ if ($LASTEXITCODE -ne 0) { throw 'Tapple評価が未完了です。artifactを�
 - アプリ本体も`GEMINI_API_KEY_FILE`で主キーのファイルを読み込む。`GEMINI_SECONDARY_API_KEY_FILE`と併用すればgemini2.mdを主キー、gemini3.mdを予備キーとして設定できる。DBに主キーがある場合はDBを優先する
 - gemini2.mdだけを設定する経路、DBキー優先、主・予備両ファイルの同時設定、設定APIに秘密値が含まれないことをテストした。主キーfallback関連テスト **16 passed**。全backend suite **509 passed / 2 warnings**、frontend build **PASS**、独立Python Reviewer **PASS**
 - 実装commit `51c14aa`。GitHub基点main `a75ba76`からの未push WIP。APIを呼んでいないため、実際のアカウント切替・70ケース・Contact Bench・Tapple実生成は未確認。Step 18-R4は未完成
+
+## Step 18-R4 Iteration 36: 評価artifactの品質ゲート
+
+- Tapple Benchは期待戦略が3/3揃わない場合に終了コード3、ケース不足・重複・生成エラーの場合は終了コード2を返す。artifactの`complete`も3種類の一意なIDとエラーなしを要求する。Tapple返信文の自然さ・文脈・安全性は別途目視レビューする
+- `verify_pipeline_benchmark.py`を追加。リポジトリ内の正規70ケースIDの完全一致・一意性、候補3件または安全な利用者確認、全候補のissue/four-axisレコード、summaryと再計算値の一致、6閾値を検証する。任意のケース集合で正規ベンチを置き換えるCLIオプションは設けていない
+- Gemini 3.5/3.1 Flash Liteの429はプロバイダー内で再試行せず、上位のモデル・アカウント切替へ即時返す。他モデルの既存再試行動作は維持
+- 関連commit: Tapple品質ゲート `fddd813`→`3347108`→`011f384`→`940949c`→`9778dde`→`d5ac1ef`、正規70ケース検証器 `1ed1802`→`a25684d`→`786644c`→`325ccfe`→`3b01f3c`→`98f2e55`、quota時の即時切替 `dc81496`→`febd5da`
+- focused tests: Tapple artifact **7 passed**、Tapple strategy **26 passed**、70-case verifier **14 passed**、Gemini quota retry **3 passed**、account fallback **16 passed**。Fresh Python Reviewersは3項目とも **PASS**
+- 最終確認: `python -m pytest backend/tests -q` **541 passed / 2 warnings**、`frontend`の`npm run build` **PASS**、`git diff --check`・対象Python compile・validator/benchmark `--help` **PASS**
+- 実API評価は依然未実施。Step 18-R4の最新70ケース、Contact Bench 3/3、Tapple実生成と全文レビューが残るため未完成・未push。現HEAD `98f2e55`、main基点`a75ba76`

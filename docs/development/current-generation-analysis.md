@@ -1962,3 +1962,13 @@ Step 18-R4 Iteration 1 ReviewerのGold優先FAILを現在のHEADで独立再監�
 Geminiの実行設定として、Git管理外の`.env`から主・予備のキー参照ファイルを読み込めることも確認した。現在の作業環境では両ファイルを別アカウントとして解決し、モデル設定は3.5 primary／3.1 fallbackとなっている。`test_api_key_file.py`と`test_model_fallback.py`は**25 passed / 2 warnings**。キー本体は出力・複製していない。APIへの実リクエストは行っていないため、実quota時の切替が動作したという意味ではない。
 
 API評価の再開手順には各段階の終了コード判定を追加した。疎通で利用可能モデルが見つからない場合や生成が未完了の場合は、その後のベンチを起動しない。70ケースの全指標とContact Benchの3/3は終了コードだけでは判定できないため、artifactを読んで合格を確認する手動ゲートも置いた。これにより全キーのquota枯渇後の再試行と、品質未確認のまま次の評価へ進むことを避ける。
+
+さらに`verify_pipeline_benchmark.py`を追加し、既定の70ケースJSONにあるIDがすべて一度ずつ存在すること、生成エラーがないこと、artifactの集計値がケース別データから再計算した値と合うこと、既存の6閾値をすべて満たすことを機械判定する。`--case-ids`で一部だけ成功したartifactは、`complete: true`でも全体合格にはできない。API呼び出しなしの検証テストは**6 passed**。
+
+Tapple戦略ベンチも、3ケースすべて生成できたことと戦略期待値が合格したことを分離した。全3ケースの`expectation_met`が真で、IDが重複・欠落していない場合だけ`quality_pass: true`、終了コード0とする。不完全な生成は2、完走して期待戦略が不一致なら3で終了し、artifactには失敗ケースを記録する。実際の返信文の自然さ・文脈・安全性はこの機械判定だけでは保証しないため、全返信文のレビューを別ゲートにした。focused testは**3 passed**、既存Tapple suiteは**26 passed**。
+
+独立レビューで、artifactが期待件数だけ満たせば合格になる抜けを検出し、修正を繰り返した。Tapple側はケースIDの重複・欠落・エラーと中間保存状態を含めてfail-closedにした。正規70ケース評価側は、各ケースの候補数、全issue項目、context/human/conversation軸と`personal_style_fit: null`を検証し、欠損レコードが平均計算から脱落して閾値を満たすことを防ぐ。要約値はcase-levelデータから再計算し、型を含めて照合する。評価対象はリポジトリの固定70ケースデータに限定する。
+
+Gemini 3.5/3.1 Flash Liteの429応答は内部リトライをせず、generation routerへ即時返す。3.1のquota後に数秒待って同じモデルを再呼出しする経路がなくなり、設定済みの別アカウントchainへ進める。その他のGeminiモデルの既存リトライは変更していない。
+
+現HEADで`python -m pytest backend/tests -q`は**541 passed / 2 warnings**、frontend buildは**PASS**。独立Python ReviewerはTapple benchmark・正規70ケースvalidator・Gemini fallback retryをすべて**PASS**と判定した。APIを呼ばずに行った確認であり、最新70-case artifact、Contact Bench、Tapple実生成・文章レビューは未実施。Step 18-R4は引き続き未完成で、GitHubへpushしていない。

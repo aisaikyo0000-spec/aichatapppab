@@ -192,6 +192,7 @@ def _configure_generation(
     secondary_primary_behavior: str = "success",
     secondary_fallback_behavior: str = "success",
     secondary_api_key: str = "",
+    quota_attempt_start_index: int | None = None,
 ):
     calls: list[tuple[str, str]] = []
     fallback_calls: list[str] = []
@@ -266,21 +267,27 @@ def _configure_generation(
         raise AssertionError(f"unexpected provider key for {provider_name}")
 
     monkeypatch.setattr("app.routers.generation.factory.get_provider", get_provider)
-    monkeypatch.setattr(
-        "app.routers.generation.get_ai_config",
-        lambda: {
-            "provider": "gemini",
-            "model": "gemini-3.5-flash-lite",
-            "api_key": "primary-key",
-            "temperature": 0.8,
-            "max_tokens": 512,
-            "history_limit": 50,
-            "fallback_provider": "gemini",
-            "fallback_model": "gemini-3.1-flash-lite",
-            "fallback_api_key": "fallback-key",
-            "secondary_api_key": secondary_api_key,
-        },
-    )
+    config = {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "api_key": "primary-key",
+        "temperature": 0.8,
+        "max_tokens": 512,
+        "history_limit": 50,
+        "fallback_provider": "gemini",
+        "fallback_model": "gemini-3.1-flash-lite",
+        "fallback_api_key": "fallback-key",
+        "secondary_api_key": secondary_api_key,
+    }
+    if quota_attempt_start_index is not None:
+        config["quota_attempts"] = [
+            {"provider": "gemini", "model": "gemini-3.5-flash-lite", "api_key": "primary-key", "account": "primary"},
+            {"provider": "gemini", "model": "gemini-3.1-flash-lite", "api_key": "fallback-key", "account": "primary"},
+            {"provider": "gemini", "model": "gemini-3.5-flash-lite", "api_key": "secondary-key", "account": "secondary"},
+            {"provider": "gemini", "model": "gemini-3.1-flash-lite", "api_key": "secondary-key", "account": "secondary"},
+        ]
+        config["quota_attempt_start_index"] = quota_attempt_start_index
+    monkeypatch.setattr("app.routers.generation.get_ai_config", lambda: config)
     monkeypatch.setattr("app.routers.generation.time.sleep", lambda *_: None)
     return calls, fallback_calls
 
@@ -461,4 +468,24 @@ def test_generation_does_not_switch_accounts_when_primary_fallback_has_non_quota
     assert calls == [
         ("primary", "gemini-3.5-flash-lite"),
         ("fallback", "gemini-3.1-flash-lite"),
+    ]
+
+
+def test_generation_resumes_benchmark_from_last_successful_model_and_keeps_secondary_chain(
+    client, monkeypatch
+):
+    calls, _fallback_calls = _configure_generation(
+        monkeypatch,
+        primary_behavior="success",
+        fallback_behavior="rate_limit",
+        secondary_api_key="secondary-key",
+        quota_attempt_start_index=1,
+    )
+
+    _cid, response = _generate_once(client)
+
+    assert response.status_code == 200
+    assert calls == [
+        ("fallback", "gemini-3.1-flash-lite"),
+        ("secondary", "gemini-3.5-flash-lite"),
     ]

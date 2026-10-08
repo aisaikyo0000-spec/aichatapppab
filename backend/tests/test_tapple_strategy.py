@@ -327,6 +327,7 @@ def test_decline_response_cannot_include_a_reinvitation():
         "わかりました。日曜はどうですか？",
         "残念ですが、来週なら都合つきますか？",
         "今度そこ行こう",
+        "ぜひ来週会いましょう。",
     ],
 )
 def test_tapple_wait_strategy_rejects_soft_reinvitations(reply):

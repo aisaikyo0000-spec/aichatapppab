@@ -160,6 +160,29 @@ def test_tapple_benchmark_rejects_a_reinvitation_after_decline_even_when_action_
     assert declined["id"] in summary["expectation_failures"]
 
 
+@pytest.mark.parametrize("scenario_id", ["meeting_hesitation", "meeting_safety_concern"])
+def test_tapple_benchmark_rejects_direct_reinvite_and_generic_reply_for_concern(scenario_id):
+    results = _valid_results()
+    scenario = next(result for result in results if result["id"] == scenario_id)
+    scenario["replies"] = ["ぜひ来週会いましょう。"]
+    scenario["expectation_met"] = True
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert scenario_id in summary["expectation_failures"]
+
+    results = _valid_results()
+    scenario = next(result for result in results if result["id"] == scenario_id)
+    scenario["replies"] = ["その話は面白いですね。"]
+    scenario["expectation_met"] = True
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert scenario_id in summary["expectation_failures"]
+
+
 def test_tapple_benchmark_recomputes_result_instead_of_trusting_boolean():
     results = _valid_results()
     results[0]["expectation_met"] = True

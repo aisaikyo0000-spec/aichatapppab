@@ -1121,6 +1121,24 @@ def test_explicit_hesitation_before_positive_interest_blocks_invite():
         assert result.invite_example is None, statement
 
 
+def test_hesitation_in_separate_sentence_after_positive_interest_blocks_invite():
+    statement = "ぜひ一緒に行きたいです。少し迷っています。"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["ぜひ一緒に行きたいです"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
 def test_thinking_about_meeting_logistics_is_not_hesitation():
     for statement in (
         "来週会う日程を考えています。ぜひ一緒に行きたいです。",
@@ -1340,6 +1358,18 @@ def test_hesitation_after_positive_interest_still_blocks_date_scheduling():
         ["ぜひ！日曜はどうですか？"],
         1,
         counterpart_message="ぜひ一緒に行きたいですが、少し迷っています。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_hesitation_in_separate_sentence_after_acceptance_blocks_date_scheduling():
+    violations = validate_candidate_replies(
+        ["ぜひ！日曜はどうですか？"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです。少し迷っています。",
         strategy_mode="tapple",
         tapple_action="continue",
     )

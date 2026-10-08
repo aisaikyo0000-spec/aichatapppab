@@ -16,6 +16,7 @@ from app.learning import style
 from app.routers import generation
 from api_key_file import read_gemini_api_key
 from benchmark_config import build_gemini_benchmark_config
+from benchmark_response import benchmark_run_state, extract_api_error_code
 
 
 CONTACTS = {
@@ -70,7 +71,11 @@ def seed_and_generate(client, key, model, delay_seconds, probe, secondary_key=""
         client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": probe})
         r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
         if r.status_code != 200:
-            out[name] = {"error": f"HTTP {r.status_code}"}
+            out[name] = {
+                "error": f"HTTP {r.status_code}",
+                "error_code": extract_api_error_code(r),
+            }
+            break
         else:
             data = r.json()
             history_ids = data.get("history_ids", [])
@@ -163,13 +168,19 @@ def main():
         entry["reply_avg"] = {"laugh": round(rep_laugh, 2), "len": round(rep_len, 1)}
         report[name] = entry
     report["probe"] = args.probe
+    case_results = [report[name] for name in CONTACTS if name in report]
+    run_state = benchmark_run_state(case_results, len(CONTACTS))
+    report["run_status"] = {
+        **run_state,
+        "completed_contacts": len(case_results),
+    }
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"Wrote {args.out}")
     print(json.dumps({n: {"own": r.get("own_gold"), "rep": r.get("reply_avg"),
                           "replies": r.get("replies")} for n, r in report.items()
-                      if isinstance(r, dict)},
+                      if n in CONTACTS and isinstance(r, dict)},
                      ensure_ascii=False, indent=1)[:2000])
-    return 0
+    return 0 if run_state["complete"] else 2
 
 
 if __name__ == "__main__":

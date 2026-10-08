@@ -45,6 +45,7 @@ from compare_before_after import (  # noqa: E402
 )
 from api_key_file import read_gemini_api_key  # noqa: E402
 from benchmark_config import build_gemini_benchmark_config  # noqa: E402
+from benchmark_response import benchmark_run_state, extract_api_error_code  # noqa: E402
 from app.ai.naturalness import evaluate_candidate_naturalness  # noqa: E402
 
 
@@ -113,6 +114,7 @@ def main() -> int:
     generation.factory.get_provider = _counting_get_provider
 
     results = []
+    stopped_reason = None
     for case in subset:
         entry: dict = {"id": case["id"], "contact": case["contact"]}
         calls_before = call_counter["n"]
@@ -126,6 +128,7 @@ def main() -> int:
                             json={"contact_id": cid, "condition": "", "candidates": 3})
             if r.status_code != 200:
                 entry["error"] = f"HTTP {r.status_code}"
+                entry["error_code"] = extract_api_error_code(r)
             else:
                 data = r.json()
                 entry["candidates"] = data["replies"]
@@ -162,10 +165,21 @@ def main() -> int:
             # Step 17 §4-5: repair 前（1回目 raw）と repair 後（2回目以降 raw）を記録
             entry["repair_raws"] = raw_capture["raws"][calls_before:]
         results.append(entry)
+        if entry.get("error"):
+            stopped_reason = (
+                "rate_limit_exhausted"
+                if entry.get("error_code") == "rate_limit"
+                else "generation_error"
+            )
         Path(args.out).write_text(
-            json.dumps({"total_so_far": len(results), "cases": results}, ensure_ascii=False, indent=2),
+            json.dumps({
+                **benchmark_run_state(results, len(subset)),
+                "cases": results,
+            }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        if stopped_reason:
+            break
         time.sleep(max(0.0, args.delay_seconds))
     all_issues = [iss for e in results for iss in e.get("issues", [])]
     repaired = sum(1 for e in results if e.get("llm_calls", 1) > 1)
@@ -180,7 +194,7 @@ def main() -> int:
         ]
         axis_avg[axis] = round(sum(values) / len(values), 3) if values else None
     summary = {
-        "total": len(results),
+        **benchmark_run_state(results, len(subset)),
         "errors": sum(1 for e in results if "error" in e),
         "repaired_cases": repaired,
         "safe_user_question_cases": sum(1 for e in results if e.get("safe_user_question")),
@@ -193,7 +207,7 @@ def main() -> int:
     )
     print(f"Wrote {args.out}")
     print(json.dumps(summary, ensure_ascii=False))
-    return 0
+    return 0 if summary["complete"] else 2
 
 
 if __name__ == "__main__":

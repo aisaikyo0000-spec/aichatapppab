@@ -16,6 +16,7 @@ from app import config, database  # noqa: E402
 from app.routers import generation  # noqa: E402
 from api_key_file import read_gemini_api_key  # noqa: E402
 from benchmark_config import build_gemini_benchmark_config  # noqa: E402
+from benchmark_response import benchmark_run_state, extract_api_error_code  # noqa: E402
 
 
 SCENARIOS = (
@@ -54,10 +55,10 @@ def expectation_met(scenario: dict, action: str | None) -> bool:
 
 def _write_artifact(path: Path, results: list[dict], *, complete: bool) -> None:
     passed = sum(1 for result in results if result.get("expectation_met") is True)
+    run_state = benchmark_run_state(results, len(SCENARIOS))
     summary = {
-        "complete": complete,
-        "scenario_count": len(SCENARIOS),
-        "completed_count": len(results),
+        **run_state,
+        "complete": complete and run_state["complete"],
         "expectations_met": passed,
         "errors": sum(1 for result in results if "error" in result),
     }
@@ -134,6 +135,7 @@ def main() -> int:
                 )
                 if response.status_code != 200:
                     result["error"] = f"HTTP {response.status_code}"
+                    result["error_code"] = extract_api_error_code(response)
                 else:
                     data = response.json()
                     result["replies"] = data.get("replies", [])
@@ -158,13 +160,16 @@ def main() -> int:
                 result["error"] = type(exc).__name__
             results.append(result)
             _write_artifact(out_path, results, complete=False)
+            if result.get("error"):
+                break
             time.sleep(max(0.0, args.delay_seconds))
 
-    _write_artifact(out_path, results, complete=True)
+    complete = benchmark_run_state(results, len(SCENARIOS))["complete"]
+    _write_artifact(out_path, results, complete=complete)
     summary = json.loads(out_path.read_text(encoding="utf-8"))["summary"]
     print(f"Wrote {out_path}")
     print(json.dumps(summary, ensure_ascii=False))
-    return 0
+    return 0 if complete else 2
 
 
 if __name__ == "__main__":

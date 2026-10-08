@@ -18,6 +18,7 @@ from app.routers import generation  # noqa: E402
 from api_key_file import read_gemini_api_key  # noqa: E402
 from benchmark_config import (  # noqa: E402
     build_gemini_benchmark_config,
+    load_gemini_benchmark_route,
     record_gemini_benchmark_success,
 )
 from benchmark_response import benchmark_run_state, extract_api_error_code  # noqa: E402
@@ -289,6 +290,8 @@ def main() -> int:
     parser.add_argument("--model", default="gemini-3.5-flash-lite")
     parser.add_argument("--env-file", default=str(ROOT / ".env"))
     parser.add_argument("--secondary-env-file", default="")
+    parser.add_argument("--quota-route-state", type=Path,
+                        help="Optional run-local state shared across benchmark stages")
     parser.add_argument("--delay-seconds", type=float, default=6.0)
     args = parser.parse_args()
 
@@ -306,6 +309,8 @@ def main() -> int:
         secondary_key=secondary_key,
         model=args.model,
     )
+    if args.quota_route_state is not None:
+        load_gemini_benchmark_route(ai_config, args.quota_route_state)
     generation.get_ai_config = lambda: ai_config
     successful_attempts: list[tuple[str, str]] = []
     real_get_provider = factory.get_provider
@@ -375,6 +380,7 @@ def main() -> int:
                             ai_config,
                             api_key=successful_key,
                             model=successful_model,
+                            route_state_path=args.quota_route_state,
                         )
                     data = response.json()
                     result["replies"] = data.get("replies", [])

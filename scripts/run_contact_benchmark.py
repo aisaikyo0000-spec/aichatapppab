@@ -17,6 +17,7 @@ from app.routers import generation
 from api_key_file import read_gemini_api_key
 from benchmark_config import (
     build_gemini_benchmark_config,
+    load_gemini_benchmark_route,
     record_gemini_benchmark_success,
 )
 from benchmark_response import benchmark_run_state, extract_api_error_code
@@ -55,10 +56,20 @@ CONTACTS = {
 PROBE = "仕事で疲れた"
 
 
-def seed_and_generate(client, key, model, delay_seconds, probe, secondary_key=""):
+def seed_and_generate(
+    client,
+    key,
+    model,
+    delay_seconds,
+    probe,
+    secondary_key="",
+    route_state_path=None,
+):
     ai_config = build_gemini_benchmark_config(
         primary_key=key, secondary_key=secondary_key, model=model
     )
+    if route_state_path is not None:
+        load_gemini_benchmark_route(ai_config, route_state_path)
     generation.get_ai_config = lambda: ai_config
     successful_attempts = []
     real_get_provider = factory.get_provider
@@ -104,6 +115,7 @@ def seed_and_generate(client, key, model, delay_seconds, probe, secondary_key=""
                     ai_config,
                     api_key=successful_key,
                     model=successful_model,
+                    route_state_path=route_state_path,
                 )
             data = r.json()
             history_ids = data.get("history_ids", [])
@@ -150,6 +162,8 @@ def main():
                     help="API key file (value is never printed)")
     ap.add_argument("--secondary-env-file", default="",
                     help="Optional second-account key file (value is never printed)")
+    ap.add_argument("--quota-route-state", type=Path,
+                    help="Optional run-local state shared across benchmark stages")
     ap.add_argument("--db", help="Optional new/empty database path; existing files are never removed")
     ap.add_argument("--delay-seconds", type=float, default=6.0)
     ap.add_argument("--probe", default=PROBE, help="Shared incoming message used for A/B/C")
@@ -172,7 +186,13 @@ def main():
     database.init_db()
     client = TestClient(app)
     out = seed_and_generate(
-        client, key, args.model, args.delay_seconds, args.probe, secondary_key
+        client,
+        key,
+        args.model,
+        args.delay_seconds,
+        args.probe,
+        secondary_key,
+        args.quota_route_state,
     )
     # discrimination: each reply closer to own Gold than to others?
     gold_sig = {n: [style_sig(sm) for _, sm in pairs] for n, pairs in CONTACTS.items()}

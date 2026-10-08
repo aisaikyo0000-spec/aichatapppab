@@ -1,6 +1,9 @@
 """Shared Gemini configuration for live benchmark runners."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 
 def build_gemini_benchmark_config(
     *, primary_key: str, secondary_key: str = "", model: str
@@ -51,9 +54,13 @@ def build_gemini_benchmark_config(
 
 
 def record_gemini_benchmark_success(
-    config: dict[str, object], *, api_key: str, model: str
+    config: dict[str, object],
+    *,
+    api_key: str,
+    model: str,
+    route_state_path: Path | None = None,
 ) -> int | None:
-    """Start the next isolated benchmark request at the last successful route."""
+    """Persist the last successful account/model without saving credential data."""
     attempts = config.get("quota_attempts")
     if not isinstance(attempts, list):
         return None
@@ -61,6 +68,50 @@ def record_gemini_benchmark_success(
         if (
             isinstance(attempt, dict)
             and attempt.get("api_key") == api_key
+            and attempt.get("model") == model
+        ):
+            config["quota_attempt_start_index"] = index
+            if route_state_path is not None:
+                route_state_path.parent.mkdir(parents=True, exist_ok=True)
+                temp_path = route_state_path.with_name(
+                    f"{route_state_path.name}.tmp"
+                )
+                temp_path.write_text(
+                    json.dumps(
+                        {
+                            "account": attempt.get("account"),
+                            "model": attempt.get("model"),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                temp_path.replace(route_state_path)
+            return index
+    return None
+
+
+def load_gemini_benchmark_route(
+    config: dict[str, object], route_state_path: Path
+) -> int | None:
+    """Resume from a prior benchmark's account/model if that route still exists."""
+    try:
+        route = json.loads(route_state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(route, dict):
+        return None
+    account = route.get("account")
+    model = route.get("model")
+    if not isinstance(account, str) or not isinstance(model, str):
+        return None
+
+    attempts = config.get("quota_attempts")
+    if not isinstance(attempts, list):
+        return None
+    for index, attempt in enumerate(attempts):
+        if (
+            isinstance(attempt, dict)
+            and attempt.get("account") == account
             and attempt.get("model") == model
         ):
             config["quota_attempt_start_index"] = index

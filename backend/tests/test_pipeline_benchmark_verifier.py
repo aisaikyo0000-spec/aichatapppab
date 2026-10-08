@@ -102,6 +102,16 @@ def test_pipeline_verifier_rejects_generated_candidates_without_model_history():
     assert "generation_provenance_invalid" in report["failures"]
 
 
+def test_pipeline_verifier_rejects_unhashable_generation_account_label():
+    artifact = _artifact()
+    artifact["cases"][12]["successful_route"]["account"] = []
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "generation_provenance_invalid" in report["failures"]
+
+
 def test_manual_review_bundle_includes_representative_and_flagged_outputs():
     artifact = _artifact()
     flagged_case = artifact["cases"][1]

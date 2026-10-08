@@ -2469,8 +2469,39 @@ def test_first_meeting_wary_interest_blocks_invite_strategy_and_reply():
     assert any("誘い" in violation for violation in violations)
 
 
-def test_denied_first_meeting_wary_concern_does_not_block_invite():
-    statement = "初対面だけど警戒していません。ぜひ一緒に行きたいです。"
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "一緒に行きたいですが、初めて会う人なので警戒しています。",
+        "ぜひ一緒に行きたいです。会ったことがない人には警戒してしまいます。",
+    ],
+)
+def test_first_meeting_wary_variants_block_invite(statement):
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "一緒に行きたいという意思があります。",
+            "evidence": ["一緒に行きたい"],
+            "invite_example": "人の多いカフェでお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {statement}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "初対面だけど警戒していません。ぜひ一緒に行きたいです。",
+        "初対面でも警戒しません。ぜひ一緒に行きたいです。",
+        "初対面でも警戒しないタイプです。ぜひ一緒に行きたいです。",
+    ],
+)
+def test_denied_first_meeting_wary_concern_does_not_block_invite(statement):
     raw = _raw_strategy(
         {
             "action": "invite",

@@ -23,6 +23,7 @@ THRESHOLDS = {
     "too_many_questions_rate_max": 0.059,
     "echo_rate_max": 0.132,
 }
+MANUAL_REVIEW_SAMPLE_INDICES = (0, 9, 19, 29, 39, 49, 59, 69)
 
 
 def _case_metrics(cases: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -89,6 +90,90 @@ def _candidate_metrics_are_valid(cases: list[dict[str, Any]]) -> bool:
                 ):
                     return False
     return True
+
+
+def build_pipeline_manual_review_bundle(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    """Expose representative cases and every candidate with a review signal."""
+    representative_cases = [
+        str(cases[index].get("id", ""))
+        for index in MANUAL_REVIEW_SAMPLE_INDICES
+        if index < len(cases) and isinstance(cases[index], dict)
+    ]
+    flagged_candidates: list[dict[str, Any]] = []
+    safe_user_questions: list[dict[str, str]] = []
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("id", ""))
+        contact = str(case.get("contact", ""))
+        safe_question = case.get("safe_user_question")
+        if isinstance(safe_question, str) and safe_question.strip():
+            safe_user_questions.append(
+                {"case_id": case_id, "contact": contact, "question": safe_question}
+            )
+
+        candidates = case.get("candidates")
+        issues = case.get("issues")
+        axes = case.get("four_axis")
+        patterns = case.get("ai_like_patterns")
+        if not all(isinstance(value, list) for value in (candidates, issues, axes)):
+            continue
+        for index, candidate in enumerate(candidates):
+            if not isinstance(candidate, str):
+                continue
+            issue = issues[index] if index < len(issues) else {}
+            axis = axes[index] if index < len(axes) else {}
+            pattern = (
+                patterns[index]
+                if isinstance(patterns, list) and index < len(patterns)
+                else []
+            )
+            issue = issue if isinstance(issue, dict) else {}
+            axis = axis if isinstance(axis, dict) else {}
+            pattern = pattern if isinstance(pattern, list) else []
+            unsupported = issue.get("unsupported_inference", 0)
+            ai_like = issue.get("ai_like", 0)
+            has_count_signal = any(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value > 0
+                for value in (unsupported, ai_like)
+            )
+            below_threshold = any(
+                isinstance(axis.get(key), (int, float))
+                and not isinstance(axis.get(key), bool)
+                and axis[key] < THRESHOLDS[threshold]
+                for key, threshold in (
+                    ("context_fit", "context_fit_min"),
+                    ("human_chat_fit", "human_chat_fit_min"),
+                    ("conversation_fit", "conversation_fit_min"),
+                )
+            )
+            has_issue_signal = (
+                has_count_signal
+                or any(
+                    issue.get(key) is True
+                    for key in ("echo", "too_many_questions", "over_explanation")
+                )
+                or bool(pattern)
+                or below_threshold
+            )
+            if has_issue_signal:
+                flagged_candidates.append(
+                    {
+                        "case_id": case_id,
+                        "contact": contact,
+                        "candidate": candidate,
+                        "issues": issue,
+                        "four_axis": axis,
+                        "ai_like_patterns": pattern,
+                    }
+                )
+    return {
+        "representative_cases": representative_cases,
+        "flagged_candidates": flagged_candidates,
+        "safe_user_questions": safe_user_questions,
+    }
 
 
 def _same_metric(left: Any, right: Any) -> bool:
@@ -233,6 +318,9 @@ def main() -> int:
     report = verify_pipeline_artifact(
         artifact,
         [str(case["id"]) for case in canonical_cases if isinstance(case, dict) and "id" in case],
+    )
+    report["manual_review"] = build_pipeline_manual_review_bundle(
+        artifact.get("cases", []) if isinstance(artifact.get("cases"), list) else []
     )
     print(json.dumps(report, ensure_ascii=False))
     return report["exit_code"]

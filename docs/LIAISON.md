@@ -401,12 +401,18 @@ if ($activeAccount -eq 'primary') {
 Write-Output "評価開始: model=$activeModel account=$activeAccount"
 python scripts/run_pipeline_benchmark.py --out $pipelineOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
 if ($LASTEXITCODE -ne 0) { throw "70ケース評価が未完了です。artifact: $pipelineOut" }
-python scripts/verify_pipeline_benchmark.py --artifact $pipelineOut
-if ($LASTEXITCODE -ne 0) { throw '70件の網羅性、artifact指標、6つの閾値のいずれかが不合格です。' }
+$verifyOutput = & python scripts/verify_pipeline_benchmark.py --artifact $pipelineOut 2>&1
+$verifyExit = $LASTEXITCODE
+if ($verifyExit -ne 0) { throw "70件の網羅性、artifact指標、6つの閾値のいずれかが不合格です。$verifyOutput" }
+$verifyReport = ($verifyOutput -join "`n") | ConvertFrom-Json
 $pipelineArtifact = Get-Content -Raw $pipelineOut | ConvertFrom-Json
-$sampleIndices = @(0, 9, 19, 29, 39, 49, 59, 69) | Where-Object { $_ -lt $pipelineArtifact.cases.Count }
-$pipelineArtifact.cases[$sampleIndices] | Select-Object id, contact, candidates, issues | ConvertTo-Json -Depth 6
-if ((Read-Host '上の返信例とpipeline.jsonを確認し、文脈・事実性・自然さに問題がなければPASS') -cne 'PASS') { throw '実例の品質を確認できないためContact Benchを止めます。' }
+$sampleIds = $verifyReport.manual_review.representative_cases
+$pipelineArtifact.cases | Where-Object { $sampleIds -contains $_.id } | Select-Object id, contact, candidates | ConvertTo-Json -Depth 6
+Write-Output '自動評価が注意を示した候補（自動不合格ではなく、目視確認が必要）'
+$verifyReport.manual_review.flagged_candidates | ConvertTo-Json -Depth 6
+Write-Output '本人確認へ分岐したケース'
+$verifyReport.manual_review.safe_user_questions | ConvertTo-Json -Depth 4
+if ((Read-Host '代表8ケース、注意候補すべて、本人確認分岐をpipeline.jsonと照合し、文脈・事実性・自然さを確認できたらPASS') -cne 'PASS') { throw '実例の品質を確認できないためContact Benchを止めます。' }
 python scripts/run_contact_benchmark.py --out $contactOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
 if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。artifact: $contactOut" }
 Get-Content -Raw $contactOut

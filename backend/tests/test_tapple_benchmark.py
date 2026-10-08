@@ -30,6 +30,8 @@ def _valid_results():
         "tentative_interest": "タイミングが合ったらぜひ、また話しましょう。",
         "counterproposal": "日曜なら大丈夫です、ありがとう！",
         "decline": "わかりました、無理しないでください。",
+        "meeting_hesitation": "無理せず、もう少しメッセージで話しましょう。",
+        "meeting_safety_concern": "不安な気持ちは大切にしたいです。無理せず話しましょう。",
     }
     results = []
     for scenario in SCENARIOS:

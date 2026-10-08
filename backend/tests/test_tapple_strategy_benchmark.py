@@ -16,6 +16,8 @@ def test_live_tapple_benchmark_covers_positive_ambiguous_and_declined_invites():
         "tentative_interest",
         "counterproposal",
         "decline",
+        "meeting_hesitation",
+        "meeting_safety_concern",
     }
 
 
@@ -89,3 +91,31 @@ def test_tapple_benchmark_scenarios_include_chat_context_and_allowed_actions():
         assert [turn["sender"] for turn in scenario["messages"]][-1] == "contact"
         assert scenario["allowed_actions"]
         assert "stop" not in scenario["allowed_actions"] or scenario["id"] == "decline"
+
+
+def test_live_benchmark_covers_meeting_hesitation_and_safety_boundaries():
+    scenarios = {scenario["id"]: scenario for scenario in SCENARIOS}
+
+    for scenario_id in ("meeting_hesitation", "meeting_safety_concern"):
+        scenario = scenarios[scenario_id]
+        assert scenario["allowed_actions"] == ["wait"]
+        assert scenario["no_reinvitation"] is True
+
+        latest_contact = next(
+            turn["content"]
+            for turn in reversed(scenario["messages"])
+            if turn["sender"] == "contact"
+        )
+        result = {
+            "strategy": {
+                "action": "wait",
+                "rationale": "会うことへの懸念が残っています。",
+                "evidence": [latest_contact],
+                "invite_example": None,
+            },
+            "replies": ["無理せず、もう少しメッセージで話しましょう。"],
+        }
+        assert expectation_met(scenario, result), scenario_id
+
+        result["replies"] = ["ぜひ来週会いましょう。"]
+        assert not expectation_met(scenario, result), scenario_id

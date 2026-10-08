@@ -2143,6 +2143,19 @@ def test_hard_meeting_refusal_is_not_reopened_by_later_availability(statement):
     assert any("誘い" in violation for violation in violations)
 
 
+def test_third_party_availability_does_not_reopen_contact_meeting_difficulty():
+    statement = "お会いするのは難しいですが、友達は来週なら会えます。"
+    violations = validate_candidate_replies(
+        ["よかったら来週カフェで会いませんか？"],
+        1,
+        counterpart_message=statement,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
 def test_positive_desire_to_meet_is_not_misread_as_decline():
     conversation = "相手: 最近会いたくなってきた"
     raw = _raw_strategy(

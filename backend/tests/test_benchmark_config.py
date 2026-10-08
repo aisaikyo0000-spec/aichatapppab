@@ -171,15 +171,15 @@ def test_benchmark_route_state_ignores_route_when_api_key_configuration_changes(
     assert changed_config["quota_attempt_start_index"] == 0
 
 
-def test_benchmark_route_state_ignores_unavailable_or_invalid_route(tmp_path):
+def test_benchmark_route_state_ignores_legacy_route_without_fingerprint(tmp_path):
     route_state_path = tmp_path / "quota-route.json"
     config = build_gemini_benchmark_config(
         primary_key="primary-test-secret",
         secondary_key="secondary-test-secret",
-        model="gemini-3.1-flash-lite",
+        model="gemini-3.5-flash-lite",
     )
     route_state_path.write_text(
-        json.dumps({"account": "secondary", "model": "unknown-model"}),
+        json.dumps({"account": "secondary", "model": "gemini-3.5-flash-lite"}),
         encoding="utf-8",
     )
 

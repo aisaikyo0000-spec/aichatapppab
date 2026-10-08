@@ -88,6 +88,9 @@ def _configure_generation(
     *,
     primary_behavior: str,
     fallback_responses: list[str] | None = None,
+    fallback_behavior: str = "success",
+    secondary_primary_behavior: str = "success",
+    secondary_fallback_behavior: str = "success",
 ):
     calls: list[tuple[str, str]] = []
     fallback_calls: list[str] = []
@@ -117,6 +120,10 @@ def _configure_generation(
         def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
             fallback_calls.append(model)
             calls.append(("fallback", model))
+            if fallback_behavior == "rate_limit":
+                raise AIError("quota reached", code="rate_limit")
+            if fallback_behavior == "provider_error":
+                raise AIError("upstream failed", code="provider_error")
             if queued_fallback_responses:
                 return queued_fallback_responses.pop(0)
             return json.dumps({"replies": [reply]}) if json_mode else reply
@@ -127,11 +134,34 @@ def _configure_generation(
     primary = PrimaryProvider()
     fallback = FallbackProvider()
 
+    class SecondaryProvider:
+        name = "gemini"
+
+        def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
+            calls.append(("secondary", model))
+            behavior = (
+                secondary_primary_behavior
+                if model == "gemini-3.5-flash-lite"
+                else secondary_fallback_behavior
+            )
+            if behavior == "rate_limit":
+                raise AIError("quota reached", code="rate_limit")
+            if behavior == "provider_error":
+                raise AIError("upstream failed", code="provider_error")
+            return json.dumps({"replies": [reply]}) if json_mode else reply
+
+        def available_models(self):
+            return ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+
+    secondary = SecondaryProvider()
+
     def get_provider(provider_name, api_key):
         if api_key == "primary-key":
             return primary
         if api_key == "fallback-key":
             return fallback
+        if api_key == "secondary-key":
+            return secondary
         raise AssertionError(f"unexpected provider key for {provider_name}")
 
     monkeypatch.setattr("app.routers.generation.factory.get_provider", get_provider)
@@ -147,6 +177,7 @@ def _configure_generation(
             "fallback_provider": "gemini",
             "fallback_model": "gemini-3.1-flash-lite",
             "fallback_api_key": "fallback-key",
+            "secondary_api_key": "secondary-key",
         },
     )
     monkeypatch.setattr("app.routers.generation.time.sleep", lambda *_: None)
@@ -268,3 +299,44 @@ def test_generation_does_not_fallback_on_non_rate_limit_provider_error(
     assert response.json()["detail"]["code"] == "provider_error"
     assert calls == [("primary", "gemini-3.5-flash-lite")]
     assert fallback_calls == []
+
+
+def test_generation_tries_secondary_account_only_after_both_primary_models_are_rate_limited(
+    client, monkeypatch
+):
+    calls, fallback_calls = _configure_generation(
+        monkeypatch,
+        primary_behavior="rate_limit",
+        fallback_behavior="rate_limit",
+        secondary_primary_behavior="rate_limit",
+    )
+
+    _cid, response = _generate_once(client)
+
+    assert response.status_code == 200
+    assert calls == [
+        ("primary", "gemini-3.5-flash-lite"),
+        ("fallback", "gemini-3.1-flash-lite"),
+        ("secondary", "gemini-3.5-flash-lite"),
+        ("secondary", "gemini-3.1-flash-lite"),
+    ]
+    assert fallback_calls == ["gemini-3.1-flash-lite"]
+
+
+def test_generation_does_not_switch_accounts_when_primary_fallback_has_non_quota_error(
+    client, monkeypatch
+):
+    calls, _fallback_calls = _configure_generation(
+        monkeypatch,
+        primary_behavior="rate_limit",
+        fallback_behavior="provider_error",
+    )
+
+    _cid, response = _generate_once(client)
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "provider_error"
+    assert calls == [
+        ("primary", "gemini-3.5-flash-lite"),
+        ("fallback", "gemini-3.1-flash-lite"),
+    ]

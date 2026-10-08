@@ -277,6 +277,28 @@ def test_unlisted_shared_hobby_can_support_low_pressure_invite():
     assert result.invite_example is not None
 
 
+def test_shared_adjective_does_not_count_as_shared_activity():
+    conversation = (
+        "相手: 美味しいカレーが好きです\n"
+        "自分: 僕も美味しい料理が好きです\n"
+        "相手: 美味しいラーメンを食べてみたいです"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の話題に相手が関心を示しています。",
+            "evidence": ["美味しいラーメンを食べてみたいです"],
+            "invite_example": "よかったら今度、駅前のラーメン店に行きませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "wait"
+    assert result.invite_example is None
+
+
 def test_recent_disinterest_blocks_invite_for_unlisted_shared_hobby():
     conversation = (
         "相手: ボルダリングに興味があります\n"
@@ -1168,6 +1190,7 @@ def test_tapple_benchmark_does_not_use_another_interest_to_clear_disinterest():
     "scenario_id, parsed_action",
     [
         ("mutual_activity_interest", "invite"),
+        ("unlisted_shared_hobby", "invite"),
         ("shared_activity_low_reciprocity", "wait"),
         ("recent_activity_disinterest", "wait"),
         ("different_activity_does_not_clear_disinterest", "wait"),
@@ -1187,7 +1210,11 @@ def test_activity_interest_pair_runs_through_production_strategy_parser(scenario
             else "共通の話題があっても、相手の反応が短いため今は待ちます。"
         ),
         "evidence": [scenario["messages"][-1]["content"]],
-        "invite_example": "よかったら駅前のカフェでパンケーキを食べませんか？難しければ大丈夫です。",
+        "invite_example": (
+            "よかったら今度、近くのボルダリングジムで体験してみませんか？"
+            if scenario_id == "unlisted_shared_hobby"
+            else "よかったら駅前のカフェでパンケーキを食べませんか？難しければ大丈夫です。"
+        ),
     }
 
     parsed = _parse_tapple_strategy_messages(

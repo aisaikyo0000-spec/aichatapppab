@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app import database
-from app.learning import contrast, style
+from app.learning import contrast, corpus, style
 from app.routers import generation
 
 
@@ -159,6 +159,47 @@ def test_isolated_sparse_contact_gold_does_not_define_global_style(client, gold_
     assert profile["active_profile"].sample_count == 0
     assert profile["active_profile"].tame_ratio < 0.5
     assert profile["active_profile"].laugh_ratio == pytest.approx(0.4)
+
+
+def test_sparse_contact_gold_is_not_replaced_by_other_contacts_silver(client):
+    cid = _seed_gold(client, "少数Goldの対象", TAME_PAIRS[:1])
+    other_cid = client.post(
+        "/api/contacts", json={"name": "Silverのみの相手", "profile": ""}
+    ).json()["id"]
+    for index in range(3):
+        client.post(
+            f"/api/contacts/{other_cid}/messages",
+            json={"sender": "contact", "content": f"連絡です {index}"},
+        )
+        response = client.post(
+            f"/api/contacts/{other_cid}/messages",
+            json={
+                "sender": "self",
+                "content": "こちらこそありがとうございます。よろしくお願いいたします。",
+                "source": "legacy_unknown",
+            },
+        )
+        conn = database.get_conn()
+        try:
+            conn.execute(
+                "UPDATE messages SET source = 'generated' WHERE id = ?",
+                (response.json()["id"],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    profile = style.compute_hierarchical_profile(cid)
+    other_contact_silver = [
+        pair
+        for pair in corpus.extract_reply_pairs()
+        if pair.contact_id == other_cid and pair.label == "silver"
+    ]
+
+    assert profile["hierarchy_tier"] == "sparse_manual_gold_fallback"
+    assert profile["other_contact_gold_profile"].sample_count == 0
+    assert len(other_contact_silver) == 3
+    assert profile["active_profile"].sample_count == 0
 
 
 def test_same_contact_gold_adapts_without_fully_replacing_global_gold(client):

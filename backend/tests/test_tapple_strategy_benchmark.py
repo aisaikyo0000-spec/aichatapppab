@@ -14,6 +14,7 @@ def test_live_tapple_benchmark_covers_positive_ambiguous_and_declined_invites():
     assert {scenario["id"] for scenario in SCENARIOS} == {
         "explicit_interest",
         "mutual_activity_interest",
+        "unlisted_shared_hobby",
         "shared_activity_low_reciprocity",
         "accepted_invitation",
         "ambiguous_interest",

@@ -27,6 +27,7 @@ def _valid_results():
     replies = {
         "explicit_interest": "いいですね、カフェ楽しみです！",
         "mutual_activity_interest": "そのカフェよさそうですね。よかったら今度一緒に行きませんか？",
+        "unlisted_shared_hobby": "ボルダリング楽しそうですね。ぜひ一度やってみたいです！",
         "shared_activity_low_reciprocity": "パンケーキのお店、気になりますね。",
         "accepted_invitation": "ありがとう、楽しみです！日程はいつがいいですか？",
         "ambiguous_interest": "カフェ気になりますね、どんなお店ですか？",
@@ -58,7 +59,13 @@ def _valid_results():
                     "rationale": "相手の発言に合わせた次の進め方です。",
                     "evidence": [last_contact],
                     "invite_example": (
-                        "駅前のカフェでお茶しませんか？" if action == "invite" else None
+                        (
+                            "近くのボルダリングジムで体験しませんか？"
+                            if scenario["id"] == "unlisted_shared_hobby"
+                            else "駅前のカフェでお茶しませんか？"
+                        )
+                        if action == "invite"
+                        else None
                     ),
                 },
             }

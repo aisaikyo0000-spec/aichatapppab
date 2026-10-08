@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -121,3 +123,78 @@ def test_pipeline_verifier_rejects_metrics_that_do_not_match_case_data():
 
     assert report["quality_pass"] is False
     assert "reported_metrics_mismatch" in report["failures"]
+
+
+def test_pipeline_verifier_rejects_missing_candidate_issue_records():
+    artifact = _artifact()
+    for case in artifact["cases"]:
+        case["issues"] = []
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "case_metrics_invalid" in report["failures"]
+
+
+def test_pipeline_verifier_rejects_malformed_issue_or_axis_fields():
+    artifact = _artifact()
+    artifact["cases"][0]["issues"][0].pop("echo")
+    artifact["cases"][1]["four_axis"][0]["human_chat_fit"] = "0.95"
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "case_metrics_invalid" in report["failures"]
+
+
+def test_pipeline_verifier_rejects_partial_candidate_sets_without_user_question():
+    artifact = _artifact()
+    artifact["cases"][0]["candidates"].pop()
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "case_metrics_invalid" in report["failures"]
+
+
+def test_pipeline_verifier_allows_explicit_safe_user_question_without_candidates():
+    artifact = _artifact()
+    case = artifact["cases"][0]
+    case["candidates"] = []
+    case["issues"] = []
+    case["four_axis"] = []
+    case["safe_user_question"] = "相手に好みを確認してください。"
+    artifact["summary"]["issues"].update(
+        {
+            "candidates": 207,
+            "ai_like_rate": 0.0,
+            "too_many_questions_rate": 0.0,
+            "echo_rate": 0.0,
+        }
+    )
+    artifact["summary"]["four_axis_avg"].update(
+        {
+            "context_fit": 0.7,
+            "human_chat_fit": 0.95,
+            "conversation_fit": 0.97,
+        }
+    )
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is True
+
+
+def test_pipeline_verifier_cli_does_not_accept_case_set_override(monkeypatch):
+    from verify_pipeline_benchmark import main
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["verify_pipeline_benchmark.py", "--artifact", "ignored.json", "--cases", "custom.json"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 2

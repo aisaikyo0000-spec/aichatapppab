@@ -740,8 +740,8 @@ _TAPPLE_UNRELATED_SAFETY_CLAUSE_RE = re.compile(
 )
 _TAPPLE_UNRELATED_CONCERN_RE = re.compile(
     r"(?:(?:母|父|親|家族|友達|友人|同僚|明日|今日|来週|今週|週末)(?:の|について)?)?"
-    r"(?:体調|健康|予定|天気|雨|雪|気温|台風|風|暑さ|寒さ|予報)"
-    r"[^。.!！?？\n、,]{0,12}(?:不安|心配|気になる|気掛かり)"
+    r"(?:(?:仕事の)?面接|試験勉強|試験|テスト|体調|健康|予定|天気|雨|雪|気温|台風|風|暑さ|寒さ|予報)"
+    r"[^。.!！?？\n、,]{0,12}(?:不安|心配|気になる|気掛かり|緊張)"
 )
 _TAPPLE_MEETING_REFERENCE_RE = re.compile(r"(?:会う|会える|デート|対面|直接)")
 _TAPPLE_MEETING_LOGISTICS_CONCERN_RE = re.compile(
@@ -855,7 +855,20 @@ _TAPPLE_SAFETY_CONCERN_QUALIFIED_NEGATION_RE = re.compile(
 
 
 def _has_tapple_safety_concern(text: str) -> bool:
+    unrelated_concerns = list(_TAPPLE_UNRELATED_CONCERN_RE.finditer(text))
     for match in _TAPPLE_SAFETY_CONCERN_QUALIFIED_NEGATION_RE.finditer(text):
+        overlaps_unrelated_concern = any(
+            unrelated.start() < match.end() and match.start() < unrelated.end()
+            and not _TAPPLE_MEETING_REFERENCE_RE.search(
+                re.split(
+                    r"[。.!！?？、,，]|ですが|だけど|けれど|けど|ものの|でも",
+                    text[: unrelated.start()],
+                )[-1]
+            )
+            for unrelated in unrelated_concerns
+        )
+        if overlaps_unrelated_concern:
+            continue
         nearby_context = text[max(0, match.start() - 16) : match.start()]
         if _TAPPLE_UNRELATED_SAFETY_TOPIC_RE.search(nearby_context) and not (
             _TAPPLE_SAFETY_CONTEXT_RE.search(nearby_context)

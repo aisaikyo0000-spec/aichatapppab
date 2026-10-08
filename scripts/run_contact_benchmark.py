@@ -16,6 +16,7 @@ from app.learning import style
 from app.routers import generation
 from api_key_file import read_gemini_api_key
 from benchmark_config import (
+    add_active_account_argument,
     build_gemini_benchmark_config,
     load_gemini_benchmark_route,
     record_gemini_benchmark_success,
@@ -64,9 +65,13 @@ def seed_and_generate(
     probe,
     secondary_key="",
     route_state_path=None,
+    active_account="primary",
 ):
     ai_config = build_gemini_benchmark_config(
-        primary_key=key, secondary_key=secondary_key, model=model
+        primary_key=key,
+        secondary_key=secondary_key,
+        model=model,
+        active_account=active_account,
     )
     if route_state_path is not None:
         load_gemini_benchmark_route(ai_config, route_state_path)
@@ -162,6 +167,7 @@ def main():
                     help="API key file (value is never printed)")
     ap.add_argument("--secondary-env-file", default="",
                     help="Optional second-account key file (value is never printed)")
+    add_active_account_argument(ap)
     ap.add_argument("--quota-route-state", type=Path,
                     help="Optional run-local state shared across benchmark stages")
     ap.add_argument("--db", help="Optional new/empty database path; existing files are never removed")
@@ -193,6 +199,7 @@ def main():
         args.probe,
         secondary_key,
         args.quota_route_state,
+        args.active_account,
     )
     # discrimination: each reply closer to own Gold than to others?
     gold_sig = {n: [style_sig(sm) for _, sm in pairs] for n, pairs in CONTACTS.items()}

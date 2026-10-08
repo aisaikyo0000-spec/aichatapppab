@@ -10,10 +10,10 @@
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（Tappleの最終コードcommitは`f2cc261`。資料を含むcommit`ca1764f`までforkへのpushとSHA一致を確認済み）
+- 作業ブランチ: `codex/chat-quality-20261008`（Tappleの最終コードcommitは`f2cc261`。資料を含むpushは`e5fde508`までforkとSHA一致を確認済み）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tappleの質問・催促・話題逸脱チェックと自然な会話終了の評価を修正し、最新差分の独立ReviewerはPASS。全backend **859 passed / 2 warnings**、frontend build、compileall、CLI `--help`、`git diff --check`もPASS。実API評価は未実施
-- 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を再開可能な時間帯に行う。完了条件がそろうまでStep 18-R4は合格としない
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tappleの質問・催促・話題逸脱チェックと自然な会話終了の評価を修正し、今回の2アカウント切替修正も独立ReviewerがPASS。全backend **862 passed / 2 warnings**、frontend build、compileall、CLI `--help`、PowerShell AST parse、`git diff --check`もPASS。実API評価は未実施
+- 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を朝の確認後に行う。完了条件がそろうまでStep 18-R4は合格としない
 
 ## Step 18-R4 進捗（オフライン受け入れ準備）
 
@@ -29,6 +29,7 @@
 - 独立レビューで検出されたTappleの9件目fixture漏れと不正UTF-8 artifactのtracebackを回帰テストで再現して修正。Tapple・検証器・モデルfallbackのfocused suiteは**373 passed**。全backend suiteは**858 passed / 2 warnings**、frontend build・compileall・`git diff --check`・PowerShell AST parseは**PASS**。新規のread-only Python Reviewerは修正後の差分に**PASS**
 - Tappleの追加レビューでは、句読点なしの質問、間接的な返信要求、相づち後の話題逸脱を見つけた。修正後は、自然な相づち・再開可能な締め方・短い気遣いを許容し、句読点なしの追記も含む無関係な話題を拒否する。focused suiteは**5 passed**。直近の新規read-only Reviewerは**PASS**。全backend suiteは**859 passed / 2 warnings**、frontend build・compileall・CLI `--help`・`git diff --check`も**PASS**
 - アプリ本体のquota切替順はメイン3.5→メイン3.1→予備3.5→予備3.1。次の経路へ進むのはrate limit時だけで、既存テストで4経路と成功時の停止を確認。gemini2.mdを主キー、gemini3.mdを予備キーとして読み込む設定は確認済みだが、APIの有効性は未確認。ユーザーの朝の疎通確認前にAPIは呼び出さない
+- 朝の評価手順で疎通確認が予備アカウントを選んだ場合にも、主キーを後続ベンチへ渡すよう修正した。これで予備3.5・3.1が両方rate limitになった場合、主3.5・3.1へ戻れる。各ベンチに`--active-account`を渡し、artifact上のアカウント名も実際のキーに合わせる。キー順序と表示ラベルのfocused suiteは**13 passed**。全backend suiteは**862 passed / 2 warnings**、frontend build、compileall、CLI `--help`、PowerShell AST parse、`git diff --check`もPASS。新規read-only Python Reviewerは**PASS**。実APIでの切替は未確認
 - ローカル設定はprovider=Gemini、標準3.5、予備3.1で、主・予備キーが読み込み済み。キーの値は表示していない。実際のAPI疎通、最新70ケース、Contact Bench、Tapple実生成は未実施。オフライン準備分は独立レビュー後にforkへpushし、SHA一致を確認する
 
 ## Step 18-R4 進捗（Iteration 4・独立レビュー待ち）
@@ -401,10 +402,10 @@ if ($activeAccount -eq 'primary') {
     $secondaryKeyArgs = @('--secondary-env-file', $secondaryKeyFile)
 } else {
     $activeKeyFile = $secondaryKeyFile
-    $secondaryKeyArgs = @()
+    $secondaryKeyArgs = @('--secondary-env-file', $primaryKeyFile)
 }
 Write-Output "評価開始: model=$activeModel account=$activeAccount"
-python scripts/run_pipeline_benchmark.py --out $pipelineOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
+python scripts/run_pipeline_benchmark.py --out $pipelineOut --model $activeModel --env-file $activeKeyFile --active-account $activeAccount @secondaryKeyArgs --quota-route-state $quotaRouteState
 if ($LASTEXITCODE -ne 0) { throw "70ケース評価が未完了です。artifact: $pipelineOut" }
 $verifyOutput = & python scripts/verify_pipeline_benchmark.py --artifact $pipelineOut 2>&1
 $verifyExit = $LASTEXITCODE
@@ -418,11 +419,11 @@ $verifyReport.manual_review.flagged_candidates | ConvertTo-Json -Depth 6
 Write-Output '本人確認へ分岐したケース'
 $verifyReport.manual_review.safe_user_questions | ConvertTo-Json -Depth 4
 if ((Read-Host '代表8ケース、注意候補すべて、本人確認分岐をpipeline.jsonと照合し、文脈・事実性・自然さを確認できたらPASS') -cne 'PASS') { throw '実例の品質を確認できないためContact Benchを止めます。' }
-python scripts/run_contact_benchmark.py --out $contactOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
+python scripts/run_contact_benchmark.py --out $contactOut --model $activeModel --env-file $activeKeyFile --active-account $activeAccount @secondaryKeyArgs --quota-route-state $quotaRouteState
 if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。artifact: $contactOut" }
 Get-Content -Raw $contactOut
 if ((Read-Host '全9返信を読み、A/B/Cの文体差と文脈・自然さ・非コピー基準をすべて満たせばPASS') -cne 'PASS') { throw 'Contact Benchの品質基準が3/3に達していないためTapple評価を止めます。' }
-python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model $activeModel --env-file $activeKeyFile @secondaryKeyArgs --quota-route-state $quotaRouteState
+python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model $activeModel --env-file $activeKeyFile --active-account $activeAccount @secondaryKeyArgs --quota-route-state $quotaRouteState
 if ($LASTEXITCODE -ne 0) { throw "Tappleの期待戦略が9/9でないか実行未完了です。artifact: $tappleOut" }
 Get-Content -Raw $tappleOut
 if ((Read-Host 'tapple.jsonの全返信文を確認し、文脈・自然さ・安全性に問題がなければPASS') -cne 'PASS') { throw 'Tapple返信文の品質を確認できていません。' }

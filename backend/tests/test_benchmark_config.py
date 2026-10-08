@@ -52,6 +52,25 @@ def test_runner_can_preserve_secondary_account_label_when_it_is_the_active_key()
     ]
 
 
+def test_secondary_active_account_falls_back_to_primary_after_both_models():
+    config = build_gemini_benchmark_config(
+        primary_key="active-secondary-key",
+        secondary_key="other-primary-key",
+        model="gemini-3.5-flash-lite",
+        active_account="secondary",
+    )
+
+    assert [
+        (attempt["account"], attempt["model"], attempt["api_key"])
+        for attempt in config["quota_attempts"]
+    ] == [
+        ("secondary", "gemini-3.5-flash-lite", "active-secondary-key"),
+        ("secondary", "gemini-3.1-flash-lite", "active-secondary-key"),
+        ("primary", "gemini-3.5-flash-lite", "other-primary-key"),
+        ("primary", "gemini-3.1-flash-lite", "other-primary-key"),
+    ]
+
+
 def test_active_account_cli_argument_defaults_to_primary_and_accepts_secondary():
     parser = argparse.ArgumentParser()
     benchmark_config.add_active_account_argument(parser)

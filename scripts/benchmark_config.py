@@ -1,14 +1,30 @@
 """Shared Gemini configuration for live benchmark runners."""
 from __future__ import annotations
 
-import json
+import argparse
 import hashlib
+import json
 from pathlib import Path
 
 
+def add_active_account_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--active-account",
+        choices=("primary", "secondary"),
+        default="primary",
+        help="Account label for the key passed with --env-file",
+    )
+
+
 def build_gemini_benchmark_config(
-    *, primary_key: str, secondary_key: str = "", model: str
+    *,
+    primary_key: str,
+    secondary_key: str = "",
+    model: str,
+    active_account: str = "primary",
 ) -> dict[str, object]:
+    if active_account not in {"primary", "secondary"}:
+        raise ValueError("active_account must be primary or secondary")
     config: dict[str, object] = {
         "provider": "gemini",
         "model": model,
@@ -22,12 +38,13 @@ def build_gemini_benchmark_config(
     if model == "gemini-3.5-flash-lite":
         primary_models.append("gemini-3.1-flash-lite")
     secondary_models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+    other_account = "secondary" if active_account == "primary" else "primary"
     quota_attempts = [
         {
             "provider": "gemini",
             "model": candidate_model,
             "api_key": primary_key,
-            "account": "primary",
+            "account": active_account,
         }
         for candidate_model in primary_models
     ]
@@ -37,7 +54,7 @@ def build_gemini_benchmark_config(
                 "provider": "gemini",
                 "model": candidate_model,
                 "api_key": secondary_key,
-                "account": "secondary",
+                "account": other_account,
             }
             for candidate_model in secondary_models
         )

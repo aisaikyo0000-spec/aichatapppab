@@ -18,6 +18,7 @@ from app.ai import factory  # noqa: E402
 from app.routers import generation  # noqa: E402
 from api_key_file import read_gemini_api_key  # noqa: E402
 from benchmark_config import (  # noqa: E402
+    add_active_account_argument,
     build_gemini_benchmark_config,
     load_gemini_benchmark_route,
     record_gemini_benchmark_success,
@@ -368,6 +369,7 @@ def main() -> int:
     parser.add_argument("--model", default="gemini-3.5-flash-lite")
     parser.add_argument("--env-file", default=str(ROOT / ".env"))
     parser.add_argument("--secondary-env-file", default="")
+    add_active_account_argument(parser)
     parser.add_argument("--quota-route-state", type=Path,
                         help="Optional run-local state shared across benchmark stages")
     parser.add_argument("--delay-seconds", type=float, default=6.0)
@@ -386,6 +388,7 @@ def main() -> int:
         primary_key=primary_key,
         secondary_key=secondary_key,
         model=args.model,
+        active_account=args.active_account,
     )
     if args.quota_route_state is not None:
         load_gemini_benchmark_route(ai_config, args.quota_route_state)

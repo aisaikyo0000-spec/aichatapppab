@@ -6,9 +6,11 @@ Tappleの招待提案には、AIが相手の信頼性や実際の安全性を判
 
 独立レビューで、9件目の返信が短い反応に合うかを確認していない点が見つかった。ベンチに短い受け止めや自然な会話終了を示す返信要件を加え、無関係な質問と、相手を責めて再勧誘する返信を不合格にする回帰テストを追加した。このマーカー判定は文脈適合の目安で、実際の文体品質を保証しない。
 
-続く独立レビューでは句読点のない質問「住んでる場所どこ」「最近どう」が評価器を通る問題が見つかった。両方の回帰ケースを修正前に失敗させてから検出器を広げ、「そっか。また話そう」のような相づちは誤検出しないことを確認した。Tapple focused suiteは**5 passed**、fallback focused suiteは**17 passed**。fresh reviewと全backend suiteは実行中。実APIでの出力は未確認。
+続く独立レビューでは句読点のない質問「住んでる場所どこ」「最近どう」が評価器を通る問題が見つかった。両方の回帰ケースを修正前に失敗させてから検出器を広げ、「そっか。また話そう」のような相づちは誤検出しないことを確認した。Tapple focused suiteは**5 passed**、fallback focused suiteは**17 passed**。この修正時点の全backend suiteは**859 passed / 2 warnings**、frontend build、`compileall`、CLI `--help`、`git diff --check`もPASS。実APIでの出力は未確認。
 
 さらにfresh reviewで、質問の抜け、間接的な返信要求、相づち後の無関係な話題が検出器を通る問題と、固定語尾リストが自然な言い換えを落とす問題が見つかった。追加テストをREDで確認してから、句読点なしの質問・返信や連絡を促す表現を検出し、短い相づちの後には文脈に沿う会話終了を求める評価に変更した。追加レビューで判明した「連絡くれると嬉しい」の見逃しと「無理せず過ごしてね」などの自然な言い換えも回帰テストに加えた。Tapple focused suiteは**5 passed**。最終差分の新規read-only Python Reviewerは**PASS**。全backend suiteは**859 passed / 2 warnings**、frontend build、`compileall`、CLI `--help`、`git diff --check`もPASS。Geminiの切替はprimary 3.5→primary 3.1→secondary 3.5→secondary 3.1で、rate limit時だけ次へ進む。実API疎通、最新70ケース、Contact Bench、Tappleの実生成と文章確認は未実施。
+
+朝の評価手順も確認し、疎通確認が予備アカウントを選んだときに主キーが後続ベンチへ渡らず、予備3.5・3.1の両方が制限された後に主アカウントへ戻れない問題を見つけた。予備キーを主キーに読み替えるのではなく、`--active-account`で実際のアカウント名を保ちながら、もう一方のキーを常に渡すよう変更した。設定テストは**13 passed**。全backend suiteは**862 passed / 2 warnings**、frontend build、`compileall`、CLI `--help`、PowerShell AST parse、`git diff --check`はPASS。新規read-only Python ReviewerもPASS。実APIでの切替は未確認。
 
 70ケースの手動確認では、代表8ケースに加え、検証器が注意を示した候補と本人確認への分岐を全て出力する。注意候補は品質不合格の自動判定ではなく、人が元の会話・返信・評価artifactを照合するための確認リストである。不正なUTF-8 artifactを読み込んでも検証器がtracebackで終了しないよう、JSON形式の構造化エラーにする。
 

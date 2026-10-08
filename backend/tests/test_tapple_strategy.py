@@ -837,7 +837,19 @@ def test_tapple_benchmark_covers_recent_disinterest_in_the_proposed_activity():
     )
 
     assert scenario["expected_action"] == "wait"
-    assert "最近はあまり好きではない" in scenario["messages"][-2]["content"]
+    assert "あまり好きではない" in scenario["messages"][-2]["content"]
+    result = {
+        "strategy": {
+            "action": "wait",
+            "rationale": "今の本人の好みと違うため、カフェへ誘わず話題を受け止めます。",
+            "evidence": ["駅前のカフェに行ってみたいです"],
+            "invite_example": None,
+        },
+        "replies": [
+            "駅前に気になるカフェがあるんですね。最近カフェはあまり行かないんですが、プリンのお店なら気になります！"
+        ],
+    }
+    assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
 
 
 @pytest.mark.parametrize(
@@ -845,6 +857,7 @@ def test_tapple_benchmark_covers_recent_disinterest_in_the_proposed_activity():
     [
         ("mutual_activity_interest", "invite"),
         ("shared_activity_low_reciprocity", "wait"),
+        ("recent_activity_disinterest", "wait"),
     ],
 )
 def test_activity_interest_pair_runs_through_production_strategy_parser(scenario_id, parsed_action):

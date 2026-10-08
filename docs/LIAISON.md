@@ -10,7 +10,7 @@
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（fork上。最新公開commitは`9bd4682`）
+- 作業ブランチ: `codex/chat-quality-20261008`（fork上。最新コードcommitは`9bd4682`、資料更新も公開済み）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
 - 進行状況: Step 18-R4 Iteration 22。GitHub最新mainは `a75ba76998a377e527f1ea3bedaa655a6b89569c`。Tapple境界修正、独立レビュー、全体テストはPASS。WIPをforkへ公開済み
 - 次の作業: 未実施の最新70ケース、Contact Bench、Tapple実生成と全文確認を再開可能な時間帯に行う。完了条件がそろうまでStep 18-R4は合格としない

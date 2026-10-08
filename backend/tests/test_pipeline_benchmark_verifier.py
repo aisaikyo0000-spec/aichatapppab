@@ -278,6 +278,30 @@ def test_pipeline_verifier_allows_explicit_safe_user_question_without_candidates
     assert report["quality_pass"] is True
 
 
+@pytest.mark.parametrize(
+    "safe_question",
+    ["", {"secret": "unreviewed"}, ["unreviewed"]],
+)
+def test_pipeline_verifier_rejects_malformed_safe_question_with_candidates(safe_question):
+    artifact = _artifact()
+    artifact["cases"][0]["safe_user_question"] = safe_question
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "case_metrics_invalid" in report["failures"]
+
+
+def test_pipeline_verifier_rejects_safe_question_alongside_candidates():
+    artifact = _artifact()
+    artifact["cases"][0]["safe_user_question"] = "相手に好みを確認してください。"
+
+    report = verify_pipeline_artifact(artifact, CANONICAL_IDS)
+
+    assert report["quality_pass"] is False
+    assert "case_metrics_invalid" in report["failures"]
+
+
 def test_pipeline_verifier_cli_does_not_accept_case_set_override(monkeypatch):
     from verify_pipeline_benchmark import main
 

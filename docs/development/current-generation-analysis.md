@@ -2086,3 +2086,13 @@ API依存の完了条件は未達。朝の利用者確認後に単発疎通を�
 拒否・迷い・安全面の懸念についても継続判定を統一した。本人の明示的な再開意思がない限り第三者の希望や日程都合で過去の拒否を解除しない。迷い・安全懸念が残っていれば、戦略が`invite`または`continue`でも誘い・予定調整を許可しない。安全への不安を否定する文の後に「まだ不安」と続くケースも未解消として扱う。丁寧な再考要求や「今回だけ」のような間接的圧力の回帰テストも追加した。
 
 このIterationの最新ローカル検証はbackend **968 passed / 2 warnings**、Tapple strategy **403 passed**、APIキー切替関連 **45 passed**。frontend production build、compileall、benchmark `--help`、diff checkはPASS。独立Safety Reviewer / Python ReviewerはPASS。キーの選択順はprimary 3.5 → primary 3.1 → secondary 3.5 → secondary 3.1で、rate limitの場合だけ次へ進む。実APIは利用者の朝の確認まで未呼出し。最新70ケース、Contact Bench、Tapple 11ケースの実生成・目視確認が残るため、Step 18-R4は未完成。
+
+## 2026-10-09 Step 18-R4 Tapple Iteration 5: 現在の意思と過去の拒否を分離
+
+独立レビューで、現在の「会いたい」が過去の「会うのは無理だった」より先にあると、後続の歴史的な拒否表現が現在の迷いとして処理され、招待判断が`wait`に落ちる問題を確認した。反対に、過去の拒否が先にある場合は、現在の明確な意思で招待へ進めていた。この順序差を埋める回帰テストを追加し、現在意思と過去の拒否の記載順が違っても同じ判断になるようにした。
+
+初回修正後の独立レビューでは、過去の拒否と同じ文に含まれる後続の明確な拒否まで除外する問題、および第三者の引用発言を本人の意思として扱い得る問題が見つかった。追加テストで再現し、現在の明確な拒否は停止判定に残し、過去の拒否はそれを示す特定の節だけを除外するよう範囲を限定した。友人や第三者の引用・伝聞は本人の意思判定から除外する。
+
+現HEAD `bec4388`でTapple専用テストは**519 passed**、backend全体は**1,084 passed / 2 warnings**、モデル・アカウント切替関連は**45 passed**。frontend production build、Python `compileall`、`git diff --check`もPASS。最終差分を確認した新しいcode reviewerと独立Tapple safety reviewerはともに**PASS**。
+
+APIは呼び出していないため、実際のquota応答と生成品質は未確認である。実行時・評価時の経路順序はprimary 3.5 → primary 3.1 → secondary 3.5 → secondary 3.1で、`rate_limit`時のみ次へ進む。最新70ケース、Contact Bench全9返信、Tapple全11シナリオと生成文の目視レビューが残るため、Step 18-R4は未完成。最新コードと資料はfork作業branchへのpush前であり、GitHub mainは基点`a75ba76`のまま。

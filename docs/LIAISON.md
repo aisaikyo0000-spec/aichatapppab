@@ -3,21 +3,29 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 892件のbackend suiteを確認
+最終更新: 2026-10-09 / Tapple Iteration 5、backend 1,084件を確認
 
 ---
 
 ## 現在の状態
 
 - 参照先: `main`（確認時のSHA: `a75ba76998a377e527f1ea3bedaa655a6b89569c`）
-- 作業ブランチ: `codex/chat-quality-20261008`（最新コードcommitは`622ab4d`。Geminiベンチの成功アカウント・モデル記録を追加）
+- 作業ブランチ: `codex/chat-quality-20261008`（最新コードcommitは`bec4388`。現在の意思と過去の拒否を節ごとに判定）
 - PR: [#1 Improve reply quality and Gemini rate-limit fallback](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、状態は未マージ
-- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。全backendは**892 passed / 2 warnings**。frontend build、Python compileall、3つのベンチCLI `--help`、`git diff --check`もPASS。戦略ペア回帰とアカウント記録の独立Python ReviewerはPASS。成功経路テストは主・予備アカウントと3.5・3.1の4通りを確認する
+- 進行状況: Step 18-R4は未完成。GitHub最新mainは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。現HEAD `bec4388`でbackendは**1,084 passed / 2 warnings**、Tapple専用は**519 passed**、quota/fallback関連は**45 passed**。frontend production build、Python compileall、`git diff --check`はPASS。最新差分の独立code reviewerと安全ReviewerはともにPASS
 - Geminiの利用経路は主3.5→主3.1→予備3.5→予備3.1。rate limit時だけ次の経路へ進む。今回、70ケース・Contact・Tappleの成果物に`successful_route: {account, model}`を記録し、APIキーを含めないことを回帰テストで確認した。実APIは呼び出していない
-- 最新のWIPコードcommitは`622ab4d`、テストcheckpointは`dab481e`。コードと進捗資料をforkへpushし、push後のSHA一致を確認した。PR #1はOpenで未マージ、mainには未反映
+- 最新コードcommit `bec4388` とそのテストcheckpointは未push。fork作業ブランチの直近確認SHAは`37e345f`。PR #1はOpenで未マージ、mainには未反映
 - 次の作業: 利用者の確認後に実API疎通を行い、70ケース、Contact Bench、Tapple全11シナリオの実生成と全文レビューをする。全条件が揃うまでStep 18-R4を合格としない
 
 今回のPair testでは、二つの実ベンチ会話に同じ`invite`提案を渡す。温かい相互会話では`invite`を維持し、反応が薄い履歴ではstrategy parserが`wait`へ調整することを確認する。従来のシナリオ設定だけを見るテストを補う。
+
+## Step 18-R4 Tapple Iteration 5: 現在の意思と過去の拒否
+
+- 独立レビューで、現在の明確な「会いたい」が過去の難しさより先に書かれると、過去の拒否を現在の拒否・迷いとして扱う問題を見つけた。修正後は両方の文順で招待判断を保ち、過去の拒否より後に新しい明確な拒否が続く場合は、その現在の拒否だけを有効にする
+- 友人・第三者の発言を引用した文章が本人の意思として扱われない回帰テストも追加した。旧実装の誤判定を示すテストを先に追加し、現在の拒否・引用文・両順序の意思表現を含むテストで修正後の挙動を確認した
+- 現HEAD `bec4388`のTapple専用テストは**519 passed**、backend全体は**1,084 passed / 2 warnings**、主・予備のモデル切替関連テストは**45 passed**。frontend production build、Python compileall、`git diff --check`もPASS。新しい独立code reviewerとTapple safety reviewerはともに**PASS**
+- Gemini APIは呼び出していない。実際の疎通、最新70ケース、Contact Benchの全9返信、Tapple全11シナリオの生成と返信全文レビューは未実施。よってStep 18-R4は未完成で、合格版としてはpushしていない
+- モデル順序は主アカウント3.5→主3.1→別アカウント3.5→別アカウント3.1。次へ切り替えるのは`rate_limit`時だけ。主側の3.5と3.1が両方制限された場合は、別アカウントへ切り替える。API実呼出し前のテストで順序と非quotaエラー時に停止することを確認した
 
 ## Step 18-R4 進捗（オフライン受け入れ準備）
 

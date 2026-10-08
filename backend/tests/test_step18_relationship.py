@@ -162,6 +162,15 @@ def test_same_contact_gold_adapts_without_fully_replacing_global_gold(client):
     assert contact_gold.tame_ratio - active.tame_ratio >= 0.1
 
 
+def test_same_contact_gold_is_not_counted_twice_in_global_prior(client):
+    _seed_gold(client, "全体の丁寧な相手", KEIGO_PAIRS)
+    cid = _seed_gold(client, "局所適応の対象", TAME_PAIRS[:3])
+
+    profile = style.compute_hierarchical_profile(cid)
+
+    assert profile["active_profile"].tame_ratio == pytest.approx(3 / 8, abs=0.01)
+
+
 @pytest.mark.parametrize("gold_count", (1, 2))
 def test_sparse_same_contact_gold_is_not_injected_as_priority_imitation_examples(client, gold_count):
     _seed_gold(client, "丁寧な全体Gold", KEIGO_PAIRS)

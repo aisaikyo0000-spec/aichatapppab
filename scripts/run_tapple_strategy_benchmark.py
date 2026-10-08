@@ -170,12 +170,12 @@ _FOLLOW_UP_PRESSURE_RE = re.compile(
     r"|一言.{0,8}(?:ちょうだい|もらえる|くれる|ください|ほしい|お願い)"
 )
 _ACKNOWLEDGMENT_RE = re.compile(
-    r"^(?:そうなんですね|そうなんだ|そうですね|そうだね|わかりました|分かりました|了解(?:です)?|そっか|うん|はい|わかった|ありがとう|承知しました|承知です)$"
+    r"^(?:そうなんだ(?:ね)?|そうなんですね|そうですね|そうだね|わかりました|分かりました|了解(?:です)?|そっか|うん|はい|わかった|ありがとう|承知しました|承知です|気にしないで(?:ね)?)$"
 )
 _OFF_RAMP_ENDING_RE = re.compile(
-    r"また[^。.!！?？、,]{0,30}(?:話|連絡|やりとり)"
-    r"|(?:話|連絡|やりとり)[^。.!！?？、,]{0,30}また"
-    r"|またね|気にしないで|気が向いたら|無理せず|ゆっくり|休んで"
+    r"^(?:また[^。.!！?？、,]{0,24}(?:話そう(?:ね)?|話しましょう|話したくなったら話(?:そう|しましょう)|話せるときに話そう(?:ね)?|連絡して(?:ね)?|連絡しよう|連絡するね|やりとりしよう)"
+    r"|気が向いたらまた(?:話そう(?:ね)?|話しましょう|連絡して(?:ね)?)|話せるときにまた|またね"
+    r"|(?:今日は|今は)?(?:無理せず(?:ゆっくり)?(?:休んで|過ごして|して)?|ゆっくり(?:休んで|過ごして|して)|休んで|気にしないで)(?:ね|ください(?:ね)?)?)$"
 )
 
 
@@ -185,7 +185,7 @@ def _has_contextual_off_ramp(reply: str) -> bool:
         for clause in re.split(r"[。.!！?？、,]+", reply)
         if clause.strip()
     ]
-    if not clauses or not _OFF_RAMP_ENDING_RE.search(clauses[-1]):
+    if not clauses or not _OFF_RAMP_ENDING_RE.fullmatch(clauses[-1]):
         return False
     return all(_ACKNOWLEDGMENT_RE.fullmatch(clause) for clause in clauses[:-1])
 

@@ -7,7 +7,7 @@
 
 ## 2026-10-09 最新状況
 
-- GitHub `main`の基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`、最新コードcommitは`3f80fee`。PR #1はOpenで未マージ。今回の作業はfork branchへまだpushしていない。
+- GitHub `main`の基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`、最新コードcommitは`3f80fee`、資料commitは`4a7f6a0`。forkへpushし、remote SHA `4a7f6a028a0bb3cc880d46f5ef0da58c6dddb95c`との一致を確認した。PR #1はOpenで未マージ。
 - Step 18-R4のオフライン作業として、Tappleの最近の活動への明示的な苦手意識を招待判定に反映した。直接的な誘いにも適用し、別の趣味への苦手意識や未経験、限定的な苦手さ、否定を和らげる表現、後から同じ活動への関心を示した表現を区別する回帰テストを追加。Tapple実生成ベンチは13シナリオになった。
 - `python -m pytest backend/tests -q`: **1,174 passed / 2 warnings**。Tapple strategy suite **593 passed**、strategy/artifact/benchmark focused suite **631 passed**。frontend production build、Python `compileall`、`git diff --check`もPASS。警告は既存のFastAPI `on_event`非推奨通知。
 - 独立Python Reviewerは、別の活動への関心が対象活動への苦手意識を解除してしまう境界も発見した。13番目のシナリオとパーサー回帰テストを追加して修正し、資料も13へ更新した。fresh Python Reviewerはコード、ベンチ、資料、fallbackの順序を確認して**PASS**。Gemini APIは呼び出していない。

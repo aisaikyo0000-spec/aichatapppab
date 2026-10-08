@@ -2129,4 +2129,4 @@ Gemini APIは呼び出していない。最新70ケース、Contact Bench全9返
 
 最終コードcommit `3f80fee`。`python -m pytest backend/tests -q`: **1,174 passed / 2 warnings**。Tapple strategy suite **593 passed**、strategy・artifact・benchmarkのfocused suite **631 passed**。Gemini model fallback suite **17 passed**、benchmark route-state suite **18 passed**。frontend production build、Python `compileall`、`git diff --check`もPASS。警告はFastAPI `on_event`の既存非推奨通知。`ruff`は環境にないため未実行。最新差分・資料へのfresh Python Reviewerは**PASS**。
 
-Gemini APIは呼び出していない。利用経路はprimary 3.5 → primary 3.1 → secondary 3.5 → secondary 3.1で、`rate_limit`時のみ次へ進む。primaryの3.5と3.1が両方制限された場合はsecondaryへ切り替える。API実測、70ケース、Contact Bench 9返信の3/3目視、Tapple 13シナリオと全返信の目視評価は残るため、Step 18-R4は未完成。GitHub mainの基点`a75ba76`は変更していない。コードと資料はfork作業branchへpushし、remote SHAを照合する。
+Gemini APIは呼び出していない。利用経路はprimary 3.5 → primary 3.1 → secondary 3.5 → secondary 3.1で、`rate_limit`時のみ次へ進む。primaryの3.5と3.1が両方制限された場合はsecondaryへ切り替える。API実測、70ケース、Contact Bench 9返信の3/3目視、Tapple 13シナリオと全返信の目視評価は残るため、Step 18-R4は未完成。GitHub mainの基点`a75ba76`は変更していない。コードcommit `3f80fee`と資料commit `4a7f6a0`をfork作業branchへpushし、remote SHA一致を確認した。

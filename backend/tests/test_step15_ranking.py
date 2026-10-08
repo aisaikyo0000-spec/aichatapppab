@@ -60,15 +60,21 @@ def test_gold_similarity_aspects():
     assert prof.sample_count == 2
 
 
-def test_same_contact_priority_maintained(client):
-    """Same-contact 階層が維持されること。」"""
+def test_single_same_contact_gold_uses_global_fallback(client):
+    """少数の同一相手Goldで全体の本人文体を置き換えない。"""
+    global_cid = client.post("/api/contacts", json={"name": "全体相手", "profile": ""}).json()["id"]
+    for idx in range(5):
+        client.post(f"/api/contacts/{global_cid}/messages", json={"sender": "contact", "content": f"丁寧な発言{idx}"})
+        client.post(f"/api/contacts/{global_cid}/messages", json={"sender": "self", "content": "ありがとうございます。よろしくお願いいたします。"})
+
     cid = client.post("/api/contacts", json={"name": "階層相手", "profile": ""}).json()["id"]
     client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": "カフェ好き？"})
     client.post(f"/api/contacts/{cid}/messages", json={
         "sender": "self", "content": "好きだよ！", "source": "manual",
     })
     prof = style.compute_hierarchical_profile(cid, "getting_to_know")
-    assert prof["hierarchy_tier"] == "same_contact_recent_manual_gold"
+    assert prof["hierarchy_tier"] == "global_manual_gold"
+    assert prof["active_profile"].keigo_ratio > prof["active_profile"].tame_ratio
 
 
 def test_counterpart_not_copied():

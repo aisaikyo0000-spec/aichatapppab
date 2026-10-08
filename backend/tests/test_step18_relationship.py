@@ -19,6 +19,18 @@ def _seed_gold(client, name: str, pairs: list[tuple[str, str]]) -> int:
     return cid
 
 
+def _seed_non_gold(client, name: str, pairs: list[tuple[str, str]]) -> int:
+    cid = client.post("/api/contacts", json={"name": name, "profile": ""}).json()["id"]
+    for contact_msg, self_msg in pairs:
+        client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": contact_msg})
+        response = client.post(
+            f"/api/contacts/{cid}/messages",
+            json={"sender": "self", "content": self_msg, "source": "legacy_unknown"},
+        )
+        assert response.status_code == 201
+    return cid
+
+
 TAME_PAIRS = [
     ("今日暇だった", "おつかれ笑"),
     ("眠い", "わかる笑"),
@@ -59,10 +71,9 @@ def test_relationship_summary_keigo_contact(client):
     assert "5件" in block
 
 
-def test_relationship_summary_few_samples_is_reference(client):
+def test_relationship_summary_uses_global_fallback_for_fewer_than_three_gold(client):
     cid = _seed_gold(client, "Cさん", TAME_PAIRS[:2])
-    block = style.build_relationship_summary(cid)
-    assert "参考程度" in block
+    assert style.build_relationship_summary(cid) == ""
 
 
 def test_contact_tone_fit_neutral_without_data(client):
@@ -81,3 +92,37 @@ def test_contact_tone_fit_prefers_matching_tone(client):
     # 3件未満は中立
     cid_few = _seed_gold(client, "Cさん", TAME_PAIRS[:2])
     assert contrast.contact_tone_fit(tame_cand, cid_few) == 0.5
+
+
+def test_single_contact_gold_does_not_replace_global_gold_style(client):
+    _seed_gold(client, "全体の丁寧な相手", KEIGO_PAIRS)
+    cid = _seed_gold(client, "Goldが1件の相手", TAME_PAIRS[:1])
+
+    profile = style.compute_hierarchical_profile(cid)
+
+    assert profile["hierarchy_tier"] == "global_manual_gold"
+    assert profile["active_profile"].keigo_ratio > profile["active_profile"].tame_ratio
+
+
+def test_same_contact_gold_adapts_without_fully_replacing_global_gold(client):
+    _seed_gold(client, "全体の丁寧な相手", KEIGO_PAIRS)
+    cid = _seed_gold(client, "Goldが3件の相手", TAME_PAIRS[:3])
+
+    profile = style.compute_hierarchical_profile(cid)
+    active = profile["active_profile"]
+    global_gold = profile["gold_profile"]
+    contact_gold = profile["same_contact_recent_gold_profile"]
+
+    assert profile["hierarchy_tier"] == "same_contact_recent_manual_gold"
+    assert global_gold.tame_ratio < active.tame_ratio < contact_gold.tame_ratio
+    assert contact_gold.tame_ratio - active.tame_ratio >= 0.1
+
+
+def test_same_contact_bronze_does_not_override_global_manual_gold(client):
+    _seed_gold(client, "Global Gold", KEIGO_PAIRS)
+    cid = _seed_non_gold(client, "Bronzeのみの相手", TAME_PAIRS[:3])
+
+    profile = style.compute_hierarchical_profile(cid)
+
+    assert profile["hierarchy_tier"] == "global_manual_gold"
+    assert profile["active_profile"].keigo_ratio > profile["active_profile"].tame_ratio

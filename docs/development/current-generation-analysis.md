@@ -1,7 +1,22 @@
-# 現行返信生成アーキテクチャ分析（Step 1: 調査のみ・コード変更なし）
+# 現行返信生成アーキテクチャ分析
+
+> 初回調査は2026-09-27に実施しました。最新の実装・検証状況は「2026-10-08 返信品質・Geminiフォールバック更新」を参照してください。
+
+## 2026-10-08 返信品質・Geminiフォールバック更新
+
+- 対象: GitHub PR [#1](https://github.com/aisaikyo0000-spec/aichatapppab/pull/1)、ブランチ `codex/chat-quality-20261008`。確認時点では未マージです。変更は `main` にまだ反映されていません。
+- 返信検証を更新し、本人の経験を確認できない場合はアプリ利用者への確認に切り替えます。不明な会話参照では、根拠のない断定を避けつつ短い確認返信を許可します。
+- 新規インストール時の標準モデルを Gemini 3.5 Flash Lite にし、レート制限を検知したら Gemini 3.1 Flash Lite へ切り替えます。修復リクエストと履歴記録も、実際に使ったモデルに合わせます。
+- 同一プロバイダーの予備モデルに個別キーがなければ、主モデルのキーを再利用します。設定APIの応答にはキー本体を含めません。
+- `pytest -q backend/tests`: **415件成功**（既存のFastAPI非推奨警告2件）。
+- Gemini 3.5の実行確認: 4ケースすべてHTTP成功。2ケースで返信の修正が必要でした。不明な参照のケースでは、修正後に短い確認候補を返しました。
+- Gemini 3.1の70ケース評価: HTTP成功70件、エラー0件、修正を要したケース4件。指標は簡易な自動評価であり、実際にそのまま送れる品質の保証ではありません。
+- 3.5では全件評価中に短時間のレート制限（429）を確認しました。3.5から3.1への切替動作は自動テストで検証しています。3.1を日常利用、3.5を完成時の標準モデルとする方針です。
+- ローカルのチャット履歴は外部APIへ送っていません。履歴から本人の好みを抽出して確認・保存する作業は未完了です。次は本人が手入力した発言に限定した候補抽出と、保存前の確認方法を整理します。
+- 最新の製品コードコミット: `98e07b1`。この更新では進捗資料2件をPRブランチに追加します。
 
 - 調査日: 2026-09-27
-- 対象リポジトリ: `aisaikyo0000-spec/aichatapp`（ローカル: `C:\Users\proje\Desktop\AIチャットアプリ`）
+- 対象リポジトリ: `aisaikyo0000-spec/aichatapppab`（ローカル: `C:\Users\poiuy\desktop\AIチャットアプリ`）
 - 方針: コード改修なし。実装の実態（ファイル名・関数名つき）を記録する。
 - バージョン表記の実態: `backend/app/config.py` では `APP_BUILD_VERSION = "learned-reply-v4.0"` / `PROMPT_VERSION = "v4.0"`。`backend/app/ai/prompt.py` の docstring は `Conversation-Learned Reply System v3.1`、`build_system_prompt()` の docstring は `v3.8` と混在。`backend/app/learning/__init__.py` は `Learning Package v3` と表記。依頼文の `learned-reply-v3.1` とコード上の表記にズレがあるため、本書では実ファイルの内容を正とする。
 
@@ -29,7 +44,7 @@
 
 ### 1.2 LLM 呼び出し〜パース〜検証〜修復リトライ
 
-5. Provider 解決: `backend/app/ai/factory.py: get_provider(cfg["provider"], api_key)`。登録済みは `cerebras`（`backend/app/ai/cerebras.py`、既定 `gpt-oss-120b`）/ `nvidia`（`backend/app/ai/nvidia.py`）/ `gemini`（`backend/app/ai/gemini.py`。OpenAI 互換 endpoint、`MIN_MAX_TOKENS=2048` の下駄あり、`json_mode` 対応）。既定設定は `backend/app/config.py: DEFAULT_PROVIDER="cerebras"` ほか。
+5. Provider 解決: `backend/app/ai/factory.py: get_provider(cfg["provider"], api_key)`。登録済みは `cerebras`（`backend/app/ai/cerebras.py`、既定 `gpt-oss-120b`）/ `nvidia`（`backend/app/ai/nvidia.py`）/ `gemini`（`backend/app/ai/gemini.py`。OpenAI 互換 endpoint、`MIN_MAX_TOKENS=2048` の下駄あり、`json_mode` 対応）。PR #1 未マージの `main` では既定が Cerebras。PRブランチでは Gemini 3.5 Flash Lite を既定とし、3.1 Flash Lite へ切り替える変更を加えています。
 6. `generate()` 内 `_call_ai()`（`generation.py:1561-1603`）が `provider.generate(model, messages, temperature, max_tokens, json_mode=(candidates>1))` を呼ぶ。`AIError(code=empty_response|rate_limit)` のみ 2 回スリープリトライし、該当コード時のみ `factory.get_fallback(cfg)` を試す。それ以外は即 502。
 7. 最大 3 試行ループ（`generation.py:1611-1692`）:
    1. `_extract_ai_question(raw)`（`generation.py:38`）が全文 `[AI_QUESTION]...[/AI_QUESTION]` の場合のみ質問抽出して早期 return（`replies=[]`）。

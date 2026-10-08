@@ -464,6 +464,11 @@ def test_disinterest_in_another_activity_does_not_block_shared_activity_invite()
             "invite",
         ),
         (
+            "プリンが好きです。カフェは苦手でした。今は好きです",
+            "今度一緒にカフェに行きたいです",
+            "invite",
+        ),
+        (
             "プリンが好きです。カフェは最近行かなくなったけど、また行きたいです",
             "今度一緒にカフェに行きたいです",
             "invite",

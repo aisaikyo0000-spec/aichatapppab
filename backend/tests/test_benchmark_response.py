@@ -7,7 +7,7 @@ from types import SimpleNamespace
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from benchmark_response import extract_api_error_code
+from benchmark_response import benchmark_run_state, extract_api_error_code
 
 
 def test_extracts_rate_limit_code_from_fastapi_error_response():
@@ -34,3 +34,27 @@ def test_malformed_or_success_response_has_no_error_code():
 
     assert extract_api_error_code(malformed) is None
     assert extract_api_error_code(success) is None
+
+
+def test_final_case_error_cannot_mark_benchmark_complete():
+    state = benchmark_run_state(
+        [{"id": "case-1"}, {"id": "case-2", "error": "HTTP 502", "error_code": "rate_limit"}],
+        expected_count=2,
+    )
+
+    assert state == {
+        "total": 2,
+        "expected_total": 2,
+        "complete": False,
+        "stopped_reason": "rate_limit_exhausted",
+    }
+
+
+def test_successful_full_run_is_complete_and_partial_run_is_explicit():
+    complete = benchmark_run_state([{"id": "case-1"}, {"id": "case-2"}], expected_count=2)
+    partial = benchmark_run_state([{"id": "case-1"}], expected_count=2)
+
+    assert complete["complete"] is True
+    assert complete["stopped_reason"] is None
+    assert partial["complete"] is False
+    assert partial["stopped_reason"] == "incomplete"

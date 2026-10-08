@@ -15,6 +15,7 @@ from app.ai import factory
 from app.learning import style
 from app.routers import generation
 from api_key_file import read_gemini_api_key
+from benchmark_config import build_gemini_benchmark_config
 
 
 CONTACTS = {
@@ -50,17 +51,10 @@ CONTACTS = {
 PROBE = "仕事で疲れた"
 
 
-def seed_and_generate(client, key, model, delay_seconds, probe):
-    ai_config = {
-        "provider": "gemini", "model": model, "api_key": key,
-        "temperature": 0.8, "max_tokens": 512, "history_limit": 50,
-    }
-    if model == "gemini-3.5-flash-lite":
-        ai_config.update({
-            "fallback_provider": "gemini",
-            "fallback_model": "gemini-3.1-flash-lite",
-            "fallback_api_key": key,
-        })
+def seed_and_generate(client, key, model, delay_seconds, probe, secondary_key=""):
+    ai_config = build_gemini_benchmark_config(
+        primary_key=key, secondary_key=secondary_key, model=model
+    )
     generation.get_ai_config = lambda: ai_config
     contact_ids = {}
     for name, pairs in CONTACTS.items():
@@ -121,6 +115,8 @@ def main():
     ap.add_argument("--model", default="gemini-3.5-flash-lite")
     ap.add_argument("--env-file", default=str(Path(__file__).resolve().parents[1] / ".env"),
                     help="API key file (value is never printed)")
+    ap.add_argument("--secondary-env-file", default="",
+                    help="Optional second-account key file (value is never printed)")
     ap.add_argument("--db", help="Optional new/empty database path; existing files are never removed")
     ap.add_argument("--delay-seconds", type=float, default=6.0)
     ap.add_argument("--probe", default=PROBE, help="Shared incoming message used for A/B/C")
@@ -129,6 +125,11 @@ def main():
     if not key:
         print("GEMINI_API_KEY missing")
         return 1
+    secondary_key = (
+        read_gemini_api_key(Path(args.secondary_env_file))
+        if args.secondary_env_file
+        else ""
+    )
     db_path = Path(args.db) if args.db else Path(tempfile.mkdtemp(prefix="contactbench_")) / "contactbench.db"
     if db_path.exists() and db_path.stat().st_size:
         print(f"Refusing to overwrite non-empty benchmark database: {db_path}")
@@ -137,7 +138,9 @@ def main():
     config.DB_PATH = db_path
     database.init_db()
     client = TestClient(app)
-    out = seed_and_generate(client, key, args.model, args.delay_seconds, args.probe)
+    out = seed_and_generate(
+        client, key, args.model, args.delay_seconds, args.probe, secondary_key
+    )
     # discrimination: each reply closer to own Gold than to others?
     gold_sig = {n: [style_sig(sm) for _, sm in pairs] for n, pairs in CONTACTS.items()}
     report = {}

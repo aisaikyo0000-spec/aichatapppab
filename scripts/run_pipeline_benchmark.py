@@ -44,6 +44,7 @@ from compare_before_after import (  # noqa: E402
     summarize_issues,
 )
 from api_key_file import read_gemini_api_key  # noqa: E402
+from benchmark_config import build_gemini_benchmark_config  # noqa: E402
 from app.ai.naturalness import evaluate_candidate_naturalness  # noqa: E402
 
 
@@ -57,6 +58,8 @@ def main() -> int:
                         help="特定ケースIDをカンマ区切りで指定。--start/--endより優先")
     parser.add_argument("--model", default="gemini-3.5-flash-lite")
     parser.add_argument("--env-file", default=str(ROOT / ".env"), help="API key file (value is never printed)")
+    parser.add_argument("--secondary-env-file", default="",
+                        help="Optional second-account key file (value is never printed)")
     parser.add_argument("--delay-seconds", type=float, default=6.0,
                         help="各ケース間の待機秒数。Geminiの短時間リクエスト上限を考慮する")
     args = parser.parse_args()
@@ -65,16 +68,14 @@ def main() -> int:
     if not key:
         print("GEMINI_API_KEY missing")
         return 1
-    ai_config = {
-        "provider": "gemini", "model": args.model, "api_key": key,
-        "temperature": 0.8, "max_tokens": 512, "history_limit": 50,
-    }
-    if args.model == "gemini-3.5-flash-lite":
-        ai_config.update({
-            "fallback_provider": "gemini",
-            "fallback_model": "gemini-3.1-flash-lite",
-            "fallback_api_key": key,
-        })
+    secondary_key = (
+        read_gemini_api_key(Path(args.secondary_env_file))
+        if args.secondary_env_file
+        else ""
+    )
+    ai_config = build_gemini_benchmark_config(
+        primary_key=key, secondary_key=secondary_key, model=args.model
+    )
     generation.get_ai_config = lambda: ai_config
 
     cases = json.loads(Path(args.cases).read_text(encoding="utf-8"))

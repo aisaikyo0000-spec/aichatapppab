@@ -38,7 +38,6 @@ def build_gemini_benchmark_config(
     if model == "gemini-3.5-flash-lite":
         primary_models.append("gemini-3.1-flash-lite")
     secondary_models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
-    other_account = "secondary" if active_account == "primary" else "primary"
     quota_attempts = [
         {
             "provider": "gemini",
@@ -48,13 +47,17 @@ def build_gemini_benchmark_config(
         }
         for candidate_model in primary_models
     ]
-    if secondary_key and secondary_key != primary_key:
+    if (
+        active_account == "primary"
+        and secondary_key
+        and secondary_key != primary_key
+    ):
         quota_attempts.extend(
             {
                 "provider": "gemini",
                 "model": candidate_model,
                 "api_key": secondary_key,
-                "account": other_account,
+                "account": "secondary",
             }
             for candidate_model in secondary_models
         )

@@ -183,6 +183,55 @@ def test_strategy_accepts_exact_conversation_evidence_and_explicit_interest():
     assert "AIは相手の信頼性や実際の安全性を判断できません" in result.rationale
 
 
+def test_strategy_can_suggest_a_low_pressure_invite_without_assuming_consent():
+    conversation = (
+        "相手: 最近カフェ巡りにはまっています。駅前のパンケーキのお店が気になっていて\n"
+        "自分: 僕もカフェ好きです。パンケーキもよく食べます\n"
+        "相手: 写真を見たらおいしそうで、近いうちに行ってみたいです！"
+    )
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "共通の話題が続いており、相手も店に関心を示しています。まだ会うことへの同意ではないため、断りやすい形で打診します。",
+            "evidence": ["近いうちに行ってみたいです"],
+            "invite_example": "よかったら今度、駅前のカフェでパンケーキを食べませんか？難しければ気にしないでください。",
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, conversation)
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example is not None
+    assert "会うことへの同意" in result.rationale
+
+
+def test_tapple_benchmark_includes_a_receptive_but_not_yet_agreed_invitation_case():
+    scenario = next(
+        scenario
+        for scenario in run_tapple_strategy_benchmark.SCENARIOS
+        if scenario["id"] == "mutual_activity_interest"
+    )
+    latest_contact = next(
+        message["content"]
+        for message in reversed(scenario["messages"])
+        if message["sender"] == "contact"
+    )
+    result = {
+        "strategy": {
+            "action": "invite",
+            "rationale": "共通の話題と相手の関心を踏まえ、断りやすい形で提案します。会うことへの同意はまだ確認できていません。",
+            "evidence": ["近いうちに行ってみたいです"],
+            "invite_example": "よかったら今度、駅前のカフェに行きませんか？難しければ大丈夫です。",
+        },
+        "replies": ["そのカフェよさそうですね。よかったら今度一緒に行きませんか？"]
+    }
+
+    assert "近いうちに行ってみたいです" in latest_contact
+    assert scenario["expected_action"] == "invite"
+    assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
+
+
 def test_tapple_benchmark_requires_wait_after_engagement_declines():
     scenario = next(
         scenario

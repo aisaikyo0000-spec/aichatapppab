@@ -116,7 +116,14 @@ class GeminiProvider(AIProvider):
             try:
                 return self._parse_response(resp, body_text)
             except AIError as e:
-                if e.code == "rate_limit" and attempt < self.MAX_RETRIES - 1:
+                # The production 3.5 Flash Lite -> 3.1 Flash Lite route uses
+                # the next request for the fallback model as soon as quota is
+                # exhausted; repeating 3.5 would only consume time and RPD.
+                if (
+                    e.code == "rate_limit"
+                    and model != "gemini-3.5-flash-lite"
+                    and attempt < self.MAX_RETRIES - 1
+                ):
                     delay = self.RETRY_BASE_DELAY * (2 ** attempt)
                     logger.info("Rate limit hit, retrying in %.1f s (attempt %d/%d)", delay, attempt + 1, self.MAX_RETRIES)
                     time.sleep(delay)

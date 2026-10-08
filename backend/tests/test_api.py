@@ -133,6 +133,7 @@ def test_contact_search_message_body(client):
 def test_generate_api_key_missing(client, monkeypatch):
     cid = client.post("/api/contacts", json={"name": "テストさん"}).json()["id"]
     # DBにも環境変数にもキーが無ければ api_key_missing になる
+    database.set_setting("ai_provider", "cerebras")
     database.set_setting("api_key_cerebras", "")
     monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
     r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 1})

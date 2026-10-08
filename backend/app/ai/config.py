@@ -87,14 +87,28 @@ def get_ai_config() -> dict[str, Any]:
 
     # フォールバック: 設定画面(DB) > AI_FALLBACK_API_KEY > フォールバック先プロバイダの環境変数
     fallback_provider = get_setting(
-        "ai_fallback_provider", os.getenv("AI_FALLBACK_PROVIDER", "")
+        "ai_fallback_provider",
+        os.getenv("AI_FALLBACK_PROVIDER", app_config.DEFAULT_FALLBACK_PROVIDER),
     ).strip()
     fallback_model = get_setting(
-        "ai_fallback_model", os.getenv("AI_FALLBACK_MODEL", "")
+        "ai_fallback_model",
+        os.getenv("AI_FALLBACK_MODEL", app_config.DEFAULT_FALLBACK_MODEL),
     ).strip()
     fb_db_key = get_setting("ai_fallback_api_key", "").strip()
     fb_env_key = os.getenv("AI_FALLBACK_API_KEY", "").strip()
-    fallback_api_key = fb_db_key or fb_env_key or _env_api_key(fallback_provider)
+    same_provider = fallback_provider.lower() == provider.lower()
+    if fb_db_key:
+        fallback_api_key = fb_db_key
+        fallback_api_key_from_env = False
+    elif fb_env_key:
+        fallback_api_key = fb_env_key
+        fallback_api_key_from_env = True
+    elif same_provider:
+        fallback_api_key = api_key
+        fallback_api_key_from_env = not db_key
+    else:
+        fallback_api_key = _env_api_key(fallback_provider)
+        fallback_api_key_from_env = bool(fallback_api_key)
 
     return {
         "provider": provider,
@@ -108,7 +122,7 @@ def get_ai_config() -> dict[str, Any]:
         "fallback_provider": fallback_provider,
         "fallback_model": fallback_model,
         "fallback_api_key": fallback_api_key,
-        "fallback_api_key_from_env": not fb_db_key,
+        "fallback_api_key_from_env": fallback_api_key_from_env,
     }
 
 

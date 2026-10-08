@@ -2322,6 +2322,9 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
     ctx = _build_context(body.contact_id, body.condition, body.tone, body.mode)
     cfg = ctx["cfg"]
     provider = factory.get_provider(cfg["provider"], cfg["api_key"])
+    active_provider = provider
+    active_cfg = cfg
+    using_fallback = False
     system_prompt = ctx["system_prompt"]
     chat_text = ctx["chat_text"]
 
@@ -2351,18 +2354,53 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         )
 
     def _call_ai(messages: list[dict[str, str]]) -> str:
+        nonlocal active_provider, active_cfg, using_fallback
+
         def _invoke():
-            return provider.generate(
-                model=cfg["model"],
+            return active_provider.generate(
+                model=active_cfg["model"],
                 messages=messages,
-                temperature=cfg["temperature"],
-                max_tokens=cfg["max_tokens"],
+                temperature=active_cfg["temperature"],
+                max_tokens=active_cfg["max_tokens"],
                 json_mode=body.candidates > 1,
             )
 
         try:
             return _invoke()
         except AIError as exc:
+            # Production defaults switch from Gemini 3.5 Flash Lite to 3.1
+            # Flash Lite as soon as the primary quota is exhausted. Keep the
+            # generic retry/fallback policy unchanged for every other setup.
+            is_quota_model_pair = (
+                cfg.get("provider") == "gemini"
+                and cfg.get("model") == "gemini-3.5-flash-lite"
+                and cfg.get("fallback_provider") == "gemini"
+                and cfg.get("fallback_model") == "gemini-3.1-flash-lite"
+            )
+            if exc.code == "rate_limit" and is_quota_model_pair and not using_fallback:
+                fb = factory.get_fallback(cfg)
+                if fb is None:
+                    raise HTTPException(
+                        status_code=502,
+                        detail={"code": exc.code, "message": exc.message},
+                    )
+                fb_provider, fb_cfg = fb
+                active_provider = fb_provider
+                active_cfg = fb_cfg
+                using_fallback = True
+                logger.warning(
+                    "Gemini primary rate limit reached; switching to fallback model %s",
+                    fb_cfg["model"],
+                )
+                try:
+                    return _invoke()
+                except AIError as fb_exc:
+                    logger.warning("fallback failed: code=%s", fb_exc.code)
+                    raise HTTPException(
+                        status_code=502,
+                        detail={"code": fb_exc.code, "message": fb_exc.message},
+                    )
+
             delays = {"empty_response": (2, 4), "rate_limit": (8, 16)}.get(exc.code)
             if delays is None:
                 logger.warning("AI generation failed: code=%s", exc.code)
@@ -2376,20 +2414,21 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                 except AIError as exc2:
                     last_exc = exc2
             else:
-                fb = factory.get_fallback(cfg) if last_exc.code in ("rate_limit", "empty_response") else None
+                fb = (
+                    factory.get_fallback(cfg)
+                    if not using_fallback and last_exc.code in ("rate_limit", "empty_response")
+                    else None
+                )
                 if fb is None:
                     logger.warning("AI generation failed: code=%s", last_exc.code)
                     raise HTTPException(status_code=502, detail={"code": last_exc.code, "message": last_exc.message})
                 fb_provider, fb_cfg = fb
                 logger.warning("primary %s exhausted, trying fallback %s", last_exc.code, fb_cfg["provider"])
+                active_provider = fb_provider
+                active_cfg = fb_cfg
+                using_fallback = True
                 try:
-                    return fb_provider.generate(
-                        model=fb_cfg["model"],
-                        messages=messages,
-                        temperature=fb_cfg["temperature"],
-                        max_tokens=fb_cfg["max_tokens"],
-                        json_mode=body.candidates > 1,
-                    )
+                    return _invoke()
                 except AIError as fb_exc:
                     logger.warning("fallback failed: code=%s", fb_exc.code)
                     raise HTTPException(status_code=502, detail={"code": fb_exc.code, "message": fb_exc.message})
@@ -2668,8 +2707,8 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
     # 6. 履歴保存（ソート後の順序で各候補を個別に保存、batch_id を付与）
     history_ids = _record_history(
         contact_id=body.contact_id,
-        provider=cfg["provider"],
-        model=cfg["model"],
+        provider=active_cfg["provider"],
+        model=active_cfg["model"],
         condition=body.condition,
         replies=sorted_replies,
         revision_instruction=body.revision_instruction,

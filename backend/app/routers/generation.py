@@ -568,6 +568,40 @@ _TAPPLE_SHARED_ACTIVITY_TERMS = (
     "展示", "美術館", "水族館", "動物園", "遊園地", "ライブ", "音楽", "旅行", "温泉",
     "散歩", "公園", "スポーツ", "サッカー", "野球", "ゲーム", "読書", "小説", "文庫", "料理",
 )
+_TAPPLE_ACTIVITY_DISINTEREST_RE = re.compile(
+    r"(?:あまり|そんなに|全然|もう|最近は|ちょっと)?"
+    r"(?:好き(?:では|じゃ)?ありません|好き(?:では|じゃ)?ない(?!わけ|こと)|"
+    r"苦手(?!ではない|じゃない)|嫌い(?!ではない|じゃない)|"
+    r"興味(?:が)?ありません|興味(?:が)?ない(?!わけ|こと)|"
+    r"行きたくありません|行きたくない(?!わけ|こと)|"
+    r"行く気がありません|行く気がない(?!わけ|こと)|"
+    r"気になりません|気にならない(?!わけ|こと))"
+)
+
+
+def _has_recent_self_disinterest_in_tapple_activity(
+    conversation_messages: list[dict[str, Any]],
+    last_contact_index: int,
+    activity_term: str,
+) -> bool:
+    latest_self_text = next(
+        (
+            prompt.clean_chat_message_content(str(message.get("content") or ""))
+            for message in reversed(conversation_messages[:last_contact_index])
+            if message.get("sender") == "self"
+            and prompt.clean_chat_message_content(str(message.get("content") or ""))
+        ),
+        "",
+    )
+    for clause in re.split(r"[。！？!?\n]", latest_self_text):
+        term_position = clause.find(activity_term)
+        if term_position < 0:
+            continue
+        if _TAPPLE_ACTIVITY_DISINTEREST_RE.search(
+            clause[term_position + len(activity_term) :]
+        ):
+            return True
+    return False
 
 
 def _has_recent_shared_tapple_activity(
@@ -639,6 +673,10 @@ def _has_recent_shared_tapple_activity(
     ]
     for term in _TAPPLE_SHARED_ACTIVITY_TERMS:
         if term not in interest_clause or not any(term in text for text in prior_contact_texts):
+            continue
+        if _has_recent_self_disinterest_in_tapple_activity(
+            conversation_messages, last_contact_index, term
+        ):
             continue
         if term in previous_contact_text and any(term in text for text in prior_self_texts):
             return True

@@ -365,10 +365,24 @@
 - 現HEAD `a343449`。この確認自体によるコード変更・commitはなし。`.env`は`.gitignore`対象
 
 ```powershell
-python scripts/check_tapple_api_connectivity.py --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
-python scripts/run_pipeline_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
-python scripts/run_contact_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
-python scripts/run_tapple_strategy_benchmark.py --out "<一時artifactのパス>" --model gemini-3.5-flash-lite --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"
+$ErrorActionPreference = 'Stop'
+$primaryKeyFile = '<gemini2.mdのパス>'
+$secondaryKeyFile = '<gemini3.mdのパス>'
+$runDir = Join-Path $env:TEMP ("aichatapp-live-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+New-Item -ItemType Directory -Path $runDir | Out-Null
+$pipelineOut = Join-Path $runDir 'pipeline.json'
+$contactOut = Join-Path $runDir 'contact.json'
+$tappleOut = Join-Path $runDir 'tapple.json'
+python scripts/check_tapple_api_connectivity.py --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
+if ($LASTEXITCODE -ne 0) { throw '疎通に失敗したため、追加のAPI呼び出しを止めます。' }
+python scripts/run_pipeline_benchmark.py --out $pipelineOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
+if ($LASTEXITCODE -ne 0) { throw "70ケース評価が未完了です。artifact: $pipelineOut" }
+if ((Read-Host 'pipeline.jsonがcompleteで全6指標の基準を満たす場合はPASS') -cne 'PASS') { throw '品質基準を確認できないためContact Benchを止めます。' }
+python scripts/run_contact_benchmark.py --out $contactOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
+if ($LASTEXITCODE -ne 0) { throw "Contact Benchの生成が未完了です。artifact: $contactOut" }
+if ((Read-Host 'contact.jsonの実生成を確認し、Contact Bench 3/3ならPASS') -cne 'PASS') { throw 'Contact Benchが3/3でないためTapple評価を止めます。' }
+python scripts/run_tapple_strategy_benchmark.py --out $tappleOut --model gemini-3.5-flash-lite --env-file $primaryKeyFile --secondary-env-file $secondaryKeyFile
+if ($LASTEXITCODE -ne 0) { throw 'Tapple評価が未完了です。artifactを確認してください。' }
 ```
 
 ## Gemini主キーのファイル読込

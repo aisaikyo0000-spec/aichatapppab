@@ -1960,3 +1960,5 @@ Step 18-R4 Iteration 1 ReviewerのGold優先FAILを現在のHEADで独立再監�
 新設`benchmark_response.py`の判定テストで、quota失敗・別のprovider error・最終ケース失敗・途中終了・全件成功を確認した。関連focused testsは**12 passed**、全backend suiteは**517 passed / 2 warnings**。frontend buildと4つのCLI `--help`も**PASS**。独立Python Reviewer **PASS**。APIは呼んでいない。RED commitは`e38fe63`、GREEN commitは`8f0e78d`。
 
 Geminiの実行設定として、Git管理外の`.env`から主・予備のキー参照ファイルを読み込めることも確認した。現在の作業環境では両ファイルを別アカウントとして解決し、モデル設定は3.5 primary／3.1 fallbackとなっている。`test_api_key_file.py`と`test_model_fallback.py`は**25 passed / 2 warnings**。キー本体は出力・複製していない。APIへの実リクエストは行っていないため、実quota時の切替が動作したという意味ではない。
+
+API評価の再開手順には各段階の終了コード判定を追加した。疎通で利用可能モデルが見つからない場合や生成が未完了の場合は、その後のベンチを起動しない。70ケースの全指標とContact Benchの3/3は終了コードだけでは判定できないため、artifactを読んで合格を確認する手動ゲートも置いた。これにより全キーのquota枯渇後の再試行と、品質未確認のまま次の評価へ進むことを避ける。

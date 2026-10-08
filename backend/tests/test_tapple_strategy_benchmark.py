@@ -126,6 +126,8 @@ def test_live_benchmark_covers_meeting_hesitation_and_safety_boundaries():
 def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit():
     scenario = next(item for item in SCENARIOS if item["id"] == "declining_engagement")
     required_markers = scenario["reply_must_contain_any"]
+    closing_markers = scenario["reply_must_end_with_any"]
+    assert scenario["no_follow_up_questions"] is True
     contact_text = scenario["messages"][-1]["content"]
     result = {
         "strategy": {
@@ -134,14 +136,18 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
             "evidence": [contact_text],
             "invite_example": None,
         },
-        "replies": ["そうなんですね。無理せず、また話したくなったら話しましょう。"],
+        "replies": ["了解です。また話したくなったら、また話しましょう。"],
     }
 
     assert required_markers
+    assert closing_markers
     assert expectation_met(scenario, result)
 
-    result["replies"] = ["今日の仕事はどうでしたか？"]
-    assert not expectation_met(scenario, result)
-
-    result["replies"] = ["なんで返事が短くなったの？今度カフェに行きませんか？"]
-    assert not expectation_met(scenario, result)
+    for reply in (
+        "了解です。今日は何してました？",
+        "そうなんですね。何かあったなら教えてください、もっと話したいです。",
+        "今日は仕事が忙しかったです。また話しましょう。",
+        "なんで返事が短くなったの？今度カフェに行きませんか？",
+    ):
+        result["replies"] = [reply]
+        assert not expectation_met(scenario, result), reply

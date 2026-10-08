@@ -622,7 +622,15 @@ def _parse_tapple_strategy(
             or _TAPPLE_CONTACT_EXCHANGE_RE.search(safe_example)
         ):
             safe_example = None
-        return proposed.model_copy(update={"invite_example": safe_example})
+        safety_notice = (
+            "AIは相手の信頼性や実際の安全性を判断できません。"
+            "自分が信頼でき、安全に会えると感じる場合に限り、この案を検討してください。"
+        )
+        rationale_limit = max(0, 500 - len(safety_notice) - 1)
+        rationale = f"{proposed.rationale[:rationale_limit].rstrip()} {safety_notice}"
+        return proposed.model_copy(
+            update={"invite_example": safe_example, "rationale": rationale}
+        )
 
     # An invitation example is meaningful only when the guarded invite action passes.
     return proposed.model_copy(update={"invite_example": None})

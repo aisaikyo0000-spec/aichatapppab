@@ -99,6 +99,21 @@ SCENARIOS = (
         "reply_must_contain_any": ["タイミング", "また", "わかりました", "大丈夫", "無理", "カフェ"],
     },
     {
+        "id": "declining_engagement",
+        "messages": [
+            {"sender": "contact", "content": "映画が好きで、休日はいろいろ観ます。最近はミステリーを観て、すごく面白かったです！"},
+            {"sender": "self", "content": "ミステリーいいですね。どんな作品が好きですか？"},
+            {"sender": "contact", "content": "ミステリーとか好きです"},
+            {"sender": "self", "content": "最近気になるお店があるんです"},
+            {"sender": "contact", "content": "そうですね"},
+            {"sender": "self", "content": "駅前のカフェなんですけど"},
+            {"sender": "contact", "content": "うん"},
+        ],
+        "expected_action": "wait",
+        "allowed_actions": ["wait"],
+        "no_reinvitation": True,
+    },
+    {
         "id": "counterproposal",
         "messages": [
             {"sender": "contact", "content": "カフェ行きたいです"},

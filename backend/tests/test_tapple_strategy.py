@@ -2484,6 +2484,10 @@ def test_first_meeting_wary_interest_blocks_invite_strategy_and_reply():
         "ぜひ一緒に行きたいです。直接会うのは緊張します。",
         "ぜひ一緒に行きたいです。会うのはちょっとハードルが高いです。",
         "ぜひ一緒に行きたいです。まだ会う勇気が出ません。",
+        "ぜひ一緒に行きたいです。まだ会う勇気がないです。",
+        "会いたいけど、まだ少し緊張します。",
+        "直接会うのは勇気がいります。",
+        "初対面なので少し勇気がいります。",
         "ぜひ一緒に行きたいです。ちょっと怖いけど、昼間のカフェなら大丈夫です。",
         "会ったことがない人とは慎重に進めたいです。ぜひ一緒に行きたいです。",
         "初対面なので慎重にしたいです。ぜひ一緒に行きたいです。",
@@ -2551,29 +2555,33 @@ def test_denied_first_meeting_wary_concern_does_not_block_invite(statement):
 
 
 def test_unrelated_fear_does_not_block_invite():
-    statement = "ぜひ一緒に行きたいです。怖い映画が好きです。"
-    raw = _raw_strategy(
-        {
-            "action": "invite",
-            "rationale": "一緒に行きたいという意思があります。",
-            "evidence": ["ぜひ一緒に行きたい"],
-            "invite_example": "人の多いカフェでお茶しませんか？",
-        }
-    )
+    for statement in (
+        "ぜひ一緒に行きたいです。怖い映画が好きです。",
+        "会うのは楽しみです。怖い映画も好きです。",
+        "初対面でも怖い映画が好きです。",
+    ):
+        raw = _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "一緒に行きたいという意思があります。",
+                "evidence": ["ぜひ一緒に行きたい"],
+                "invite_example": "人の多いカフェでお茶しませんか？",
+            }
+        )
 
-    result = _parse_tapple_strategy(raw, f"相手: {statement}")
-    violations = validate_candidate_replies(
-        ["ぜひ行きましょう。駅前のカフェでお茶しませんか？"],
-        1,
-        counterpart_message=statement,
-        strategy_mode="tapple",
-        tapple_action="invite",
-    )
+        result = _parse_tapple_strategy(raw, f"相手: {statement}")
+        violations = validate_candidate_replies(
+            ["ぜひ行きましょう。駅前のカフェでお茶しませんか？"],
+            1,
+            counterpart_message=statement,
+            strategy_mode="tapple",
+            tapple_action="invite",
+        )
 
-    assert result is not None
-    assert result.action == "invite"
-    assert result.invite_example is not None
-    assert not any("誘い" in violation for violation in violations)
+        assert result is not None, statement
+        assert result.action == "invite", statement
+        assert result.invite_example is not None, statement
+        assert not any("誘い" in violation for violation in violations), statement
 
 
 def test_work_or_company_context_does_not_hide_date_safety_concern():

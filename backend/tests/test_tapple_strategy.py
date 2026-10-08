@@ -1250,6 +1250,8 @@ def test_unrelated_work_hesitation_does_not_block_invite():
     for statement in (
         "ぜひ一緒に行きたいです。仕事のことで悩んでいないとは言えません。",
         "まだ仕事のことで迷っていますが、ぜひ一緒に行きたいです。",
+        "ぜひ一緒に行きたいです。資格を取るか迷っています。",
+        "ぜひ一緒に行きたいです。転職先をどこにするか迷っています。",
     ):
         raw = _raw_strategy(
             {
@@ -1683,6 +1685,8 @@ def test_qualified_or_leading_work_hesitation_does_not_block_date_scheduling():
     for counterpart_message in (
         "ぜひ一緒に行きたいです。仕事のことで悩んでいないとは言えません。",
         "まだ仕事のことで迷っていますが、ぜひ一緒に行きたいです。",
+        "ぜひ一緒に行きたいです。資格を取るか迷っています。",
+        "ぜひ一緒に行きたいです。転職先をどこにするか迷っています。",
     ):
         violations = validate_candidate_replies(
             ["日曜はどうですか？"],

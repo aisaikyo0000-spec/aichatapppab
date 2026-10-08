@@ -354,6 +354,7 @@
 - 主3.5と主3.1がどちらも`rate_limit`のときだけ別アカウントへ切り替え、予備3.5→3.1の順で試すコード経路は回帰テスト済み。実APIキーでの疎通・切替は未確認で、API品質評価と合わせて実施する
 - Tapple調査を更新。2026年8月の公式共同調査は共有体験や会話の具体性を検討する補助資料として扱うが、自己申告・対象者限定の結果であり、遊園地デートの因果効果や固定の誘い時期を示すものではない。現行validatorの安全制約は維持
 - ベンチは各ケースを本人・相手の会話ターン付きに変更。期待動作の許可リストで曖昧な返答を評価する。RED test commit `2d0c93b`、GREEN commit `4325e9e`。最新main基点`a75ba76`からのWIPは未push
+- Step 18-R4の過去Reviewer指摘だった「少数の本人Goldを同一相手Silverが上書きする」条件を現HEADで再監査。focused test **36 passed**、Gold優先を確認し、独立Reviewer **PASS**
 
 ```powershell
 python scripts/check_tapple_api_connectivity.py --env-file "<gemini2.mdのパス>" --secondary-env-file "<gemini3.mdのパス>"

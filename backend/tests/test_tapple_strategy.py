@@ -1249,6 +1249,40 @@ def test_private_place_invitation_is_repaired_before_reply_is_returned(client, m
     assert response.json()["strategy"]["action"] == "stop"
 
 
+@pytest.mark.parametrize(
+    "counterpart_message, action",
+    [
+        ("ごめんなさい、今は会うのは難しいです。", "stop"),
+        ("会いたい気持ちはありますが、会うのはまだ少し迷っています。", "wait"),
+        ("会いたいですが、直接会うのは安全面が不安です。", "wait"),
+    ],
+)
+def test_tapple_rejects_indirect_persuasion_after_decline_or_concern(
+    counterpart_message, action
+):
+    violations = validate_candidate_replies(
+        ["わかりました。考え直してもらえるとうれしいです。"],
+        1,
+        counterpart_message=counterpart_message,
+        strategy_mode="tapple",
+        tapple_action=action,
+    )
+
+    assert any("考え直す" in violation for violation in violations)
+
+
+def test_tapple_allows_empathy_and_an_off_ramp_after_decline():
+    violations = validate_candidate_replies(
+        ["わかりました。教えてくれてありがとう。無理せず過ごしてね。"],
+        1,
+        counterpart_message="ごめんなさい、今は会うのは難しいです。",
+        strategy_mode="tapple",
+        tapple_action="stop",
+    )
+
+    assert violations == []
+
+
 def test_decline_forces_stop_even_if_model_says_invite():
     conversation = "相手: ごめんなさい、会うのはまだ考えていません"
     raw = _raw_strategy(

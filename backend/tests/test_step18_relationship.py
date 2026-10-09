@@ -108,6 +108,33 @@ def test_relationship_summary_keeps_mixed_contact_tone_mixed(client):
     assert "笑や絵文字だけでは口調適応と見なさない" in summary
 
 
+def test_relationship_summary_uses_softer_guidance_below_mixed_tone_threshold(client):
+    mostly_polite_pairs = KEIGO_PAIRS[:3] + TAME_PAIRS[:3]
+    cid = _seed_gold(client, "丁寧寄りの混合Gold", mostly_polite_pairs)
+
+    summary = style.build_relationship_summary(cid)
+
+    assert "丁寧さと砕け具合が混在" in summary
+    assert "3案の少なくとも1案に" in summary
+    assert "3案中少なくとも2案を敬語だけで終わらせず" not in summary
+
+
+def test_explicit_tone_overrides_mixed_contact_tone_guidance(client):
+    mixed_pairs = [
+        ("映画を見た", "映画いいですね！"),
+        ("カフェへ行った", "カフェいいな、ゆっくりできそう"),
+        ("新作を見つけた", "それ気になる！"),
+        ("天気いいね", "ほんとだね！"),
+        ("週末は休みです", "よかったですね、ゆっくりできそう"),
+    ]
+    cid = _seed_gold(client, "明示トーン優先", mixed_pairs)
+
+    summary = style.build_relationship_summary(cid, requested_tone="keigo")
+
+    assert "明示トーン指定（敬語）を最優先" in summary
+    assert "敬語語尾を使わない案を少なくとも1つ" not in summary
+
+
 def test_relationship_summary_uses_global_fallback_for_fewer_than_three_gold(client):
     cid = _seed_gold(client, "Cさん", TAME_PAIRS[:2])
     assert style.build_relationship_summary(cid) == ""

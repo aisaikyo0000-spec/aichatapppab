@@ -59,6 +59,37 @@ def test_generic_prompt_is_unchanged_without_tapple_opt_in():
     assert "タップル会話戦略" not in generic[1]["content"]
 
 
+def test_tapple_system_and_generation_prompts_share_one_compatible_json_contract():
+    system_prompt = prompt.build_system_prompt(
+        contact={"name": "相手"}, strategy_mode="tapple"
+    )
+    initial = prompt.build_initial_generation_messages(
+        system_prompt=system_prompt,
+        chat_history_text="相手: こんにちは",
+        strategy_mode="tapple",
+    )
+    revision = prompt.build_revision_messages(
+        system_prompt=system_prompt,
+        chat_history_text="相手: こんにちは",
+        condition="",
+        original_generated="こんにちは！",
+        revision_instruction="短く",
+        strategy_mode="tapple",
+    )
+
+    for message in (initial[0], initial[1], revision[0], revision[-1]):
+        assert '"strategy"' in message["content"]
+        assert '"replies"' in message["content"]
+        assert '出力は必ず JSON形式の {"replies": ["案1の返信文章"' not in message["content"]
+
+
+def test_generic_system_prompt_keeps_replies_only_json_contract():
+    system_prompt = prompt.build_system_prompt(contact={"name": "相手"})
+
+    assert '出力は必ず JSON形式の {"replies": ["案1の独立返信文章"' in system_prompt
+    assert '"strategy"' not in system_prompt
+
+
 def test_tapple_prompt_requests_evidence_grounded_separate_strategy():
     messages = prompt.build_initial_generation_messages(
         system_prompt="system",

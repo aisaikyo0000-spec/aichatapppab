@@ -102,6 +102,7 @@ def test_relationship_summary_keeps_mixed_contact_tone_mixed(client):
     summary = style.build_relationship_summary(cid)
 
     assert "丁寧さと砕け具合が混在" in summary
+    assert "3案中少なくとも2案" in summary
     assert "3案の少なくとも1案は敬語だけで終始させず" in summary
 
 
@@ -112,12 +113,18 @@ def test_relationship_summary_uses_global_fallback_for_fewer_than_three_gold(cli
 
 def test_relationship_summary_describes_contact_relative_message_length(client):
     _seed_gold(client, "短文のGlobal Gold", TAME_PAIRS)
-    cid = _seed_gold(client, "長めの同一相手Gold", KEIGO_PAIRS)
+    longer_pairs = [
+        (f"話題{i}", "それは本当に大変でしたね！" + "今日は無理せずゆっくり休んでくださいね" * 2)
+        for i in range(6)
+    ]
+    cid = _seed_gold(client, "長めの同一相手Gold", longer_pairs)
 
     summary = style.build_relationship_summary(cid)
 
     assert "Global Goldより相対的に長め" in summary
     assert "同一相手Goldの文量中央値" in summary
+    assert "3案のうち1案" in summary
+    assert "言い換えで水増ししない" in summary
 
 
 def test_contact_tone_fit_neutral_without_data(client):

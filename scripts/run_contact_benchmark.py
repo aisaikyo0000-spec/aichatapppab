@@ -56,6 +56,61 @@ CONTACTS = {
 }
 
 PROBE = "仕事で疲れた"
+MIN_GOLD_PAIRS_PER_CONTACT = 6
+MAX_GOLD_PAIRS_PER_CONTACT = 12
+MAX_GOLD_MESSAGE_CHARS = 2000
+MAX_GOLD_FIXTURE_BYTES = 256_000
+
+
+def contact_quality_status(*, generation_complete: bool, expected_replies: int) -> dict:
+    """Keep generation completion separate from the required human quality judgment."""
+    return {
+        "status": "manual_review_required" if generation_complete else "generation_incomplete",
+        "adaptation_pass": False,
+        "expected_replies": expected_replies,
+    }
+
+
+def load_contact_fixture(path: Path) -> dict[str, list[tuple[str, str]]]:
+    """Load an external, anonymous A/B/C gold fixture without copying it into artifacts."""
+    try:
+        fixture_size = path.stat().st_size
+    except OSError as exc:
+        raise ValueError("fixture file could not be read as JSON") from exc
+    if fixture_size > MAX_GOLD_FIXTURE_BYTES:
+        raise ValueError("fixture file exceeds 256000 bytes")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("fixture file could not be read as JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("fixture must be a JSON object")
+    raw_contacts = payload.get("contacts")
+    if not isinstance(raw_contacts, dict) or set(raw_contacts) != {"A", "B", "C"}:
+        raise ValueError("fixture contacts must use anonymous labels A, B, C")
+
+    contacts: dict[str, list[tuple[str, str]]] = {}
+    for label in ("A", "B", "C"):
+        raw_pairs = raw_contacts[label]
+        if not isinstance(raw_pairs, list) or len(raw_pairs) < MIN_GOLD_PAIRS_PER_CONTACT:
+            raise ValueError(f"contact {label} needs at least six gold pairs")
+        if len(raw_pairs) > MAX_GOLD_PAIRS_PER_CONTACT:
+            raise ValueError(f"contact {label} accepts at most 12 gold pairs")
+        pairs: list[tuple[str, str]] = []
+        for pair in raw_pairs:
+            if not isinstance(pair, dict):
+                raise ValueError(f"contact {label} pairs must be objects")
+            incoming = pair.get("incoming")
+            gold = pair.get("gold")
+            if not isinstance(incoming, str) or not incoming.strip():
+                raise ValueError(f"contact {label} has an empty incoming message")
+            if not isinstance(gold, str) or not gold.strip():
+                raise ValueError(f"contact {label} has an empty gold reply")
+            if len(incoming) > MAX_GOLD_MESSAGE_CHARS or len(gold) > MAX_GOLD_MESSAGE_CHARS:
+                raise ValueError(f"contact {label} contains a message over 2000 characters")
+            pairs.append((incoming.strip(), gold.strip()))
+        contacts[label] = pairs
+    return contacts
 
 
 def seed_and_generate(
@@ -67,7 +122,9 @@ def seed_and_generate(
     secondary_key="",
     route_state_path=None,
     active_account="primary",
+    contacts=None,
 ):
+    contact_fixtures = CONTACTS if contacts is None else contacts
     ai_config = build_gemini_benchmark_config(
         primary_key=key,
         secondary_key=secondary_key,
@@ -95,7 +152,7 @@ def seed_and_generate(
     factory.get_provider = tracking_get_provider
     generation.factory.get_provider = tracking_get_provider
     contact_ids = {}
-    for name, pairs in CONTACTS.items():
+    for name, pairs in contact_fixtures.items():
         cid = client.post("/api/contacts", json={"name": f"{name}さん", "profile": ""}).json()["id"]
         for contact_message, self_message in pairs:
             client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": contact_message})
@@ -103,7 +160,7 @@ def seed_and_generate(
         contact_ids[name] = cid
 
     out = {}
-    for name in CONTACTS:
+    for name in contact_fixtures:
         cid = contact_ids[name]
         client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": probe})
         successful_route = None
@@ -181,7 +238,21 @@ def main():
     ap.add_argument("--db", help="Optional new/empty database path; existing files are never removed")
     ap.add_argument("--delay-seconds", type=float, default=6.0)
     ap.add_argument("--probe", default=PROBE, help="Shared incoming message used for A/B/C")
+    ap.add_argument(
+        "--gold-fixture",
+        type=Path,
+        help="Optional local JSON fixture with anonymous A/B/C gold pairs; input text is not copied to the artifact",
+    )
     args = ap.parse_args()
+    contact_fixtures = CONTACTS
+    fixture_source = "synthetic_control"
+    if args.gold_fixture:
+        try:
+            contact_fixtures = load_contact_fixture(args.gold_fixture)
+        except ValueError as exc:
+            print(f"Invalid --gold-fixture: {exc}")
+            return 2
+        fixture_source = "user_gold_fixture"
     key = read_gemini_api_key(Path(args.env_file))
     if not key:
         print("GEMINI_API_KEY missing")
@@ -208,9 +279,10 @@ def main():
         secondary_key,
         args.quota_route_state,
         args.active_account,
+        contact_fixtures,
     )
     # discrimination: each reply closer to own Gold than to others?
-    gold_sig = {n: [style_sig(sm) for _, sm in pairs] for n, pairs in CONTACTS.items()}
+    gold_sig = {n: [style_sig(sm) for _, sm in pairs] for n, pairs in contact_fixtures.items()}
     report = {}
     for name, res in out.items():
         if "error" in res:
@@ -231,17 +303,26 @@ def main():
         entry["reply_avg"] = {"laugh": round(rep_laugh, 2), "len": round(rep_len, 1)}
         report[name] = entry
     report["probe"] = args.probe
-    case_results = [report[name] for name in CONTACTS if name in report]
-    run_state = benchmark_run_state(case_results, len(CONTACTS))
+    case_results = [report[name] for name in contact_fixtures if name in report]
+    run_state = benchmark_run_state(case_results, len(contact_fixtures))
     report["run_status"] = {
         **run_state,
         "completed_contacts": len(case_results),
     }
+    report["quality_review"] = contact_quality_status(
+        generation_complete=run_state["complete"],
+        expected_replies=len(contact_fixtures) * 3,
+    )
+    report["fixture_source"] = fixture_source
+    report["gold_pairs_per_contact"] = {
+        name: len(pairs) for name, pairs in contact_fixtures.items()
+    }
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"Wrote {args.out}")
+    print("Contact adaptation quality is not auto-scored; inspect every reply in the artifact.")
     print(json.dumps({n: {"own": r.get("own_gold"), "rep": r.get("reply_avg"),
                           "replies": r.get("replies")} for n, r in report.items()
-                      if n in CONTACTS and isinstance(r, dict)},
+                      if n in contact_fixtures and isinstance(r, dict)},
                      ensure_ascii=False, indent=1)[:2000])
     return 0 if run_state["complete"] else 2
 

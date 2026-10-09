@@ -8,7 +8,10 @@ TestClient + 実Gemini で /api/generate フルパス（validate→repair→scor
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
+import secrets
 import sys
 import tempfile
 import time
@@ -19,47 +22,55 @@ sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "backend" / "tests"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-_tmp = Path(tempfile.mkdtemp(prefix="pipebench_"))
+class CaseTraceCollector:
+    """Collect privacy-conscious trace metadata for one benchmark case."""
 
-from app import config  # noqa: E402
+    def __init__(self, *, include_prompt_text: bool = False) -> None:
+        self.include_prompt_text = include_prompt_text
+        self.retrieved_pairs: list[dict] = []
+        self.model_calls: list[dict] = []
+        self._pair_id_key = secrets.token_bytes(32)
 
-config.DB_PATH = _tmp / "app.db"
-config.DATA_DIR = _tmp
-config.BACKUPS_DIR = _tmp / "backups"
-config.CONTACTS_IMAGE_DIR = _tmp / "contacts"
+    def record_retrieval(self, pairs: list[dict]) -> None:
+        # Pair text is intentionally excluded: it can contain private chat data.
+        fields = ("pair_id", "score", "label", "phase", "source")
+        for pair in pairs:
+            item = {field: pair.get(field) for field in fields}
+            raw_pair_id = str(item.pop("pair_id") or "")
+            item["pair_id"] = hmac.new(
+                self._pair_id_key, raw_pair_id.encode("utf-8"), hashlib.sha256
+            ).hexdigest()[:16]
+            item["same_contact"] = bool(pair.get("is_same_contact", False))
+            self.retrieved_pairs.append(item)
 
-from app import database  # noqa: E402
+    def record_model_call(
+        self, *, model: str, messages, provider: str = "", account: str = "unknown"
+    ) -> None:
+        canonical = json.dumps(
+            messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+        )
+        call = {
+            "call_index": len(self.model_calls) + 1,
+            "provider": provider,
+            "account": account,
+            "model": model,
+            "prompt_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        }
+        if self.include_prompt_text:
+            call["messages"] = json.loads(canonical)
+        self.model_calls.append(call)
 
-database.init_db()
-
-from fastapi.testclient import TestClient  # noqa: E402
-
-from app.main import app  # noqa: E402
-from app.routers import generation  # noqa: E402
-from compare_before_after import (  # noqa: E402
-    build_case_prompt,
-    classify_ai_like,
-    detect_issues,
-    four_axis_scores,
-    summarize_issues,
-)
-from api_key_file import read_gemini_api_key  # noqa: E402
-from benchmark_config import (  # noqa: E402
-    add_active_account_argument,
-    build_gemini_benchmark_config,
-    load_gemini_benchmark_route,
-    record_gemini_benchmark_success,
-    successful_gemini_benchmark_route,
-)
-from benchmark_response import (  # noqa: E402
-    benchmark_run_state,
-    extract_api_error_code,
-    generation_response_is_valid,
-)
-from app.ai.naturalness import evaluate_candidate_naturalness  # noqa: E402
+    def to_dict(self, *, input_text: str, intent: str) -> dict:
+        return {
+            "input": {"text": input_text, "intent": intent},
+            "retrieved_pairs": list(self.retrieved_pairs),
+            "model_calls": list(self.model_calls),
+        }
 
 
 def main() -> int:
+    from benchmark_config import add_active_account_argument
+
     parser = argparse.ArgumentParser(description="本番パス live benchmark")
     parser.add_argument("--out", required=True)
     parser.add_argument("--cases", default=str(ROOT / "backend" / "tests" / "step10_benchmark_inputs.json"))
@@ -76,7 +87,59 @@ def main() -> int:
                         help="Optional run-local state shared across benchmark stages")
     parser.add_argument("--delay-seconds", type=float, default=6.0,
                         help="各ケース間の待機秒数。Geminiの短時間リクエスト上限を考慮する")
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="ケースごとに入力・検索結果の識別情報・各LLM呼び出しのプロンプトハッシュを保存する",
+    )
+    parser.add_argument(
+        "--include-prompt-text",
+        action="store_true",
+        help="完全なLLM送信messagesを結果に保存する（会話・Gold例を含む可能性あり。共有先に注意）。--traceも有効化",
+    )
     args = parser.parse_args()
+
+    # Importing this script in tests must not initialize a database or touch app state.
+    _tmp = Path(tempfile.mkdtemp(prefix="pipebench_"))
+    from app import config  # noqa: E402
+
+    config.DB_PATH = _tmp / "app.db"
+    config.DATA_DIR = _tmp
+    config.BACKUPS_DIR = _tmp / "backups"
+    config.CONTACTS_IMAGE_DIR = _tmp / "contacts"
+
+    from app import database  # noqa: E402
+
+    database.init_db()
+
+    from fastapi.testclient import TestClient  # noqa: E402
+
+    from app.main import app  # noqa: E402
+    from app.routers import generation  # noqa: E402
+    from compare_before_after import (  # noqa: E402
+        build_case_prompt,
+        classify_ai_like,
+        detect_issues,
+        four_axis_scores,
+        summarize_issues,
+    )
+    from api_key_file import read_gemini_api_key  # noqa: E402
+    from benchmark_config import (  # noqa: E402
+        build_gemini_benchmark_config,
+        load_gemini_benchmark_route,
+        record_gemini_benchmark_success,
+        successful_gemini_benchmark_route,
+    )
+    from benchmark_response import (  # noqa: E402
+        benchmark_run_state,
+        extract_api_error_code,
+        generation_response_is_valid,
+    )
+    from app.ai.naturalness import evaluate_candidate_naturalness  # noqa: E402
+
+    args.trace = args.trace or args.include_prompt_text
+    if args.include_prompt_text:
+        print("WARNING: --include-prompt-text stores full prompts, including chat and retrieved-example text.")
 
     key = read_gemini_api_key(Path(args.env_file))
     if not key:
@@ -115,6 +178,7 @@ def main() -> int:
     call_counter = {"n": 0}
     raw_capture = {"raws": []}
     successful_attempts: list[tuple[str, str]] = []
+    current_trace: dict[str, CaseTraceCollector | None] = {"collector": None}
 
     def _counting_get_provider(name, api_key):
         provider = _real_get_provider(name, api_key)
@@ -122,6 +186,18 @@ def main() -> int:
 
         def _counting_generate(**kwargs):
             call_counter["n"] += 1
+            collector = current_trace["collector"]
+            if collector is not None:
+                model = str(kwargs.get("model", ""))
+                route = successful_gemini_benchmark_route(
+                    ai_config, api_key=api_key, model=model
+                )
+                collector.record_model_call(
+                    model=model,
+                    messages=kwargs.get("messages", []),
+                    provider=str(name),
+                    account=(route or {}).get("account", "unknown"),
+                )
             out = orig_generate(**kwargs)
             raw_capture["raws"].append(out)
             successful_attempts.append((api_key, kwargs["model"]))
@@ -133,10 +209,30 @@ def main() -> int:
     _factory.get_provider = _counting_get_provider
     generation.factory.get_provider = _counting_get_provider
 
+    original_retrieve = generation.learning.retrieval.retrieve_relevant_pairs
+
+    def _tracing_retrieve(*args, **kwargs):
+        pairs = original_retrieve(*args, **kwargs)
+        collector = current_trace["collector"]
+        if collector is not None:
+            collector.record_retrieval(pairs)
+        return pairs
+
+    if args.trace:
+        generation.learning.retrieval.retrieve_relevant_pairs = _tracing_retrieve
+
     results = []
     stopped_reason = None
     for case in subset:
         entry: dict = {"id": case["id"], "contact": case["contact"]}
+        trace_collector = (
+            CaseTraceCollector(include_prompt_text=args.include_prompt_text)
+            if args.trace else None
+        )
+        current_trace["collector"] = trace_collector
+        # Failed provider calls increment the request counter but have no raw
+        # output; keep responses scoped to this case rather than slicing by calls.
+        raw_capture = {"raws": []}
         calls_before = call_counter["n"]
         successful_before = len(successful_attempts)
         try:
@@ -197,10 +293,16 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}"
         entry["llm_calls"] = call_counter["n"] - calls_before
+        if trace_collector is not None:
+            entry["trace"] = trace_collector.to_dict(
+                input_text=str(case.get("contact", "")),
+                intent=str(case.get("intent", "report")),
+            )
         if entry["llm_calls"] > 1:
             # Step 17 §4-5: repair 前（1回目 raw）と repair 後（2回目以降 raw）を記録
-            entry["repair_raws"] = raw_capture["raws"][calls_before:]
+            entry["repair_raws"] = list(raw_capture["raws"])
         results.append(entry)
+        current_trace["collector"] = None
         if entry.get("error"):
             stopped_reason = (
                 "rate_limit_exhausted"

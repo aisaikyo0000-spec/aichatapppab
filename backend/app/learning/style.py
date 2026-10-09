@@ -31,6 +31,7 @@ EMOJI_PATTERN = re.compile(
     r"\U0001F1E6-\U0001F1FF"
     r"]"
 )
+LAUGH_MARKER_PATTERN = re.compile(r"笑|(?<![A-Za-z])[wW]+(?![A-Za-z])")
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -138,7 +139,7 @@ def compute_style_metrics(texts: list[str]) -> StyleProfile:
     period_count = sum(1 for t in texts if "。" in t)
     excl_count = sum(1 for t in texts if "！" in t or "!" in t)
     q_count = sum(1 for t in texts if "？" in t or "?" in t)
-    laugh_count = sum(1 for t in texts if "笑" in t or "w" in t)
+    laugh_count = sum(1 for t in texts if LAUGH_MARKER_PATTERN.search(t))
 
     all_emojis: list[str] = []
     emoji_totals = 0
@@ -451,6 +452,17 @@ def build_relationship_summary(contact_id: int | None, requested_tone: str = "")
         formality = "丁寧"
     else:
         formality = "丁寧さと砕け具合が混在"
+    tone_balance_guidance = ""
+    if n >= 5 and prof.hybrid_ratio + prof.tame_ratio >= 0.6 and prof.hybrid_ratio >= prof.tame_ratio + 0.08:
+        tone_balance_guidance = (
+            "本人Goldでは丁寧な言い回しを軸に、自然な箇所で会話調を混ぜる傾向がある。"
+            "すべてを同じ丁寧語尾にそろえないこと。"
+        )
+    elif n >= 5 and prof.hybrid_ratio + prof.tame_ratio >= 0.6 and prof.tame_ratio >= prof.hybrid_ratio + 0.08:
+        tone_balance_guidance = (
+            "本人Goldでは砕けた会話調がやや多い。丁寧語だけを続けず、"
+            "相手との距離に合う自然な会話調も使うこと。"
+        )
     # 温度感（笑・絵文字・感嘆符の観測値から。名前による固定なし）
     warm_score = prof.laugh_ratio + min(prof.emoji_avg_count, 2.0) / 2.0 + prof.exclamation_ratio
     if warm_score >= 1.2:
@@ -470,12 +482,32 @@ def build_relationship_summary(contact_id: int | None, requested_tone: str = "")
     else:
         brevity = "Global Goldと同程度"
     length_guidance = ""
-    if n >= 6 and global_gold.sample_count >= 5 and length_delta >= 10:
-        length_guidance = (
-            "この相手にはGlobal Goldより長めに返す傾向がある。感情の共有や体験談など話題が許す場合、"
-            "3案のうち1案は共感に加えて具体的な反応を添え、短い相づちだけより少し厚みを持たせる。"
-            "質問を足して長くしたり、相手の発言を言い換えて水増ししたりしない。毎回長くする必要もない。"
+    if n >= 5 and 0.45 <= prof.laugh_ratio < 0.85:
+        target_laugh_candidates = round(prof.laugh_ratio * 3)
+        if 0 < target_laugh_candidates < 3:
+            length_guidance += (
+                f"3案なら笑い表現を{target_laugh_candidates}案程度に使い、残りには無理に足さない。"
+                "文脈に合わない案では比率より自然さを優先する。"
+            )
+    if n >= 6 and global_gold.sample_count >= 5 and length_delta >= 5:
+        if prof.char_median >= global_gold.char_median * 1.4:
+            length_guidance += (
+                "この相手はGlobal Goldよりかなり長めに返す傾向がある。候補が3案の場合は、"
+                "少なくとも2案に、相手の話題に対する反応と、それとは別の直接つながる感想・共感の2つを含める。"
+                "一文を引き延ばすより、内容が重ならない自然な二文にしてよい。"
+            )
+        else:
+            length_guidance += (
+                "この相手にはGlobal Goldより長めに返す傾向がある。話題が許す場合、"
+                "候補が3案の場合は、1案に共感に加えて具体的な反応を添え、他の候補より自然に少し厚みを持たせる。"
+            )
+        length_guidance += (
+            "相手が述べた話題に沿う感想や共感にとどめ、"
+            "確認できない行動や結果を足さず、質問で長さを作らない。相手の発言を言い換えて水増ししたりしない。"
+            "固定の文字数には合わせず、毎回長くする必要もない。"
         )
+    if length_guidance:
+        length_guidance += "候補ごとに異なる反応の焦点を選び、同じ感想の言い換えで埋めない。"
     # 質問率（観測のみ。高いから毎回質問するわけではない）
     if prof.question_ratio >= 0.5:
         q_desc = "質問多め"
@@ -489,6 +521,7 @@ def build_relationship_summary(contact_id: int | None, requested_tone: str = "")
         requested_tone
     )
     if explicit_tone_label:
+        tone_balance_guidance = ""
         tone_guidance = (
             f"今回の明示トーン指定（{explicit_tone_label}）を最優先し、"
             "相手別の混在傾向を理由に別の口調を混ぜない。"
@@ -498,11 +531,22 @@ def build_relationship_summary(contact_id: int | None, requested_tone: str = "")
             f"丁寧・混合・砕けた文体の実績比率は{int(prof.keigo_ratio * 100)}%・{int(prof.hybrid_ratio * 100)}%・{int(prof.tame_ratio * 100)}%。"
             "混在も本人らしさとして保つこと。"
         )
-        if prof.hybrid_ratio + prof.tame_ratio >= 0.6:
+        if prof.hybrid_ratio + prof.tame_ratio >= 0.6 and prof.hybrid_ratio >= prof.tame_ratio + 0.08:
+            tone_guidance += (
+                "Goldでは丁寧さを軸に会話調を混ぜる傾向がある。3案なら2案は丁寧語を中心にし、"
+                "少なくとも1案は自然な会話調を文全体に反映して敬語語尾を避ける。"
+                "笑や絵文字だけでは口調適応と見なさない。"
+            )
+        elif prof.hybrid_ratio + prof.tame_ratio >= 0.6 and prof.tame_ratio >= prof.hybrid_ratio + 0.08:
+            tone_guidance += (
+                "Goldでは砕けた会話調がやや多い。3案なら少なくとも2案に自然な会話調を使い、"
+                "丁寧語だけで終わらせない。笑や絵文字だけでは口調適応と見なさない。"
+            )
+        elif prof.hybrid_ratio + prof.tame_ratio >= 0.6:
             tone_guidance += (
                 "自然な話題では3案中少なくとも2案を敬語だけで終わらせず、"
                 "Goldにある会話調や丁寧さと砕け具合の混ざり方を文全体に反映する。"
-                "そのうち敬語語尾を使わない案を少なくとも1つ含め、笑や絵文字だけでは口調適応と見なさない。"
+                "笑や絵文字だけでは口調適応と見なさない。"
             )
         else:
             tone_guidance += (
@@ -516,6 +560,6 @@ def build_relationship_summary(contact_id: int | None, requested_tone: str = "")
         f"＜この相手への返信距離感＞{confidence}\n"
         f"- 距離感: {formality}・{warmth}（笑い{'多め' if prof.laugh_ratio >= 0.3 else '少なめ'}・{brevity}・{q_desc}）。"
         f"同一相手Goldの文量中央値は{prof.char_median}字、Global Goldは{global_gold.char_median}字。{length_guidance}"
-        f"{tone_guidance}返信の長さはこの差も参考にしつつ、現在の会話内容に合う範囲で決めること。"
+        f"{tone_guidance}{tone_balance_guidance}返信の長さはこの差も参考にしつつ、現在の会話内容に合う範囲で決めること。"
         f"本人のGold実例と現在の会話内容を優先し、質問や文量をこの傾向だけで決めないこと。"
     )

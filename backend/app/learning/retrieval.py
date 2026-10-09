@@ -63,6 +63,18 @@ def score_pair_relevance(
     topic_matches = len(q_topics & p_topics)
     topic_bonus = min(0.5, topic_matches * 0.25)
 
+    # Quality/contact/phase metadata must not make an unrelated pair eligible.
+    # Require at least a lexical content signal against the counterpart turn;
+    # metadata can then refine the ranking among content-relevant examples.
+    contact_ngrams = _extract_ngrams(pair.contact_turn.text, 2)
+    contact_jaccard = (
+        len(q_ngrams & contact_ngrams) / len(q_ngrams | contact_ngrams)
+        if q_ngrams and contact_ngrams else 0.0
+    )
+    contact_topics = _extract_topic_keywords(pair.contact_turn.text)
+    if not (q_topics & contact_topics) and contact_jaccard == 0.0:
+        return 0.0
+
     # 3. Source 品質重み
     source_weight = 1.0 if pair.label == "gold" else (0.6 if pair.label == "silver" else 0.3)
 

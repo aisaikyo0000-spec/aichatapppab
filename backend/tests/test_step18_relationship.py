@@ -14,6 +14,28 @@ from app.learning import contrast, corpus, style
 from app.routers import generation
 
 
+def _style_repair_issues(replies, profile, **context_fields):
+    context_fields.setdefault("same_contact_gold_median", None)
+    context_fields.setdefault("global_gold_median", None)
+    context = generation._ContactStyleRepairContext(
+        profile=profile, **context_fields
+    )
+    return generation._contact_style_soft_repair_issues(replies, context)
+
+
+def _style_repair_improves(
+    previous_replies, candidate_replies, profile, *, previous_issues, **context_fields
+):
+    context_fields.setdefault("same_contact_gold_median", None)
+    context_fields.setdefault("global_gold_median", None)
+    context = generation._ContactStyleRepairContext(
+        profile=profile, **context_fields
+    )
+    return generation._contact_style_repair_improves(
+        previous_replies, candidate_replies, context, previous_issues
+    )
+
+
 def _seed_gold(client, name: str, pairs: list[tuple[str, str]]) -> int:
     cid = client.post("/api/contacts", json={"name": name, "profile": ""}).json()["id"]
     for contact_msg, self_msg in pairs:
@@ -103,10 +125,37 @@ def test_relationship_summary_keeps_mixed_contact_tone_mixed(client):
     summary = style.build_relationship_summary(cid)
 
     assert "丁寧さと砕け具合が混在" in summary
-    assert "3案中少なくとも2案" in summary
-    assert "3案中少なくとも2案を敬語だけで終わらせず" in summary
-    assert "敬語語尾を使わない案を少なくとも1つ" in summary
+    assert "丁寧な言い回しを軸に" in summary
+    assert "少なくとも1案は自然な会話調" in summary
+    assert "敬語語尾を避ける" in summary
     assert "笑や絵文字だけでは口調適応と見なさない" in summary
+
+
+def test_relationship_summary_distinguishes_hybrid_and_more_casual_gold(client):
+    hybrid_pairs = [
+        ("映画見てきた", "映画いいですね！笑"),
+        ("カフェ行った", "カフェいいですね！笑"),
+        ("スイーツ食べた", "おいしそうですね！笑"),
+        ("天気いいね", "過ごしやすそうですね！笑"),
+        ("週末はゆっくりできそう", "よかったですね！ゆっくりできそう笑"),
+    ]
+    casual_pairs = [
+        ("映画見てきた", "映画いいね笑"),
+        ("カフェ行った", "カフェいいな笑"),
+        ("スイーツ食べた", "おいしそう！"),
+        ("天気いいね", "ほんとだね！"),
+        ("週末はゆっくりできそう", "いいじゃん、のんびりしよう笑"),
+    ]
+
+    hybrid_summary = style.build_relationship_summary(
+        _seed_gold(client, "丁寧さを混ぜる相手", hybrid_pairs)
+    )
+    casual_summary = style.build_relationship_summary(
+        _seed_gold(client, "会話調が多い相手", casual_pairs)
+    )
+
+    assert "丁寧な言い回しを軸に" in hybrid_summary
+    assert "砕けた会話調がやや多い" in casual_summary
 
 
 def test_relationship_summary_uses_softer_guidance_below_mixed_tone_threshold(client):
@@ -162,8 +211,37 @@ def test_relationship_summary_describes_contact_relative_message_length(client):
 
     assert "Global Goldより相対的に長め" in summary
     assert "同一相手Goldの文量中央値" in summary
-    assert "3案のうち1案" in summary
+    assert "候補が3案の場合は、少なくとも2案に" in summary
     assert "相手の発言を言い換えて水増ししたりしない" in summary
+
+
+def test_relationship_summary_adapts_candidate_level_laugh_and_length_distribution(client, monkeypatch):
+    cid = _seed_gold(
+        client,
+        "候補分布の相手",
+        [(f"入力{i}", f"いいですね！楽しかったですね！") for i in range(6)],
+    )
+    monkeypatch.setattr(
+        style,
+        "compute_hierarchical_profile",
+        lambda _cid: {
+            "same_contact_blended_gold_profile": style.StyleProfile(
+                sample_count=6, char_median=75, laugh_ratio=0.67
+            ),
+            "other_contact_gold_profile": style.StyleProfile(
+                sample_count=20, char_median=50
+            ),
+            "same_contact_gold_samples": 6,
+            "contact_adaptation_weight": 0.55,
+        },
+    )
+
+    summary = style.build_relationship_summary(cid)
+
+    assert "3案なら笑い表現を2案程度に" in summary
+    assert "かなり長め" in summary
+    assert "候補が3案の場合は、少なくとも2案に" in summary
+    assert "候補ごとに異なる反応の焦点" in summary
 
 
 def test_contact_tone_fit_neutral_without_data(client):
@@ -246,10 +324,24 @@ def test_initial_generation_repeats_same_contact_guidance_after_generic_short_re
     )
 
     user_instruction = messages[1]["content"]
+    assert "会話にない相手の行動" in user_instruction
+    assert "本人の好み・経験" in user_instruction
     assert "この相手に対する本人Goldの口調・文量を優先" in user_instruction
+    assert "短文の一般方針だけで全案を短くしない" in user_instruction
+    assert "1案だけを他の候補より自然に少し厚く" in user_instruction
+    assert "固定文字数には合わせず" in user_instruction
     assert user_instruction.index(relationship_summary) > user_instruction.index(
         "相手の発言が短い場合は短い返信"
     )
+
+    long_relationship_summary = "この相手はGlobal Goldよりかなり長めに返す傾向がある。"
+    long_messages = prompt.build_initial_generation_messages(
+        system_prompt="contact style is available in system prompt",
+        contact_style_instruction=long_relationship_summary,
+    )
+    long_user_instruction = long_messages[1]["content"]
+    assert "3案中少なくとも2案" in long_user_instruction
+    assert "1案だけを他の2案より" not in long_user_instruction
 
 
 def test_contact_style_soft_repair_detects_large_gold_mismatch_but_honors_explicit_tone():
@@ -266,14 +358,14 @@ def test_contact_style_soft_repair_detects_large_gold_mismatch_but_honors_explic
         "お仕事大変でしたね！週末はゆっくり過ごしてくださいね！",
     ]
 
-    issues = generation._contact_style_soft_repair_issues(
+    issues = _style_repair_issues(
         overly_similar_polite_replies,
         mixed_contact,
         same_contact_gold_median=70,
         global_gold_median=45,
         explicit_tone="",
     )
-    explicit_tone_issues = generation._contact_style_soft_repair_issues(
+    explicit_tone_issues = _style_repair_issues(
         overly_similar_polite_replies,
         mixed_contact,
         same_contact_gold_median=70,
@@ -283,7 +375,657 @@ def test_contact_style_soft_repair_detects_large_gold_mismatch_but_honors_explic
 
     assert any("Goldでは会話調の返信" in issue for issue in issues)
     assert any("少し厚み" in issue for issue in issues)
+    length_issue = next(issue for issue in issues if "少し厚み" in issue)
+    assert "会話で確認できる事実" in length_issue
+    assert "確認できない具体的な行動を補わない" in length_issue
     assert explicit_tone_issues == []
+
+
+def test_contact_style_soft_repair_ignores_casual_final_clause_and_sensitive_topics():
+    mixed_contact = style.StyleProfile(
+        sample_count=8,
+        char_median=70,
+        keigo_ratio=0.2,
+        hybrid_ratio=0.4,
+        tame_ratio=0.4,
+    )
+    mixed_replies = [
+        "今週ずっとお仕事だったんですね！ゆっくり休んでね！",
+        "お仕事お疲れ様です！無理しないでね！",
+        "ゆっくり休んでね！本当にお疲れ様です！",
+    ]
+
+    mixed_issues = _style_repair_issues(
+        mixed_replies,
+        mixed_contact,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+    sensitive_issues = _style_repair_issues(
+        ["大変でしたね。無理しないでくださいね！"] * 3,
+        mixed_contact,
+        same_contact_gold_median=70,
+        global_gold_median=45,
+        counterpart_message="家族が入院していて不安です",
+    )
+    recent_history_issues = _style_repair_issues(
+        ["大変でしたね。無理しないでくださいね！"] * 3,
+        mixed_contact,
+        same_contact_gold_median=70,
+        global_gold_median=45,
+        counterpart_message="今日はありがとう！",
+        conversation_context="相手: 家族が入院していて不安です\n自分: それは心配だね",
+    )
+
+    assert not any("Goldでは会話調の返信" in issue for issue in mixed_issues)
+    assert sensitive_issues == []
+    assert recent_history_issues == []
+
+
+def test_contact_style_soft_repair_requires_two_conversational_options_for_mixed_gold():
+    mixed_contact = style.StyleProfile(
+        sample_count=8,
+        keigo_ratio=0.2,
+        hybrid_ratio=0.4,
+        tame_ratio=0.4,
+    )
+    conversational = "カフェいいですね！落ち着くよね！"
+    polite_only = "お仕事お疲れ様です！ゆっくり休んでくださいね！"
+
+    two_conversational = _style_repair_issues(
+        [conversational, conversational, polite_only],
+        mixed_contact,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+    one_conversational = _style_repair_issues(
+        [conversational, polite_only, polite_only],
+        mixed_contact,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+
+    assert not any("Goldでは会話調の返信" in issue for issue in two_conversational)
+    assert any("Goldでは会話調の返信" in issue for issue in one_conversational)
+
+
+def test_contact_style_register_repair_count_tracks_hybrid_vs_casual_gold():
+    hybrid_dominant = style.StyleProfile(
+        sample_count=8, keigo_ratio=0.17, hybrid_ratio=0.51, tame_ratio=0.32
+    )
+    casual_dominant = style.StyleProfile(
+        sample_count=8, keigo_ratio=0.19, hybrid_ratio=0.36, tame_ratio=0.46
+    )
+    conversational = "それいいね！"
+    polite_only = "お仕事お疲れ様です！ゆっくり休んでくださいね！"
+
+    hybrid_issues = _style_repair_issues(
+        [conversational, polite_only, polite_only],
+        hybrid_dominant,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+    casual_issues = _style_repair_issues(
+        [conversational, polite_only, polite_only],
+        casual_dominant,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+
+    assert not any("Goldでは会話調の返信" in issue for issue in hybrid_issues)
+    assert any("Goldでは会話調の返信" in issue for issue in casual_issues)
+
+
+@pytest.mark.parametrize("repair_result", ["failure", "http_error", "question"])
+def test_contact_style_soft_repair_preserves_hard_valid_replies_after_optional_repair_fails(
+    client, monkeypatch, repair_result
+):
+    """A style-only repair must not turn already-valid replies into a failed request."""
+    cid = _seed_gold(client, "Soft repair fallback", TAME_PAIRS[:5])
+    # The style mismatch itself is covered by the unit test above. This patch focuses
+    # on the retry state machine: a later clean-generation call can exhaust retries.
+    class FailingAfterFirstProvider:
+        name = "fake"
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return '{"replies":["今日は疲れたね！","本当におつかれさま！","ゆっくり休んでね！"]}'
+            if self.calls == 2 and repair_result == "question":
+                return "[AI_QUESTION]どの話題への返信ですか？[/AI_QUESTION]"
+            if repair_result == "http_error":
+                raise generation.HTTPException(status_code=429, detail="rate limited")
+            raise RuntimeError("optional repair unavailable")
+
+        def available_models(self):
+            return []
+
+    monkeypatch.setattr(
+        "app.routers.generation.factory.get_provider",
+        lambda *args, **kwargs: FailingAfterFirstProvider(),
+    )
+    monkeypatch.setattr(
+        generation,
+        "get_ai_config",
+        lambda: {
+            "provider": "fake",
+            "model": "fake-model",
+            "api_key": "x",
+            "temperature": 0.8,
+            "max_tokens": 512,
+            "history_limit": 50,
+        },
+    )
+    monkeypatch.setattr(
+        generation,
+        "_contact_style_soft_repair_issues",
+        lambda *_args, **_kwargs: ["soft style preference"],
+    )
+
+    response = client.post(
+        "/api/generate",
+        json={"contact_id": cid, "condition": "", "candidates": 3},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["replies"] == [
+        "今日は疲れたね！",
+        "本当におつかれさま！",
+        "ゆっくり休んでね！",
+    ]
+
+
+def test_contact_style_soft_repair_rechecks_and_retries_remaining_style_mismatch(
+    client, monkeypatch
+):
+    cid = _seed_gold(client, "Style retry", TAME_PAIRS)
+
+    class ThreeStageProvider:
+        name = "fake"
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return '{"replies":["駅前のカフェいいな！","パンケーキ美味しそう！","ゆっくりできてよかったね！"]}'
+            if self.calls == 2:
+                return '{"replies":["パンケーキいいな！","カフェ楽しそう！","ゆっくりできてよかったね！"]}'
+            return '{"replies":["パンケーキいいな笑","カフェでゆっくりできて最高だね笑","季節限定のパンケーキ気になる！"]}'
+
+        def available_models(self):
+            return []
+
+    provider = ThreeStageProvider()
+    monkeypatch.setattr(
+        "app.routers.generation.factory.get_provider",
+        lambda *args, **kwargs: provider,
+    )
+    monkeypatch.setattr(
+        generation,
+        "get_ai_config",
+        lambda: {
+            "provider": "fake",
+            "model": "fake-model",
+            "api_key": "x",
+            "temperature": 0.8,
+            "max_tokens": 512,
+            "history_limit": 50,
+        },
+    )
+    style_checks = 0
+
+    def fake_style_check(replies, *_args, **_kwargs):
+        nonlocal style_checks
+        style_checks += 1
+        return ["同一相手Goldの笑い傾向と候補群の差"] if style_checks < 3 else []
+
+    monkeypatch.setattr(generation, "_contact_style_soft_repair_issues", fake_style_check)
+
+    response = client.post(
+        "/api/generate",
+        json={"contact_id": cid, "condition": "", "candidates": 3},
+    )
+
+    assert response.status_code == 200
+    assert provider.calls == 3
+    assert set(response.json()["replies"]) == {
+        "パンケーキいいな笑",
+        "カフェでゆっくりできて最高だね笑",
+        "季節限定のパンケーキ気になる！",
+    }
+
+
+def test_contact_style_soft_repair_uses_true_median_for_even_candidate_count():
+    mixed_contact = style.StyleProfile(
+        sample_count=8,
+        char_median=80,
+        keigo_ratio=0.2,
+        hybrid_ratio=0.4,
+        tame_ratio=0.4,
+    )
+
+    issues = _style_repair_issues(
+        ["短い返信です", "これは少し長めの返信ですが基準より短いです"],
+        mixed_contact,
+        same_contact_gold_median=80,
+        global_gold_median=50,
+    )
+
+    assert any("少し厚み" in issue for issue in issues)
+
+
+def test_contact_style_soft_repair_uses_small_reliable_length_delta_without_fixed_chars():
+    profile = style.StyleProfile(sample_count=8, char_median=60)
+
+    issues = _style_repair_issues(
+        ["いいですね！", "そうなんですね！", "素敵ですね！"],
+        profile,
+        same_contact_gold_median=60,
+        global_gold_median=55,
+    )
+
+    length_issue = next(issue for issue in issues if "少し厚み" in issue)
+    assert "少なくとも2案で" in length_issue
+    assert "固定の文字数" in length_issue
+
+
+def test_contact_style_soft_repair_catches_moderately_short_replies_against_gold():
+    profile = style.StyleProfile(sample_count=8, char_median=60)
+
+    issues = _style_repair_issues(
+        [
+            "今日はのんびり過ごせそうですね！おいしいものも楽しめたならよかったです！",
+            "落ち着いたカフェでゆっくりできて、いい時間を過ごせたみたいでよかったです！",
+            "季節限定のパンケーキも雰囲気のいいカフェも、楽しめたようでなによりです！",
+        ],
+        profile,
+        same_contact_gold_median=60,
+        global_gold_median=50,
+    )
+
+    assert any("Goldより今回の返信候補が短め" in issue for issue in issues)
+    assert any("少なくとも2案で" in issue for issue in issues)
+
+
+def test_contact_style_soft_repair_preserves_gold_polite_register_in_mixed_profile():
+    profile = style.StyleProfile(
+        sample_count=6, keigo_ratio=0.17, hybrid_ratio=0.51, tame_ratio=0.32
+    )
+
+    issues = _style_repair_issues(
+        ["いいなー！最高だよね", "それ楽しそう！いいね", "行ってみたいなぁ"],
+        profile,
+        same_contact_gold_median=75,
+        global_gold_median=50,
+    )
+
+    assert any("丁寧な口調も一定数" in issue for issue in issues)
+
+
+def test_contact_style_soft_repair_matches_contact_laugh_frequency_without_overdoing_it():
+    assert style.compute_style_metrics(["weekend", "wonderful", "work"]).laugh_ratio == 0
+    assert style.compute_style_metrics(["いいねw", "最高WWW", "楽しい笑"]).laugh_ratio == 1
+
+    frequent_laughs = style.StyleProfile(sample_count=8, laugh_ratio=0.68)
+    no_laugh_replies = _style_repair_issues(
+        ["パンケーキ美味しそう！", "ゆっくりできてよかったね！", "いい時間だったね！"],
+        frequent_laughs,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+    assert any("『笑』や『w』" in issue and "3案中2案程度" in issue for issue in no_laugh_replies)
+
+    moderate_laughs = style.StyleProfile(sample_count=8, laugh_ratio=0.66)
+    all_laugh_replies = _style_repair_issues(
+        ["いいですね笑", "楽しそうですね笑", "よかったですね笑"],
+        moderate_laughs,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+    assert any("候補すべてにあります" in issue and "3案中2案程度" in issue for issue in all_laugh_replies)
+
+    no_laugh_gold = style.StyleProfile(sample_count=8, laugh_ratio=0.0)
+    emoji_only_replies = _style_repair_issues(
+        ["いいですね😊", "すてきですね✨", "よかったです💕"],
+        no_laugh_gold,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+    assert not any("『笑』や『w』" in issue for issue in emoji_only_replies)
+
+    emoji_instead_of_laugh = _style_repair_issues(
+        ["いいですね😊", "すてきですね✨", "よかったです💕"],
+        moderate_laughs,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+    assert any("『笑』や『w』を含む返信" in issue for issue in emoji_instead_of_laugh)
+
+    no_laughs = _style_repair_issues(
+        ["weekend cafe sounds nice", "wonderful atmosphere", "work sounds busy"],
+        no_laugh_gold,
+        same_contact_gold_median=None,
+        global_gold_median=None,
+    )
+    assert not any("『笑』や『w』" in issue for issue in no_laughs)
+
+
+def test_contact_length_repair_strength_tracks_relative_gold_gap():
+    profile = style.StyleProfile(sample_count=8, laugh_ratio=0.5)
+    short_replies = ["いいですね！", "よかったですね！", "楽しそうですね！"]
+
+    strongly_long_contact = _style_repair_issues(
+        short_replies,
+        profile,
+        same_contact_gold_median=75,
+        global_gold_median=50,
+    )
+    moderately_long_contact = _style_repair_issues(
+        ["x" * 42, "y" * 42, "z" * 42],
+        profile,
+        same_contact_gold_median=64,
+        global_gold_median=50,
+    )
+
+    strong_length_issue = next(issue for issue in strongly_long_contact if "Goldより今回の返信候補が短め" in issue)
+    moderate_length_issue = next(issue for issue in moderately_long_contact if "Goldより今回の返信候補が短め" in issue)
+    assert "候補群と相手別Goldの文量差が大きく" in strong_length_issue
+    assert "少なくとも2案" in strong_length_issue
+    assert "話題への反応と、それに直接つながる別の感想・共感" in strong_length_issue
+    assert "相手別Goldに近い文量" in moderate_length_issue
+
+
+def test_contact_style_retry_requires_issue_category_to_improve_not_only_count():
+    initial = generation._contact_style_issue_categories(
+        [
+            "同一相手Goldの笑い傾向と候補群の差",
+            "同一相手Goldより今回の返信候補が短めです。",
+        ]
+    )
+    resolved_laugh_but_same_count = generation._contact_style_issue_categories(
+        [
+            "同一相手Goldより今回の返信候補が短めです。",
+            "同一相手Goldでは会話調の返信も十分に使われています。",
+        ]
+    )
+    fewer_issues = generation._contact_style_issue_categories(
+        ["同一相手Goldより今回の返信候補が短めです。"]
+    )
+
+    assert not resolved_laugh_but_same_count < initial
+    assert fewer_issues < initial
+
+
+def test_contact_style_followup_accepts_partial_metric_improvement_without_tradeoff():
+    profile = style.StyleProfile(sample_count=8, laugh_ratio=0.67)
+    previous = ["パンケーキいいですね！", "雰囲気いいですね！", "楽しそうですね！"]
+    improved = [
+        "パンケーキ美味しそうですね！季節限定って特別感があっていいですね笑",
+        "落ち着いた雰囲気のお店って、友達とゆっくり過ごすのによさそうですね笑",
+        "久しぶりにゆっくりできてよかったですね！",
+    ]
+    issues = _style_repair_issues(
+        previous,
+        profile,
+        same_contact_gold_median=75,
+        global_gold_median=50,
+    )
+
+    assert _style_repair_improves(
+        previous,
+        improved,
+        profile,
+        same_contact_gold_median=75,
+        global_gold_median=50,
+        previous_issues=issues,
+    )
+
+
+def test_contact_style_followup_rejects_a_new_style_regression():
+    profile = style.StyleProfile(
+        sample_count=8,
+        laugh_ratio=0.67,
+        keigo_ratio=0.2,
+    )
+    previous = ["パンケーキいいですね！", "雰囲気いいですね！", "楽しそうですね！"]
+    regressed = [
+        "パンケーキ美味しそうだね！季節限定って特別感あっていいね笑",
+        "落ち着いた雰囲気のお店って、友達とゆっくり過ごすのによさそうだね笑",
+        "久しぶりにゆっくりできてよかったね！",
+    ]
+    issues = _style_repair_issues(
+        previous,
+        profile,
+        same_contact_gold_median=75,
+        global_gold_median=50,
+    )
+
+    assert not _style_repair_improves(
+        previous,
+        regressed,
+        profile,
+        same_contact_gold_median=75,
+        global_gold_median=50,
+        previous_issues=issues,
+    )
+
+
+@pytest.mark.parametrize("candidate_length", [120, 1600])
+def test_contact_style_followup_rejects_extreme_overlength_as_improvement(candidate_length):
+    profile = style.StyleProfile(sample_count=8, laugh_ratio=0.67)
+    previous = ["パンケーキいいですね！", "雰囲気いいですね！", "楽しそうですね！"]
+    extreme = ["x" * candidate_length] * 3
+    issues = _style_repair_issues(
+        previous,
+        profile,
+        same_contact_gold_median=75,
+        global_gold_median=50,
+    )
+
+    assert not _style_repair_improves(
+        previous,
+        extreme,
+        profile,
+        same_contact_gold_median=75,
+        global_gold_median=50,
+        previous_issues=issues,
+    )
+
+
+def test_contact_style_soft_repair_detects_counterpart_summary_echo():
+    incoming = (
+        "この前、友達と駅前のカフェに行って、季節限定のパンケーキを食べたよ！"
+        "雰囲気も落ち着いてて、久しぶりにゆっくりできた笑"
+    )
+    issues = _style_repair_issues(
+        [
+            "駅前のカフェなんだね！パンケーキ食べてゆっくり過ごせたんだね",
+            "パンケーキ美味しそう！",
+            "季節限定っていいね！",
+        ],
+        style.StyleProfile(sample_count=8),
+        same_contact_gold_median=None,
+        global_gold_median=None,
+        counterpart_message=incoming,
+    )
+
+    assert any("相手の発言を要約・言い換え" in issue for issue in issues)
+
+    repair = generation._build_repair_messages(
+        [{"role": "user", "content": incoming}],
+        '{"replies":["駅前のカフェなんだね！","パンケーキ美味しそう！","季節限定っていいね！"]}',
+        ["候補に相手の発言を要約・言い換えただけの部分があります。"],
+        3,
+    )
+    assert "相手別スタイル修正" in repair[-1]["content"]
+    assert "相手の発言を要約・言い換えただけにせず" in repair[-1]["content"]
+
+
+def test_contact_style_repair_prompt_prioritizes_contact_mismatch_without_weak_generic_preservation():
+    messages = generation._build_repair_messages(
+        [{"role": "user", "content": "カフェに行ってきた"}],
+        '{"replies":["カフェ行ってたんですね！","カフェいいですね！","カフェいいですね！"]}',
+        [
+            "同一相手Goldでは会話調の返信も十分に使われています。候補のうち会話調の文全体を含む案が不足しています。",
+            "同一相手Goldより今回の返信候補が短めです。この相手はGlobal Goldよりかなり長めの傾向です。",
+        ],
+        3,
+    )
+    repair_prompt = messages[-1]["content"]
+
+    assert "相手別スタイル修正" in repair_prompt
+    assert "少なくとも2案" in repair_prompt
+    assert "異なる2つの反応" in repair_prompt
+    assert "異なる2つの反応" in repair_prompt
+    assert "質問や説明を追加して長さを作らず" in repair_prompt
+    assert "会話にない行動や結果を推測しない" in repair_prompt
+    assert "違う自然な反応の焦点" in repair_prompt
+    assert "問題ない部分はそのまま残し" not in repair_prompt
+
+    length_only_messages = generation._build_repair_messages(
+        [{"role": "user", "content": "仕事で疲れた"}],
+        '{"replies":["おつかれさまです","ゆっくりしてくださいね","大変でしたね"]}',
+        ["同一相手Goldより今回の返信候補が短めです。"],
+        3,
+    )
+    assert "会話調が不足している場合" not in length_only_messages[-1]["content"]
+    assert "違う自然な反応の焦点" in length_only_messages[-1]["content"]
+
+    laugh_only_messages = generation._build_repair_messages(
+        [{"role": "user", "content": "カフェ楽しかった"}],
+        '{"replies":["カフェよかったですね笑","楽しそうですね笑","いいですね笑"]}',
+        ["同一相手Goldでは『笑』や『w』を含む返信も自然に使われています。"],
+        3,
+    )
+    laugh_only_prompt = laugh_only_messages[-1]["content"]
+    assert "会話調が不足している場合" not in laugh_only_prompt
+    assert "少し厚く" not in laugh_only_prompt
+    assert "違う自然な反応の焦点" not in laugh_only_prompt
+    assert "口調・文量のずれ" not in laugh_only_prompt
+    assert "質問を追加して長さを作らない" not in laugh_only_prompt
+
+    two_candidate_messages = generation._build_repair_messages(
+        [{"role": "user", "content": "カフェに行ってきた"}],
+        '{"replies":["いいですね","よかったですね"]}',
+        ["JSON形式が不正です"],
+        2,
+    )
+    assert '"replies": ["案1", "案2"]' in two_candidate_messages[-1]["content"]
+    assert '"案1", "案2", "案3"' not in two_candidate_messages[-1]["content"]
+
+    two_candidate_style_messages = generation._build_repair_messages(
+        [{"role": "user", "content": "カフェに行ってきた"}],
+        '{"replies":["いいですね","よかったですね"]}',
+        ["同一相手Goldより今回の返信候補が短めです。"],
+        2,
+    )
+    assert "1案だけを他の候補より少し厚く" in two_candidate_style_messages[-1]["content"]
+    assert "他の2案" not in two_candidate_style_messages[-1]["content"]
+
+    single_candidate_style_messages = generation._build_repair_messages(
+        [{"role": "user", "content": "カフェに行ってきた"}],
+        '{"replies":["いいですね"]}',
+        ["同一相手Goldより今回の返信候補が短めです。"],
+        1,
+    )
+    assert "今回の1案に" in single_candidate_style_messages[-1]["content"]
+    assert "他の候補" not in single_candidate_style_messages[-1]["content"]
+
+
+def test_contact_style_repair_prompt_uses_profile_specific_register_target():
+    base_messages = [{"role": "user", "content": "今週は忙しかった"}]
+    raw_output = '{"replies":["お疲れさまです","大変でしたね","ゆっくりしてください"]}'
+    issues = ["同一相手Goldでは会話調の返信も十分に使われています。"]
+
+    hybrid_prompt = generation._build_repair_messages(
+        base_messages,
+        raw_output,
+        issues,
+        3,
+        minimum_conversational_replies=1,
+    )[-1]["content"]
+    casual_prompt = generation._build_repair_messages(
+        base_messages,
+        raw_output,
+        issues,
+        3,
+        minimum_conversational_replies=2,
+    )[-1]["content"]
+
+    assert "少なくとも1案" in hybrid_prompt
+    assert "少なくとも2案" in casual_prompt
+
+
+def test_generation_prompt_varies_reaction_focus_without_forcing_questions(client):
+    cid = _seed_gold(client, "反応の幅", TAME_PAIRS[:5])
+
+    ctx = generation._build_context(cid, "", "", "normal")
+    system_prompt = ctx["system_prompt"]
+
+    assert "反応の焦点を変える" in system_prompt
+    assert "同じ助言や締め方" in system_prompt
+    assert "労いや共感だけで自然に成立する案" in system_prompt
+    assert "質問を足さず" in system_prompt
+
+
+def test_contact_style_soft_repair_and_ranking_use_recency_blended_gold(monkeypatch):
+    style_profiles = {
+        "same_contact_all_gold_profile": style.StyleProfile(
+            sample_count=8,
+            char_median=120,
+            keigo_ratio=0.8,
+            hybrid_ratio=0.1,
+            tame_ratio=0.1,
+        ),
+        "same_contact_blended_gold_profile": style.StyleProfile(
+            sample_count=8,
+            char_median=40,
+            keigo_ratio=0.1,
+            hybrid_ratio=0.4,
+            tame_ratio=0.5,
+        ),
+        "other_contact_gold_profile": style.StyleProfile(
+            sample_count=12, char_median=50
+        ),
+        "same_contact_gold_samples": 8,
+    }
+
+    profile = generation._contact_style_blended_profile(style_profiles)
+    same_contact_median, global_median = (
+        generation._contact_style_length_medians(style_profiles)
+    )
+
+    assert profile is style_profiles["same_contact_blended_gold_profile"]
+    assert same_contact_median == 40
+    assert global_median == 50
+    issues = _style_repair_issues(
+        ["本当にお疲れ様です！"] * 3,
+        profile,
+        same_contact_gold_median=same_contact_median,
+        global_gold_median=global_median,
+    )
+    assert any("Goldでは会話調の返信" in issue for issue in issues)
+    assert any("同一相手Goldより今回の返信候補が短め" in issue for issue in issues)
+
+    received_profiles = []
+
+    def fake_contact_length_fit(_reply, _contact_id, *, profile):
+        received_profiles.append(profile)
+        return 0.7
+
+    monkeypatch.setattr(
+        generation.learning.contrast,
+        "contact_length_fit",
+        fake_contact_length_fit,
+    )
+    scored = [{"reply": "返信文", "final": 0.5}]
+    generation._apply_contact_length_nudge(scored, profile, contact_id=1)
+    assert received_profiles == [profile]
 
 
 def test_single_contact_gold_does_not_replace_global_gold_style(client):
@@ -602,9 +1344,11 @@ def test_relationship_summary_preserves_reliably_longer_contact_style(client):
 
     summary = style.build_relationship_summary(cid)
 
-    assert "Global Goldより長めに返す傾向がある" in summary
-    assert "話題が許す場合" in summary
-    assert "共感に加えて具体的な反応を添え" in summary
+    assert "Global Goldよりかなり長めに返す傾向がある" in summary
+    assert "候補が3案の場合は、少なくとも2案に" in summary
+    assert "異なる反応の焦点" in summary
+    assert "確認できない行動や結果を足さず" in summary
+    assert "質問で長さを作らない" in summary
     assert "毎回長くする必要もない" in summary
 
 

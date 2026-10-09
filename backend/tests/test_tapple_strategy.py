@@ -76,6 +76,42 @@ def test_tapple_prompt_requests_evidence_grounded_separate_strategy():
     assert "具体的な共通の活動や場所への関心" in messages[1]["content"]
 
 
+def test_tapple_prompt_treats_reciprocal_near_term_activity_interest_as_invite_ready():
+    messages = prompt.build_initial_generation_messages(
+        system_prompt="system",
+        chat_history_text=(
+            "相手: 駅前のパンケーキのお店が気になっています\n"
+            "自分: 僕もパンケーキが好きです\n"
+            "相手: 近いうちに行ってみたいです"
+        ),
+        candidates=1,
+        strategy_mode="tapple",
+    )
+
+    instruction = messages[1]["content"]
+    assert "近いうちに行ってみたい" in instruction
+    assert "共通の活動への関心と会話の相互性" in instruction
+    assert "inviteを基本方針として選んでください" in instruction
+    assert "明示的に一緒に行きたいと言われるまで待つ必要はありません" in instruction
+    assert "短い相づちだけの場合は誘いません" in instruction
+
+
+def test_tapple_prompt_keeps_reply_grounded_when_invite_is_recommended():
+    messages = prompt.build_initial_generation_messages(
+        system_prompt="system",
+        chat_history_text=(
+            "相手: 駅前のカフェに行ってみたいです\n"
+            "自分: 僕もカフェが気になっています"
+        ),
+        candidates=1,
+        strategy_mode="tapple",
+    )
+
+    instruction = messages[1]["content"]
+    assert "会話にない自分の体験・予定・意向を事実として足さない" in instruction
+    assert "自分が見ていない写真を見た前提にしない" in instruction
+
+
 def test_tapple_prompts_require_a_safe_example_for_invite():
     initial = prompt.build_initial_generation_messages(
         system_prompt="system",
@@ -87,6 +123,7 @@ def test_tapple_prompts_require_a_safe_example_for_invite():
 
     assert "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め" in initial_text
     assert "具体的な店名や日時を会話にないのに作らない" in initial_text
+    assert "invite_exampleの文面にも駅前やカフェなど公共の場所だと分かる表現" in initial_text
     assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' in initial_text
 
     repair = _build_repair_messages(
@@ -106,6 +143,9 @@ def test_tapple_prompts_require_a_safe_example_for_invite():
     )
     repair_text = repair[-1]["content"]
     assert "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め" in repair_text
+    assert "invite_exampleの文面にも駅前やカフェなど公共の場所だと分かる表現" in repair_text
+    assert "会話にない自分の体験・予定・意向を事実として足さない" in repair_text
+    assert "inviteを基本方針として選んでください" in repair_text
     assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' in repair_text
 
 
@@ -125,6 +165,72 @@ def test_ambiguous_interest_alone_does_not_authorize_an_invitation():
     assert result is not None
     assert result.action == "wait"
     assert result.invite_example is None
+
+
+def test_wait_rationale_acknowledges_activity_interest_without_mutual_invitation():
+    latest = "駅前のパンケーキのお店、近いうちに行ってみたいです"
+    raw = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "会う提案につながる具体的な関心が確認できないため、今は誘いません。",
+            "evidence": [latest],
+            "invite_example": "よかったら駅前のパンケーキのお店でお茶しませんか？",
+        }
+    )
+
+    result = _parse_tapple_strategy(
+        raw,
+        "相手: カフェ巡りが好きです。パンケーキもよく食べます\n"
+        "自分: 僕もカフェ好きです。パンケーキもよく食べます\n"
+        "相手: そうなんですね\n"
+        "自分: 駅前のパンケーキのお店も気になってます\n"
+        f"相手: {latest}",
+    )
+
+    assert result is not None
+    assert result.action == "wait"
+    assert "活動への関心は見られます" in result.rationale
+    assert "会う意思や一緒に行く提案はまだ確認でき" in result.rationale
+    assert "具体的な関心が確認できない" not in result.rationale
+
+
+def test_wait_rationale_preserves_explicit_safety_concern():
+    latest = "カフェには行ってみたいですが、会うのは少し怖いです"
+    raw = _raw_strategy(
+        {
+            "action": "wait",
+            "rationale": "具体的な関心が確認できませんが、会うことに怖さがあるため、誘わず相手の安心を優先します。",
+            "evidence": [latest],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {latest}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert "会うことに怖さがある" in result.rationale
+    assert "具体的な関心が確認できませんが" in result.rationale
+    assert "相互性も弱い" not in result.rationale
+
+
+def test_wait_rationale_corrects_contradictory_no_activity_interest_claim():
+    latest = "パンケーキのお店、近いうちに行ってみたいです"
+    raw = _raw_strategy(
+        {
+            "action": "wait",
+            "rationale": "具体的な関心が確認できないため、今は誘いません。",
+            "evidence": [latest],
+            "invite_example": None,
+        }
+    )
+
+    result = _parse_tapple_strategy(raw, f"相手: {latest}")
+
+    assert result is not None
+    assert result.action == "wait"
+    assert "活動への関心は見られます" in result.rationale
+    assert "具体的な関心が確認できない" not in result.rationale
 
 
 def test_tapple_prompt_uses_declining_engagement_as_a_cue_without_using_reply_speed():
@@ -1195,7 +1301,7 @@ def test_tapple_benchmark_covers_recent_disinterest_in_the_proposed_activity():
             "invite_example": None,
         },
         "replies": [
-            "駅前に気になるカフェがあるんですね。最近カフェはあまり行かないんですが、プリンのお店なら気になります！"
+            "駅前に気になるカフェがあるんですね！どんなお店か気になります笑"
         ],
     }
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []

@@ -135,6 +135,15 @@ def test_explicit_tone_overrides_mixed_contact_tone_guidance(client):
     assert "敬語語尾を使わない案を少なくとも1つ" not in summary
 
 
+def test_inferred_tone_is_not_mislabeled_as_explicit_selection(client):
+    cid = _seed_gold(client, "自動推定の丁寧口調", KEIGO_PAIRS)
+
+    ctx = generation._build_context(cid, "", "", "normal")
+
+    assert ctx["effective_tone"] == "keigo"
+    assert "明示トーン指定" not in ctx["system_prompt"]
+
+
 def test_relationship_summary_uses_global_fallback_for_fewer_than_three_gold(client):
     cid = _seed_gold(client, "Cさん", TAME_PAIRS[:2])
     assert style.build_relationship_summary(cid) == ""

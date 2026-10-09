@@ -137,18 +137,26 @@ def test_primary_gemini_key_file_is_loaded_without_exposing_its_value(
     assert secret not in response.text
 
 
-def test_database_primary_key_takes_precedence_over_gemini_key_file(
+def test_explicit_gemini_primary_key_file_takes_precedence_over_database_key(
     client, monkeypatch, tmp_path
 ):
     key_file = tmp_path / "gemini2.md"
-    key_file.write_text("file-key-must-not-win\n", encoding="utf-8")
+    secret = "explicit-file-key-wins"
+    key_file.write_text(f"{secret}\n", encoding="utf-8")
     monkeypatch.setenv("GEMINI_API_KEY_FILE", str(key_file))
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     database.set_setting("ai_provider", "gemini")
     database.set_setting("ai_model", "gemini-3.5-flash-lite")
-    database.set_setting("api_key_gemini", "database-key-wins")
+    database.set_setting("api_key_gemini", "stale-database-key")
 
-    assert get_ai_config()["api_key"] == "database-key-wins"
+    cfg = get_ai_config()
+    response = client.get("/api/settings")
+
+    assert cfg["api_key"] == secret
+    assert cfg["api_key_from_env"] is True
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is True
+    assert secret not in response.text
 
 
 def test_primary_and_secondary_gemini_key_files_can_be_used_together(

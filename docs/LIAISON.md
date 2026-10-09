@@ -3,11 +3,17 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 誘い方修復・Gemini認証調査を更新
+最終更新: 2026-10-09 / Step 18-R4 新API主・予備切替と実返信確認を更新
 
 ## 2026-10-09 最新状況
 
-- GitHub `main`の確認済み基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`、今回のコードHEADは`19752ca`。PR #1はOpenで未マージ。コードと資料は独立レビュー後にforkの作業branchへpushする。
+- 最新作業Iteration 33で、`.env`の`GEMINI_API_KEY_FILE`を`API/chat1.md`、`GEMINI_SECONDARY_API_KEY_FILE`を`API/chat1 - コピー.md`に設定した。ファイル名と読み込み経路だけを記録し、キー本文は表示・記録していない。現行branchの設定解決と経路切替テスト3件はPASS。優先順は主3.5→主3.1→予備3.5→予備3.1で、rate limit時だけ次の経路へ進む。
+- 実API確認では`chat1.md`が3.5 Flash Liteで応答した一方、`chat1 - コピー.md`はHTTP認証エラー`invalid_api_key`となった。これはquota超過を示す429ではない。したがって主キーは利用可能、予備キーは設定上登録済みだが、キーを直すまで実際の予備利用はできない。認証エラー時に別キーへ自動切替して隠さない挙動は意図どおり。
+- Tappleの「カフェが気になる」という明確な関心に対する実生成は、返信「カフェ気になる！\n一緒に行きたいな笑」、判断`invite`、例文「今度そのカフェ一緒に行けたら嬉しいな！」で、専用の1ケース評価に合格した。出力には生成・形式修復・再試行が入り、APIを計4回使用した。最新返信は別Reviewerの自然さ・文脈確認対象であり、この1件だけでStep 18-R4全体を合格とはしない。
+- 初回の独立Reviewerは、コピー側キーが認証エラーであるため2口座利用は未達と判定した。またDBに保存済みのキーが`.env`より優先される点を指摘した。`GEMINI_API_KEY_FILE`明示時にDB値を上書きする修正はRED `683ea67` / GREEN `e131ac9`。後続Reviewerが同じキーを再利用するfallbackの取得元表示の不一致を指摘し、RED `ea40f43` / GREEN `364fd0e`で修正した。現行データベースには削除対象のGeminiキーはなく、キー本文を表示せず不在を確認した。最終状態はbackend全体**1,217 passed / 2 warnings**、model fallback **17 passed**、frontend build・対象Python compileall・`git diff --check`・最終fresh Reviewerはすべて**PASS**。警告は既存のFastAPI `on_event`非推奨通知。
+- 作業branchのソースを元の作業フォルダへ同期した。`.env`、APIキー、DB・会話データ、ログ、開発ツール設定は保持した。現行ブランチのコード・資料はfork作業branchへpush済み。GitHub `main`基点`a75ba76998a377e527f1ea3bedaa655a6b89569c`とPR #1には未反映。同期後のアプリ再起動が必要。
+
+- GitHub `main`の確認済み基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`、Iteration 33の最新コードHEADは`364fd0e`。PR #1はOpenで未マージ。Iteration 33の資料と変更はfresh reviewer確認後にforkの作業branchへpushする。
 - Step 18-R4では、少数の本人Goldが相手別Silverに上書きされる経路を防ぎ、最近のGoldにある絵文字の順序を相手別styleへ段階的に反映した。Tappleでは、辞書にない活動関心、苦手意識、安全上の懸念、拒否や迷いの口語表現を扱う回帰を追加した。実生成ベンチの14シナリオと評価条件は維持している。
 - 本人の記号の好みとして「、」「。」を基本的に避け、文意に合う「！」「？」や絵文字、記号なしも使う方針を追加した。敬語・タメ口の切替は相手を変えると自動へ戻り、生成プレビューにも指定口調を渡す。
 - `python -m pytest backend/tests -q`: **1,217 passed / 2 warnings**。frontend `npm run build`、Python `compileall`、`git diff --check`はPASS。警告はFastAPI `on_event`の既存非推奨通知。今回のTapple修正とGemini認証エラー分類の独立Reviewerは**PASS**。
@@ -18,7 +24,7 @@
 - API 429本文は3.5・3.1それぞれの無料枠500リクエスト上限と約23時間後の再試行を示した。5回のケース実行だけで500回に達したとは考えにくく、上限到達は先行使用分による可能性が高い。ただし疎通確認の成功結果と矛盾するため、上限状態の確定には追加の低頻度確認が必要。
 - Tappleベンチは一時DBと合成会話で動き、個人のチャット履歴を送信しない。本人Goldを使うContact Benchの現行結果にはならない。過去のContact Bench 3/3 artifactはGold重複修正前のため、現行受け入れ証拠には使わない。
 - Step 18-R4は未完成で、Step 19へ進まない。最新70ケース、Contact Benchの9返信、Tapple14シナリオを確認する。予備キーの認証エラーが解消した後、1シナリオずつ実APIで確認する。
-- Geminiの順序は主アカウント3.5→主3.1→別アカウント3.5→別アカウント3.1。次へ進むのは`rate_limit`時だけ。主3.5と3.1の両方が制限されたら別アカウントへ切り替える。
+- Geminiの順序は主アカウント3.5→主3.1→別アカウント3.5→別アカウント3.1。次へ進むのは`rate_limit`時だけ。主3.5と3.1の両方が制限されたら別アカウントへ切り替える。Iteration 33時点では主`chat1.md`の疎通に成功し、予備`chat1 - コピー.md`は認証エラー。
 - [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)では公式調査を自己申告の傾向として扱い、学術研究や利用者の逸話を一般化しない方針を記録している。
 
 ---

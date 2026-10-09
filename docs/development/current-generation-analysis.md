@@ -1,5 +1,19 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-09 Step 18-R4 Iteration 33: 新APIアカウントの切替と実返信確認
+
+`.env`で主`API/chat1.md`、予備`API/chat1 - コピー.md`を指定した。キー本文はログ・資料へ記録していない。主3.5 → 主3.1 → 予備3.5 → 予備3.1の順で、quotaに該当するrate limit時だけ切り替える。既存の切替テスト3件で順序を確認した。
+
+実疎通は主ファイルがGemini 3.5 Flash Liteで成功。予備ファイルはHTTP `invalid_api_key`で失敗し、429によるquota超過ではない。予備キーは有効化できておらず、修正された値が必要。新APIへの疎通と実シナリオで計6回リクエストを使用した。これ以上の予備API確認は停止している。
+
+カフェへの明確な関心ケースでは`invite`を選び、返信「カフェ気になる！\n一緒に行きたいな笑」、例文「今度そのカフェ一緒に行けたら嬉しいな！」を生成し、単ケース評価に合格した。形式修復と再試行を含み4 API呼び出しを使用した。独立Reviewerは返信を自然で押しつけがましくないと判断。ただし根拠抜粋が元メッセージを正確に示すかは未確認。
+
+初回Reviewerが、保存済みDBキーの優先によって明示した主キーファイルが無視され得ることを指摘。明示的な`GEMINI_API_KEY_FILE`はDB保存キーより優先し、未指定なら従来のDB > `.env`を維持する回帰を追加した。RED test `683ea67`、修正`e131ac9`。次のReviewerが同一プロバイダーのfallback表示フラグ不整合を指摘し、RED test `ea40f43`、修正`364fd0e`で直した。`data/app.db`には削除対象のGeminiキーがないことを、キー本文を表示せず確認した。
+
+最終確認では`python -m pytest backend/tests -q`が**1,217 passed / 2 warnings**、Gemini model fallback suiteが**17 passed**、frontend production build、対象Python compileall、`git diff --check`がPASS。新しいread-only Python ReviewerもPASSした。警告は既存のFastAPI `on_event`非推奨通知。作業branchコードは`683ea67`、`e131ac9`、`ea40f43`、`364fd0e`の順でRED/GREENを記録し、資料更新後にforkへpushする。GitHub mainには未反映。
+
+予備キーが`invalid_api_key`であるため、2つのアカウントを実際に切り替えて利用できることは未確認で、予備キーの修正が必要。70ケース、Contact Bench、Tapple全シナリオの最新実生成レビューも未実施。Step 18-R4は未完成。
+
 ## 2026-10-09 Step 18-R4 Iteration 32: 招待例の修復・Gemini認証診断
 
 実APIで、相手から明確な誘いがあるケースでも戦略の`invite_example`が空になることを確認した。初回生成と修復用の両プロンプトで、安全な公共の場所を使った低圧な例を必須にし、例がない、または既存の安全検査で除かれた場合は修復へ回す。具体的な店名や日時を会話にないのに作らず、例を出せない場合はinvite以外を選ぶ条件も明記した。拒否・安全面の懸念・曖昧な関心に対する既存ガードは維持した。

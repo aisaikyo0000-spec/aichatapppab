@@ -454,7 +454,7 @@ def test_relationship_summary_preserves_reliably_longer_contact_style(client):
 
     summary = style.build_relationship_summary(cid)
 
-    assert "Global Goldより長い返信が多い" in summary
+    assert "Global Goldより長めに返す傾向がある" in summary
     assert "話題が許す場合" in summary
     assert "毎回この文量にする必要はない" in summary
 

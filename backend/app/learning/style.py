@@ -442,7 +442,7 @@ def build_relationship_summary(contact_id: int | None) -> str:
     n = len(texts)
     hierarchy = compute_hierarchical_profile(contact_id)
     prof: StyleProfile = hierarchy["same_contact_blended_gold_profile"]
-    global_gold: StyleProfile = hierarchy["gold_profile"]
+    global_gold: StyleProfile = hierarchy["other_contact_gold_profile"]
 
     # フォーマル度（観測のみ）
     if prof.tame_ratio >= 0.75:
@@ -462,13 +462,19 @@ def build_relationship_summary(contact_id: int | None) -> str:
     else:
         warmth = "普通"
     # 文量（中央値・行数）
-    length_delta = prof.char_median - global_gold.char_median
+    length_delta = prof.char_median - global_gold.char_median if global_gold.sample_count else 0
     if length_delta >= 5:
         brevity = "Global Goldより相対的に長め"
     elif length_delta <= -5:
         brevity = "Global Goldより相対的に短め"
     else:
         brevity = "Global Goldと同程度"
+    length_guidance = ""
+    if n >= 6 and global_gold.sample_count >= 5 and length_delta >= 10:
+        length_guidance = (
+            "この相手にはGlobal Goldより長めに返す傾向がある。話題が許す場合は一言で切り上げず、"
+            "共感や具体的な反応を足して本人の実績に近づける。ただし毎回この文量にする必要はない。"
+        )
     # 質問率（観測のみ。高いから毎回質問するわけではない）
     if prof.question_ratio >= 0.5:
         q_desc = "質問多め"
@@ -486,7 +492,7 @@ def build_relationship_summary(contact_id: int | None) -> str:
     return (
         f"＜この相手への返信距離感＞{confidence}\n"
         f"- 距離感: {formality}・{warmth}（笑い{'多め' if prof.laugh_ratio >= 0.3 else '少なめ'}・{brevity}・{q_desc}）。"
-        f"同一相手Goldの文量中央値は{prof.char_median}字、Global Goldは{global_gold.char_median}字。"
+        f"同一相手Goldの文量中央値は{prof.char_median}字、Global Goldは{global_gold.char_median}字。{length_guidance}"
         f"{tone_guidance}返信の長さはこの差も参考にしつつ、現在の会話内容に合う範囲で決めること。"
         f"本人のGold実例と現在の会話内容を優先し、質問や文量をこの傾向だけで決めないこと。"
     )

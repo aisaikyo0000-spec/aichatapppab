@@ -162,6 +162,25 @@ def test_contact_length_fit_prefers_observed_gold_length_without_hard_target(cli
     assert contrast.contact_length_fit(short_reply, sparse_cid) == 0.5
 
 
+def test_contact_length_nudge_breaks_near_tie_but_preserves_quality_gap():
+    profile = style.StyleProfile(sample_count=6, char_median=40)
+    near_tie = [
+        {"reply": "x" * 40, "final": 0.500},
+        {"reply": "x" * 10, "final": 0.495},
+    ]
+    clear_quality_gap = [
+        {"reply": "x" * 10, "final": 0.500},
+        {"reply": "x" * 40, "final": 0.470},
+    ]
+
+    generation._apply_contact_length_nudge(near_tie, profile)
+    generation._apply_contact_length_nudge(clear_quality_gap, profile)
+
+    assert near_tie[0]["final"] > near_tie[1]["final"]
+    assert clear_quality_gap[0]["final"] > clear_quality_gap[1]["final"]
+    assert abs(near_tie[0]["contact_length_adjustment"]) <= 0.01
+
+
 def test_single_contact_gold_does_not_replace_global_gold_style(client):
     _seed_gold(client, "全体の丁寧な相手", KEIGO_PAIRS)
     cid = _seed_gold(client, "Goldが1件の相手", TAME_PAIRS[:1])

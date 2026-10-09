@@ -147,7 +147,7 @@ def test_medium_incoming_does_not_force_same_line_count_for_contact_gold():
         counterpart_length_chars=12,
     )
 
-    assert "相手別Goldの文量傾向を主な参考にする" in sysp
+    assert "相手別Goldの文量傾向を主な参考にし" in sysp
     assert "2〜3行程度の自然な返信を基本とすること" not in sysp
 
 

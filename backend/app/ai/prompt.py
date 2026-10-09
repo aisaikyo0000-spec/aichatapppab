@@ -743,11 +743,17 @@ def build_system_prompt(
             if counterpart_length_chars <= 3:
                 length_lines.append("- 相手の発言がごく短い相づち・挨拶のため、1行の短い返信を優先し、2行以上の返信は避けること（Step 17-R6 loop）。")
         elif counterpart_length_tier == "medium":
-            length_lines.append(
-                "- 2〜3行程度を目安にしてよいが、短い一文だけで自然に成立するならそのまま返すこと。"
-                if mode == "followup"
-                else "- 2〜3行程度の自然な返信を基本とすること。"
-            )
+            if same_contact_gold_samples >= 5:
+                length_lines.append(
+                    "- 相手別Goldの文量傾向を主な参考にし、固定した行数に寄せないこと。"
+                    "短い反応が自然な場面では簡潔にし、話題が許す場合はGoldに近い文量を使うこと。"
+                )
+            else:
+                length_lines.append(
+                    "- 2〜3行程度を目安にしてよいが、短い一文だけで自然に成立するならそのまま返すこと。"
+                    if mode == "followup"
+                    else "- 2〜3行程度の自然な返信を基本とすること。"
+                )
         else:
             length_lines.append("- 相手の内容に合わせた丁寧な返信をしてよい。")
         length_lines.append("※文字数のHard Limit ではない。回答に必要な長さは許容する。")
@@ -759,14 +765,14 @@ def build_system_prompt(
             f"{cp_summary}\n"
             "- 返信の要否・内容・長さは現在の会話内容を最優先すること。本人のGold実例とGlobalの本人文体を土台にし、相手の温度感は補助情報にとどめる。\n"
             "- 相手発言のオウム返し・コピー禁止。相手の語句・語尾・口調を模倣せず、距離感を合わせるためだけに質問や説明を追加しないこと。\n"
-            "- 相手が短文中心の場合、説明的な長文にせず短く返すこと。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
+            "- 相手の短文傾向だけで本人Goldの文量を縮めないこと。Goldに長めの傾向がある場合は、話題が許す範囲で本人らしい長さを保ち、説明の水増しは避ける。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
         )
     elif same_contact_gold_samples >= 3:
         b7_counterpart = (
             f"【COUNTERPART STYLE ADAPTATION】\n【COUNTERPART WRITING STYLE】{counterpart_title}への適応\n"
             "- 返信の要否・内容・長さは現在の会話内容を最優先すること。本人のGold実例を最優先し、Globalの本人文体を土台にする。相手の温度感は補助情報にとどめる。\n"
             "- 相手発言のオウム返し・コピー禁止。相手の文体は補助情報にとどめ、語句・語尾・口調を模倣しない。適応のためだけに質問や説明を追加しないこと。\n"
-            "- 相手が短文中心の場合、説明的な長文にせず短く返すこと。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
+            "- 相手の短文傾向だけで本人Goldの文量を縮めないこと。Goldに長めの傾向がある場合は、話題が許す範囲で本人らしい長さを保ち、説明の水増しは避ける。相手文の言い換え＋感嘆だけの返信は避け、自分の言葉で反応すること。"
         )
     elif cp_summary:
         b7_counterpart = (

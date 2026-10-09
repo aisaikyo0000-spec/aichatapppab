@@ -120,6 +120,22 @@ def test_extremely_short_input_keeps_one_line_safeguard_with_contact_gold():
     assert "2行以上の返信は避ける" in sysp
 
 
+def test_counterpart_short_style_cannot_override_user_contact_gold_length():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事で疲れた",
+        same_contact_gold_samples=6,
+        same_contact_gold_block="同一相手Goldの文量中央値は109字",
+        counterpart_style_block="相手は短文中心です",
+        counterpart_length_tier="short",
+        counterpart_length_chars=7,
+    )
+
+    assert "相手の短文傾向だけで本人Goldの文量を縮めない" in sysp
+    assert "相手が短文中心の場合、説明的な長文にせず短く返すこと" not in sysp
+
+
 def test_e_all_three_without_questions_pass():
     """Test E: 3案すべてに質問がなくても validation を通過できる。"""
     replies = [

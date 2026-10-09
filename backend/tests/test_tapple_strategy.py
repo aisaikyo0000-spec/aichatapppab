@@ -2682,14 +2682,14 @@ def test_colloquial_firm_meeting_refusals_stop_invitation_strategy(statement):
 
 
 def test_colloquial_meeting_reluctance_waits_without_being_promoted_to_refusal():
-    statement = "会うのは気が進みません。"
+    statement = "カフェには行きたいですが、会うのは気が進みません。"
     result = _parse_tapple_strategy(
         _raw_strategy(
             {
-                "action": "continue",
-                "rationale": "会話を続けます。",
+                "action": "invite",
+                "rationale": "相手の関心に合わせて誘います。",
                 "evidence": [statement],
-                "invite_example": None,
+                "invite_example": "駅前のカフェで会いませんか？",
             }
         ),
         f"相手: {statement}",
@@ -2700,14 +2700,14 @@ def test_colloquial_meeting_reluctance_waits_without_being_promoted_to_refusal()
 
 
 def test_ellipsis_after_direct_meeting_mention_is_treated_as_hesitation():
-    statement = "直接会うのはちょっと…"
+    statement = "カフェは楽しみですが、直接会うのはちょっと…"
     result = _parse_tapple_strategy(
         _raw_strategy(
             {
-                "action": "continue",
-                "rationale": "会話を続けます。",
+                "action": "invite",
+                "rationale": "相手の関心に合わせて誘います。",
                 "evidence": [statement],
-                "invite_example": None,
+                "invite_example": "駅前のカフェで会いませんか？",
             }
         ),
         f"相手: {statement}",

@@ -37,7 +37,9 @@ SCENARIOS = (
         ],
         "expected_action": "invite",
         "allowed_actions": ["invite"],
-        "reply_must_contain_any": ["カフェ", "コーヒー", "嬉しい", "うれしい", "楽しみ", "いいですね"],
+        "reply_must_contain_any": [
+            "嬉しい", "うれしい", "楽しみ", "行きたい", "いいですね",
+        ],
     },
     {
         "id": "mutual_activity_interest",
@@ -61,7 +63,7 @@ SCENARIOS = (
         ],
         "expected_action": "invite",
         "allowed_actions": ["invite"],
-        "reply_must_contain_any": ["ボルダリング", "楽しそう", "やってみたい", "気になります"],
+        "reply_must_contain_any": ["楽しそう", "やってみたい", "気になります", "いいですね"],
     },
     {
         "id": "shared_activity_low_reciprocity",
@@ -205,7 +207,7 @@ SCENARIOS = (
         ],
         "expected_action": "continue",
         "allowed_actions": ["continue"],
-        "reply_must_contain_any": ["日曜", "日曜日"],
+        "reply_must_contain_any": ["日曜なら", "日曜日なら", "日曜がいい", "日曜日がいい"],
     },
     {
         "id": "decline",
@@ -242,6 +244,13 @@ _FOLLOW_UP_PRESSURE_RE = re.compile(
     r"|連絡.{0,8}(?:くれる|もらえる|くれたら|もらえたら|ほしい|嬉しい|うれしい)"
     r"|一言.{0,8}(?:ちょうだい|もらえる|くれる|ください|ほしい|お願い)"
 )
+_UNSUPPORTED_DEFINITE_MEETING_INTENT_RE = re.compile(
+    r"(?:明確に会いたい|強く会いたい|会いたい意思を示|"
+    r"会いたいと(?:明確に|強く)希望|一緒に行きたいと(?:明確に|強く)希望)"
+)
+_UNSUPPORTED_DECLINE_CLAIM_RE = re.compile(
+    r"(?:断られ|拒否され|会いたくない(?:と|という)|行きたくない(?:と|という))"
+)
 _ACKNOWLEDGMENT_RE = re.compile(
     r"^(?:そうなんだ(?:ね)?|そうなんですね|そうですね|そうだね|わかりました|分かりました|了解(?:です)?|そっか|うん|はい|わかった|ありがとう|承知しました|承知です|気にしないで(?:ね)?)$"
 )
@@ -274,7 +283,8 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
     if scenario.get("expected_action") and action != scenario["expected_action"]:
         failures.append("wrong_expected_action")
 
-    if not isinstance(strategy, dict) or not isinstance(strategy.get("rationale"), str) or not strategy["rationale"].strip():
+    rationale = strategy.get("rationale") if isinstance(strategy, dict) else None
+    if not isinstance(rationale, str) or not rationale.strip():
         failures.append("missing_rationale")
 
     contact_messages = [
@@ -284,6 +294,37 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
         and isinstance(message.get("content"), str)
     ]
     latest_contact = contact_messages[-1] if contact_messages else ""
+    conversation_messages = scenario.get("messages", [])
+    last_contact_index = next(
+        (
+            index
+            for index in range(len(conversation_messages) - 1, -1, -1)
+            if conversation_messages[index].get("sender") == "contact"
+        ),
+        -1,
+    )
+    accepted_contact_interest = any(
+        generation._TAPPLE_ACCEPTED_INVITATION_RE.search(message)
+        for message in contact_messages
+    )
+    has_unresolved_decline = bool(
+        last_contact_index >= 0
+        and generation._unresolved_tapple_decline_match(
+            conversation_messages, last_contact_index
+        )
+    )
+    if (
+        isinstance(rationale, str)
+        and _UNSUPPORTED_DEFINITE_MEETING_INTENT_RE.search(rationale)
+        and not accepted_contact_interest
+    ):
+        failures.append("rationale_unsupported_meeting_intent")
+    if (
+        isinstance(rationale, str)
+        and _UNSUPPORTED_DECLINE_CLAIM_RE.search(rationale)
+        and not has_unresolved_decline
+    ):
+        failures.append("rationale_unsupported_decline")
     evidence = strategy.get("evidence") if isinstance(strategy, dict) else None
     if (
         not isinstance(evidence, list)
@@ -322,17 +363,16 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
             failures.append("external_contact_request")
         if scenario.get("no_reinvitation") and generation._TAPPLE_REINVITATION_RE.search(reply):
             failures.append("reinvitation_not_allowed")
-        if scenario.get("no_reinvitation"):
-            violations = generation.validate_candidate_replies(
-                [reply],
-                1,
-                counterpart_message=latest_contact,
-                conversation_messages=scenario.get("messages", []),
-                strategy_mode="tapple",
-                tapple_action=action,
-            )
-            if violations:
-                failures.append("reply_validation_failed")
+        violations = generation.validate_candidate_replies(
+            [reply],
+            1,
+            counterpart_message=latest_contact,
+            conversation_messages=conversation_messages,
+            strategy_mode="tapple",
+            tapple_action=action,
+        )
+        if violations:
+            failures.append("reply_validation_failed")
         required_reply_markers = scenario.get("reply_must_contain_any", [])
         if required_reply_markers and not any(marker in reply for marker in required_reply_markers):
             failures.append("reply_not_contextual")

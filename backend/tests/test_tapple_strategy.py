@@ -81,6 +81,9 @@ def test_tapple_system_and_generation_prompts_share_one_compatible_json_contract
         assert '"strategy"' in message["content"]
         assert '"replies"' in message["content"]
         assert '出力は必ず JSON形式の {"replies": ["案1の返信文章"' not in message["content"]
+        assert '"invite_example":null' in message["content"]
+        assert "strategyは会話上の根拠がある場合のみ含め" in message["content"]
+        assert "invite_exampleはinvite時のみ文字列" in message["content"]
 
 
 def test_generic_system_prompt_keeps_replies_only_json_contract():

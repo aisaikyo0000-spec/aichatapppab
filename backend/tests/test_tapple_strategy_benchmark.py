@@ -98,6 +98,7 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
     "scenario_id, reply",
     [
         ("explicit_interest", "カフェ"),
+        ("ambiguous_interest", "カフェ"),
         ("counterproposal", "日曜"),
         ("unlisted_shared_hobby", "ボルダリング"),
     ],
@@ -111,7 +112,7 @@ def test_tapple_benchmark_rejects_fragmentary_replies_despite_matching_markers(
         for turn in reversed(scenario["messages"])
         if turn["sender"] == "contact"
     )
-    action = scenario["expected_action"]
+    action = scenario.get("expected_action", scenario["allowed_actions"][0])
     result = {
         "strategy": {
             "action": action,
@@ -120,6 +121,22 @@ def test_tapple_benchmark_rejects_fragmentary_replies_despite_matching_markers(
             "invite_example": "駅前のカフェでお茶しませんか？" if action == "invite" else None,
         },
         "replies": [reply],
+    }
+
+    assert not expectation_met(scenario, result)
+
+
+def test_tapple_benchmark_rejects_absolute_safety_reassurance():
+    scenario = next(item for item in SCENARIOS if item["id"] == "meeting_safety_concern")
+    latest_contact = scenario["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": "wait",
+            "rationale": "会うことへの懸念が残っています。",
+            "evidence": [latest_contact],
+            "invite_example": None,
+        },
+        "replies": ["絶対安全なので安心してください。"],
     }
 
     assert not expectation_met(scenario, result)

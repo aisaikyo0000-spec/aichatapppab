@@ -1,6 +1,6 @@
 """AI生成設定の解決。
 
-優先順位: 設定画面(DB settings) > .env > デフォルト値
+優先順位: 明示したGeminiキー・ファイル > 設定画面(DB settings) > .env > デフォルト値
 API Keyはプロバイダごとに解決する（DB保存 または .env環境変数）。
 """
 from __future__ import annotations
@@ -52,9 +52,7 @@ def _env_api_key(provider: str) -> str:
     if not env_name:
         return ""
     if p == "gemini":
-        key_file = _read_dotenv("GEMINI_API_KEY_FILE") or os.getenv(
-            "GEMINI_API_KEY_FILE", ""
-        ).strip()
+        key_file = _gemini_primary_key_file()
         if key_file:
             path = Path(key_file.strip().strip('"').strip("'")).expanduser()
             if not path.is_absolute():
@@ -66,6 +64,13 @@ def _env_api_key(provider: str) -> str:
     if dotenv_val:
         return dotenv_val
     return os.getenv(env_name, "").strip()
+
+
+def _gemini_primary_key_file() -> str:
+    """Return the explicitly configured primary Gemini key-file path, if any."""
+    return _read_dotenv("GEMINI_API_KEY_FILE") or os.getenv(
+        "GEMINI_API_KEY_FILE", ""
+    ).strip()
 
 
 def _secondary_gemini_api_key() -> str:
@@ -110,9 +115,19 @@ def get_ai_config() -> dict[str, Any]:
     ).strip()
     model = get_setting("ai_model", os.getenv("AI_MODEL", app_config.DEFAULT_MODEL)).strip()
 
-    # メインのAPI Key: 設定画面(DB) > .env環境変数
+    # 明示したGeminiキー・ファイルは、古い設定画面(DB)のキーより優先する。
+    # ファイル設定がない場合は従来どおりDB > .envの順で解決する。
     db_key = _db_api_key(provider)
-    api_key = db_key or _env_api_key(provider)
+    env_key = _env_api_key(provider)
+    primary_key_file_configured = (
+        provider.lower() == "gemini" and bool(_gemini_primary_key_file())
+    )
+    if primary_key_file_configured:
+        api_key = env_key
+        api_key_from_env = bool(env_key)
+    else:
+        api_key = db_key or env_key
+        api_key_from_env = not bool(db_key)
 
     # フォールバック: 設定画面(DB) > AI_FALLBACK_API_KEY > フォールバック先プロバイダの環境変数
     fallback_provider = get_setting(
@@ -145,7 +160,7 @@ def get_ai_config() -> dict[str, Any]:
         "provider": provider,
         "model": model,
         "api_key": api_key,
-        "api_key_from_env": not db_key,
+        "api_key_from_env": api_key_from_env,
         "temperature": _float_setting("ai_temperature", app_config.DEFAULT_TEMPERATURE),
         "max_tokens": _int_setting("ai_max_tokens", app_config.DEFAULT_MAX_TOKENS),
         "history_limit": _int_setting("ai_history_limit", app_config.DEFAULT_HISTORY_LIMIT),

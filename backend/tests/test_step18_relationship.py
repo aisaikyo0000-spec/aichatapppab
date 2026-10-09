@@ -138,6 +138,30 @@ def test_contact_tone_fit_prefers_matching_tone(client):
     assert contrast.contact_tone_fit(tame_cand, cid_few) == 0.5
 
 
+def test_contact_length_fit_prefers_observed_gold_length_without_hard_target(client):
+    short_pairs = [
+        (f"短い話題{i}", "いいね笑") for i in range(5)
+    ]
+    long_pairs = [
+        (f"話題{i}", "それいいですね！" + "ゆっくり楽しめそうです" * 3)
+        for i in range(5)
+    ]
+    short_cid = _seed_gold(client, "短文Gold", short_pairs)
+    long_cid = _seed_gold(client, "長文Gold", long_pairs)
+    short_reply = "それいいね笑"
+    long_reply = "それいいですね！ゆっくり楽しめそうです。"
+
+    assert contrast.contact_length_fit(short_reply, short_cid) > contrast.contact_length_fit(
+        long_reply, short_cid
+    )
+    assert contrast.contact_length_fit(long_reply, long_cid) > contrast.contact_length_fit(
+        short_reply, long_cid
+    )
+    assert contrast.contact_length_fit(short_reply, None) == 0.5
+    sparse_cid = _seed_gold(client, "少数Gold", short_pairs[:2])
+    assert contrast.contact_length_fit(short_reply, sparse_cid) == 0.5
+
+
 def test_single_contact_gold_does_not_replace_global_gold_style(client):
     _seed_gold(client, "全体の丁寧な相手", KEIGO_PAIRS)
     cid = _seed_gold(client, "Goldが1件の相手", TAME_PAIRS[:1])

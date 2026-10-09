@@ -200,6 +200,32 @@ def test_tapple_benchmark_rejects_rationales_that_overstate_contact_intent(
     assert not expectation_met(scenario, result)
 
 
+def test_tapple_benchmark_does_not_use_superseded_interest_to_support_rationale():
+    scenario = {
+        "id": "accepted_then_declined",
+        "messages": [
+            {"sender": "contact", "content": "今度一緒にカフェへ行きたいです。"},
+            {"sender": "self", "content": "駅前のカフェへ行きませんか？"},
+            {"sender": "contact", "content": "やっぱり会うのは難しいです。"},
+        ],
+        "expected_action": "stop",
+        "allowed_actions": ["stop"],
+        "no_reinvitation": True,
+        "reply_must_contain_any": ["わかりました", "無理に誘いません", "大丈夫"],
+    }
+    result = {
+        "strategy": {
+            "action": "stop",
+            "rationale": "相手は明確に会いたいと強く希望しています。",
+            "evidence": [scenario["messages"][-1]["content"]],
+            "invite_example": None,
+        },
+        "replies": ["わかりました。無理に誘いません。"],
+    }
+
+    assert not expectation_met(scenario, result)
+
+
 def test_tapple_benchmark_scenarios_include_chat_context_and_allowed_actions():
     for scenario in SCENARIOS:
         assert [turn["sender"] for turn in scenario["messages"]][-1] == "contact"

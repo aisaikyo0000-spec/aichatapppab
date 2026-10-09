@@ -425,7 +425,7 @@ def build_same_contact_gold_pairs_block(contact_id: int, limit: int = 10) -> str
     return "\n".join(lines)
 
 
-def build_relationship_summary(contact_id: int | None) -> str:
+def build_relationship_summary(contact_id: int | None, requested_tone: str = "") -> str:
     """同一相手への返信距離感サマリー（Step 18）。観測特徴のみを記述し、関係ラベルは付けない。
 
     Same-contact Gold（手入力実績）から本人がその相手へ返すときの距離感・温度感・
@@ -485,7 +485,15 @@ def build_relationship_summary(contact_id: int | None) -> str:
         q_desc = "質問普通"
     confidence = f"（この相手の手入力Gold {n}件をGlobal Goldに段階的に反映）"
     tone_guidance = ""
-    if formality == "丁寧さと砕け具合が混在":
+    explicit_tone_label = {"keigo": "敬語", "hybrid": "ハイブリッド", "tame": "タメ口"}.get(
+        requested_tone
+    )
+    if explicit_tone_label:
+        tone_guidance = (
+            f"今回の明示トーン指定（{explicit_tone_label}）を最優先し、"
+            "相手別の混在傾向を理由に別の口調を混ぜない。"
+        )
+    elif formality == "丁寧さと砕け具合が混在":
         tone_guidance = (
             f"丁寧・混合・砕けた文体の実績比率は{int(prof.keigo_ratio * 100)}%・{int(prof.hybrid_ratio * 100)}%・{int(prof.tame_ratio * 100)}%。"
             "混在も本人らしさとして保つこと。"

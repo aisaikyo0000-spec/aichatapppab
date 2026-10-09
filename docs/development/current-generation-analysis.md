@@ -1,5 +1,45 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-10 Contact Bench R21〜R26と返信品質診断
+
+Contact Bench R21は計測コードの`candidate_issues`不整合による`generation_error`で終了した無効・未完了runである。生成出力を品質評価に使わない。
+
+R22を対象にした独立出力評価者は**FAIL**と判定した。AとCはほぼ同じ傾向で、想定より大幅に短く、笑いも見られなかった。Bも想定より短く、不要な質問が3件で繰り返された。返信本文は資料に載せず、生成出力は作業用のローカル一時artifactに限って保持する。Gold本文、raw prompt、probe、API key、ユーザーscope pathは資料・artifactに含めない。
+
+R23はGemini 3.5 Flash Liteで3相手すべてのAPI呼び出しを完了した。平均返信長はAが18.7文字（Gold中央値45）、Bが14文字（中央値51）、Cが12文字（中央値52）で、笑いの使用率は全相手で0%。BとCは敬語に偏り、相手別の文体差が出なかった。独立出力評価者はR23を**FAIL**と判定した。
+
+R23ではAのstyle repairが`new_style_mismatch`で拒否された。B/Cのhard repairは固定カテゴリ`unresolved_reference`と`other_validation_violation`で拒否された。これは拒否理由の分類であり、原因を確定したものではない。分類の有用性を確認中である。
+
+Contact Bench R24はGemini 3.5 Flash LiteでA/B/CのAPI呼び出しを3/3完了したが、独立出力評価は**FAIL**。A/B/Cのすべてで、初回のhard violation後にhard repairは通過したものの、style repairがhard validationで拒否された。
+
+現在の診断は段階ごとの集計のみで、候補・修正文と個別のallowlist categoryの対応関係は分からない。最終9返信の再検証では該当カテゴリは検出されていない。したがって、観測したカテゴリをstyle repair拒否や出力品質の原因と断定しない。相手別style profileは各12件のGoldを持ち、適用重みは約0.706で、距離感などに差がある。それでも実際の生成返信は期待する相手別の違いを十分に示せていない。
+
+次iterationでは返信本文を保存せず、候補番号×allowlist categoryの対応だけを記録するprivacy-safeな診断を追加し、結果に基づいて最小の修正を検討する。評価基準・benchmark・evaluatorは維持する。
+
+Contact Bench R25では段階別の案番号×固定カテゴリ診断を使い、実APIを3/3完了した。独立出力評価は**FAIL**。A/Bは短い敬語でほぼ同じだった。Cはやや長く温かみがあったものの、「疲れるまで頑張った」など、会話から確認できない努力や負荷を推測していた。
+
+案番号別診断により、A/Bのstyle repairとCのstyle follow-upで`unsupported_time_context`などのhard rejectionが発生したことを確認した。修正文の本文は保存していない。これらの診断は拒否箇所を特定するもので、出力品質の原因全体を確定するものではない。Gold profileと評価基準は変更していない。
+
+次は修復時の事実優先順位を明確にし、根拠のない努力・負荷の推測をhard validationで拒否する回帰テストを加える。評価基準・Contact Bench・evaluatorは変えずに再評価する。
+
+Contact Bench R26は実APIを3/3完了したが、独立出力評価は**FAIL**。AとCではほぼ同じ質問が繰り返され、B/Cの口調差は弱かった。返信は短い定型応答に偏った。
+
+Question pacing auditでは、Goldに見られる高い質問率をprompt内の複数のcueが強調している可能性が見つかった。ただし、これが質問反復の原因とは確認できていない。候補同士の質問内容が似ているかを自動で検出する処理もない。
+
+返信品質レビューR2は**FAIL**とし、否定を含む勤務・負荷表現の判定と、無関係な勤務質問の扱いを指摘した。該当ケースを先にテストへ追加してTDDで修正し、freshな独立R3レビューは**PASS**した。修正後のfocused suiteは**440 passed**。全文backend suiteも**1,535 passed / 2 warnings**で96.55秒で完了した。警告は既存のFastAPI `on_event` deprecation。R26後のAPI再試行はまだ行っていない。
+
+次のIteration R27では、生成promptから質問率の数値と「質問を多め・少なめにする」といったcueだけを削除するA/B検証を行う。Gold由来の質問頻度は、質問の必要性判定とrankingに使う内部値として維持する。prompt cueが質問反復の原因かは未確定の仮説であり、A/Bの実生成結果で判断する。
+
+retry全体の処理とベンチwrapperに対するfresh code reviewerは両方**PASS**した。これとは別に、R22出力の独立評価は**FAIL**だった。privacy-safeな固定カテゴリ診断では、hard validationを段階ごとに分類し、quality gateの拒否理由を固定カテゴリで集計する。安全なclarification再検証でstage attributionが誤る問題も修正した。raw text、Gold、probe、prompt、API keyはシリアライズしない。独立diagnostic reviewer R2は**PASS**。
+
+taxonomyの初回レビューR1は**FAIL**となり、Tapple向け固定カテゴリを6種類追加した。fresh taxonomy Reviewer R2は**PASS**。Contact Bench R23の独立出力評価は**FAIL**のままで、R24のカテゴリを含むベンチは未実施。
+
+文量ガイダンスはprompt block B2・B7・B4・B8に重複している。「短くてもよい」は短文を許す表現で、別の長さを命じる文との直接矛盾ではない。学習Goldから得た口調は参考情報であり、UIで明示された口調指定だけが口調を固定する。promptの統合案は保留中で、変更は加えていない。
+
+focused `test_step18_relationship.py`は**101 passed**、Contact Bench focused suiteは**59 passed**。backend全体は**1,529 passed / 2 warnings**、frontend `npm run build`は**PASS**。警告は既存のFastAPI `on_event`非推奨通知。
+
+R22〜R26の独立出力評価はいずれも不合格。prompt統合案の判断、R25で見つかった修復時の事実優先順位と推測拒否の修正、R26で確認した質問反復と弱い文体差の改善、R27の質問率cue A/B検証、修正後の実API再評価、70ケース回帰が残る。R3 review、focused 440件、backend全体1,535件はPASSした。Step 18-R4は未完了で、GitHub `main`へのpush・mergeは行っていない。
+
 ## 2026-10-09 Step 18-R4 Iteration 34: Tapple出力契約の統一
 
 Tappleモードでは、システムプロンプトが返信だけのJSONを指定する一方、初回・再生成プロンプトが会話戦略も要求していた。さらに修復指示には戦略を必須とする例と、非invite時も文字列になっている`invite_example`が残り、「根拠がなければ戦略を省略」「invite以外は`null`」という条件と矛盾していた。
@@ -2255,3 +2295,12 @@ fresh reviewer v47のHIGHを再現し、「好きです。でも嫌いです」�
 比較上の留意点として、現行lexical scorerは相手文と本人返信文を採点し、Gold品質・同一相手・phaseの既存加点も含む一方、dense側は相手文だけを符号化する。RRFは現行lexical順位を融合するため、lexical順位に含まれるmetadata効果は残るが、融合時に同じbonusを重ねない。全候補にdense順位が付く場合でも、候補なしの件数を隠さない。本人Goldを外部送信せずローカルに限定したleave-one-contact-out評価、人手の候補有用性ラベル、no-hit閾値を用意できるまでは本番変更をしない。
 
 追加物は`benchmark_embedding_retrieval.py`とその4件のテスト。RRFに重ねるmetadata bonusが小さな順位差を逆転し得る初回レビューFAILを受け、融合式の追加加点を除いた。回帰テストはlexical順位を固定して融合段階を分離し、同一相手Gold候補が融合段階で追加bonusを受けないことを検証する。MRRの全順位計算、metadata説明、テスト件数を直した後のfresh Reviewer v3は**PASS**。コードcommitは`c1d3a6c`。最終backend suiteは**1,344 passed / 2 warnings**、frontend build・compileall・CLI `--help`・`git diff --check`も**PASS**。警告は既存のFastAPI `on_event`非推奨通知。
+## 2026-10-10 Contact Adaptation R27: 質問頻度cueを外した実測
+
+質問頻度のGold統計を生成promptから外し、会話上必要な質問は引き続き許容する変更を実測した。Gemini 3.5 Flash LiteのContact BenchはA/B/Cすべて生成できたが、独立GAN受け入れ評価は**FAIL**。A/B/Cで距離感と文量が十分に分かれず、Bは意味の近い質問を複数案に含めた。返信も定型的な労いに寄った。Goldの質問率をpromptへ渡さないだけでは、相手別Styleを自然な返信へ反映できない。
+
+R27の変更コードに対する独立レビューは**PASS**。全backend suiteは最初の再実行で**1 failed / 1,536 passed / 2 warnings**だった。失敗した`test_3_no_question_every_time`は、質問を抑制する挙動を確認する代わりに、system promptの一文を固定していた。文言依存のassertを外し、連続質問への自然さ評価と、相手の質問へ答える場合の例外を検査する既存テストを残した。重複assertも除去した。対象2ファイルは**117 passed**で、新しい独立Python Reviewerもテスト差分を**PASS**と判定した。修正後の全backend suiteは**1,537 passed / 2 warnings**、frontend production buildと`git diff --check`も**PASS**。
+
+既存条件の監査では、短文・質問なしを許容する指示が複数ブロックに重なり、同一相手の文体は主に助言として渡され、相手別トーンのランキング加点も小さいことを確認した。候補間重複の検出は文字列類似度中心で、意味が近い質問を十分に拾わない。これらはR27の出力を説明し得る構造上の要因だが、特定の指示が失敗を引き起こしたとはまだ断定できない。
+
+次の実験では事実安全性とGold優先を保ち、短文と質問に関する重複指示だけを一か所へまとめる。相手別Goldと入力は変えず、現行promptと比較してA/B/Cの文量・口調・返信の印象、質問意図の重複を確認する。改善しない場合は、候補群の意味重複を別実験として切り分ける。Contact Benchは不合格のままで、最新70ケース、frontend build、テスト更新への独立レビュー、全suite結果が残るためStep 18-R4は未完成。GitHub mainへの反映も行っていない。

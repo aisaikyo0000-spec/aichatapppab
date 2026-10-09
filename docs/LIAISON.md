@@ -3,7 +3,33 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4および意味検索の比較結果を記録
+最終更新: 2026-10-10 / Contact Bench R27と条件監査を記録
+
+## 2026-10-10 最新状況
+
+### Step 18-R4 Contact Adaptation R21〜R26の再検証
+
+- Contact Bench R21は計測コードの`candidate_issues`不整合による`generation_error`で終了した無効・未完了runである。生成結果は品質評価に使用しない。
+- Contact Bench R22は3相手のAPI呼び出しを完了したが、独立出力評価者は**FAIL**と判定した。AとCの文体がほぼ同じで、両者ともGoldの目安より大幅に短く、笑いもなかった。Bも短く、不要な質問が3件繰り返された。
+- Contact Bench R23も3相手のAPI呼び出しを完了した。平均返信長はAが18.7文字（Gold中央値45）、Bが14文字（中央値51）、Cが12文字（中央値52）。全相手で笑いは0%。BとCはどちらも敬語で、相手別の違いが出なかった。独立出力評価者はR23を**FAIL**と判定した。
+- R23ではAのstyle修復が`new_style_mismatch`で拒否され、B/Cのhard repairは固定カテゴリ`unresolved_reference`と`other_validation_violation`で拒否された。これらは拒否理由の分類であり、根本原因とは断定しない。カテゴリ分類の有用性は現在レビュー中。
+- Contact Bench R24はGemini 3.5 Flash LiteでA/B/CのAPI呼び出しを**3/3完了**したが、独立出力評価は**FAIL**。3相手とも初回にhard violationがあり、hard repairは通過したものの、その後のstyle repairがhard validationで拒否された。
+- 現行診断は段階ごとの集計に限られ、どの候補・修正文にどの固定カテゴリが対応するかは追跡できない。最終9返信の再検証では該当カテゴリが検出されていないため、そのカテゴリがstyle repair拒否や品質不良の原因だとは断定できない。
+- 相手別style profileには各12件のGoldがあり、適用重みは約0.706。距離感などのprofile差は確認できる一方、生成返信にはその差が十分に表れていない。
+- 次iterationでは返信本文を保存せず、候補番号とallowlist内の診断カテゴリだけを対応付ける計測を追加し、その結果を見て最小限の修正を判断する。評価基準、Contact Bench、evaluatorは変更しない。
+- Contact Bench R25は段階別の案番号×固定カテゴリ診断を有効にして実APIを3/3完了したが、独立出力評価は**FAIL**。A/Bは短い敬語でほぼ同じだった。Cは少し長く温かみがあった一方、「疲れるまで頑張った」といった努力や負荷の推測が入った。
+- 案番号別の診断では、A/Bのstyle repairとCのstyle follow-upで`unsupported_time_context`などのハード拒否が実際に発生していた。診断は修正文の本文を保存していない。Gold profileと評価基準は変更していない。
+- 次は修復指示で事実の優先順位を明示し、根拠のない努力・負荷の推測をhard validationで拒否する回帰テストを追加する。修正後も同じContact Benchとevaluatorで再評価する。
+- Contact Bench R26は実APIを3/3完了したが、独立出力評価は**FAIL**。AとCでほぼ同じ質問が繰り返され、BとCの口調差も弱かった。返信は短い定型応答に偏った。
+- Question pacing auditでは、Goldに見られる高い質問率がprompt内の複数のcueで強調されている可能性が見つかった。ただし、これが反復質問の原因だとは確定していない。また、候補間で似た質問を自動検出する仕組みはない。
+- 返信品質レビューR2は**FAIL**。否定を含む勤務・負荷表現の判定と、無関係な勤務質問の扱いに問題があると指摘した。指摘されたケースを先にテストへ追加し、TDDで修正した。freshな独立R3レビューは**PASS**。
+- 修正後のfocused suiteは**440 passed**。全文backend suiteは**1,535 passed / 2 warnings**で、所要時間は96.55秒。警告は既存のFastAPI `on_event` deprecationである。R3 reviewも**PASS**。R26後の実API再試行はまだ行っていない。
+- 次のIteration R27では、生成promptから質問率の数値と「質問を多め・少なめにする」といったcueだけを削除するA/B検証を行う。Gold由来の質問頻度は、質問の必要性判定とrankingに使う内部値として保持する。prompt cueが反復質問の原因かは未確定の仮説であり、A/Bの実生成結果で判断する。
+- privacy-safeな固定カテゴリ診断の実装を完了した。hard validationの分類を段階ごとに記録し、quality gateの拒否理由も固定カテゴリで集計する。安全なclarification再検証で段階の帰属を誤る問題も修正した。raw text、Gold、probe、prompt、API keyはシリアライズしない。独立diagnostic reviewer R2は**PASS**。
+- 固定カテゴリのtaxonomyでは、Reviewer R1のFAIL後にTapple向けの分類を6種類追加した。新しいtaxonomy Reviewer R2は**PASS**。
+- プロンプトの文量ガイダンスはB2・B7・B4・B8に重複している。「短くてもよい」は許可を示す表現で、直接の矛盾指示ではない。学習Gold由来の口調は参考情報として扱われ、口調を固定するのはUIの明示指定のみ。統合案は検討中で、まだ変更していない。
+- `test_step18_relationship.py`は**101 passed**、最新focused suiteは**440 passed**。全文backend suiteは**1,535 passed / 2 warnings、96.55秒**で完了。警告は既存のFastAPI `on_event` deprecation。frontend `npm run build`は前回**PASS**。
+- R22〜R26の独立出力評価はいずれも不合格。R3 reviewとbackend全体テストはPASSしたが、R27の質問率cue A/B検証、R26の質問反復と文体差を対象にした実API再評価、70ケース回帰が残る。Step 18-R4は未完成で、GitHub `main`へのpush・mergeは行っていない。返信本文は資料に載せず、Gold本文、raw prompt、probe、API key、ユーザーscope pathも資料・artifactに含めない。
 
 ## 2026-10-09 最新状況
 
@@ -632,3 +658,10 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - 独立レビューで見つかった「好きです。でも嫌いです」の矛盾嗜好回答すり抜けを修正。別話題の好みを矛盾と誤判定しない漢字・かな・カタカナの回帰テストも追加。fresh Python Reviewer **PASS**
 - 評価artifactのtraceを追加。`--trace`で入力・intent・検索pairの匿名ID/score/metadata・各呼出のprovider/account/model/prompt SHA-256を保存する。完全なprompt本文は個人情報を含み得るため、`--include-prompt-text`指定時のみ保存し、実行前に警告する。provider失敗回数とraw応答数のずれによるcase間の誤対応も修正した。別ツールで候補を盲検化した採点CSVと、2名分の完全一致率・quadratic weighted kappaを計算できる。式に見える本文のCSV injectionも防ぐ
 - 最新コード`87c0049`で`python -m pytest backend/tests -q` **1,340 passed / 2 warnings**、frontend production build、対象Python `compileall`、benchmark CLI `--help`、`git diff --check`は**PASS**。full-diff Python Reviewer、validator/retrieval Reviewer、traceability Reviewer、盲検評価ツール Reviewerは**PASS**。Gemini API・ユーザー会話データは未使用。RAGの意味検索比較、人手関連性評価、LLM graderとの一致度、実API受入、Contact Bench/70ケース/Tapple実生成は未完了。Step 18-R4は未完成。GitHub main基点 `a75ba76` は維持。コードWIPはfork作業branchへ公開予定
+
+## Step 18-R4 Contact Adaptation R27（2026-10-10）
+
+- Gemini 3.5 Flash Liteで同一入力のContact Benchを実行し、A/B/Cすべて生成完了。ただし独立GAN受け入れ評価は**FAIL**。A/B/Cの距離感・文量の差が弱く、Bでは意味の近い質問が重複し、定型的な労いに偏った。質問頻度のGold cueを生成promptから外すだけでは、相手別の自然な適応に届かなかった
+- 変更コードの独立レビューは**PASS**。全backend suiteは当初**1 failed / 1,536 passed / 2 warnings**。失敗は質問ペースcueの配置変更後も旧表現をsystem prompt内に期待していたテストだった。文言のassertを外し、会話上の質問抑制を自然さ評価で確認する形へ直した。重複assertも除去。`test_step7_natural_conversation.py`と関連テストは**117 passed**、テスト差分の独立Pythonレビューも**PASS**。更新後の全suiteを再実行中
+- 既存条件の調査では、短文・質問なしを許容する指示が複数ブロックに繰り返される一方、相手別Styleは主に参考情報で、トーン加点も小さいことを確認した。これはR27の類似した文体に影響した可能性があるが、因果は未確定。次は事実安全性・Gold優先を保ち、短文/質問指示を一か所に整理する最小比較を行う
+- 更新後の全backend suiteは**1,537 passed / 2 warnings**、frontend production buildと`git diff --check`も**PASS**。Contact Benchは未達で、最新70ケースと全差分Reviewerは未完了。Step 18-R4は未完成。GitHub mainは変更していない

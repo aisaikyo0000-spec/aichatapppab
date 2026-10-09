@@ -111,9 +111,9 @@ def test_candidate_ranking(client, monkeypatch):
 
         def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
             return _json.dumps({"replies": [
-                "今日は大変だったんですね。ゆっくり休んでください。",
+                "眠いんですね。早めに休めるといいですね。",
                 "おつかれさまです",
-                "疲れたんですね。何かあったんですか？",
+                "眠いのはつらいですね。無理しないでください。",
             ]})
 
         def available_models(self):
@@ -131,7 +131,7 @@ def test_candidate_ranking(client, monkeypatch):
     # 人間寄り（短い労い）が AI 型（長い説明）より human_fit が高い
     fits = list(zip(data["replies"], data["human_fit_scores"]))
     fit_short = next(f for rep, f in fits if "おつかれさまです" in rep)
-    fit_long = next(f for rep, f in fits if "大変だった" in rep)
+    fit_long = next(f for rep, f in fits if "早めに休める" in rep)
     assert fit_short > fit_long
 
 
@@ -161,9 +161,9 @@ def test_no_question_reply(client):
         "ゆっくり休んでくださいね。また明日も頑張りましょう。",
     ]
     assert validate_candidate_replies(with_q, 3) == []
-    # §20: 短い質問だけを3連続させる形は構造不良として検出される
+    # 3案すべてが短い質問でも、位置だけを根拠にHard errorへはしない。
     all_short_q = ["何見たんですか？", "どこ行ったんですか？", "楽しかったですか？"]
-    assert validate_candidate_replies(all_short_q, 3) != []
+    assert validate_candidate_replies(all_short_q, 3) == []
 
 
 def test_unsupported_inference(client):

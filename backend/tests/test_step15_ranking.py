@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.ai import naturalness, prompt
 from app.learning import style
 from app.routers import generation
@@ -49,8 +51,56 @@ def test_no_short_penalty_no_question_mandate():
 
 def test_priority_hard_over_feedback():
     """Hard correctness が最優先（validation が ranking より先）。"""
-    bad = ["とのことですがいいですね！", "ほかにも好きなものありますか？", "いいですね！"]
+    bad = ["とのことですがいいですね！", "いいですね！", "いいですね！"]
     assert generation.validate_candidate_replies(bad, 3) != []
+
+
+def test_contextual_transition_words_are_not_blanket_rejected():
+    """接続語だけで話題逸脱と判定しない。文脈評価は生成・品質評価側で行う。"""
+    replies = ["ほかにも行ったことある？", "それ気になる！", "楽しそう！"]
+    assert generation.validate_candidate_replies(replies, 3) == []
+    assert generation.sanitize_reply_text(replies[0]) == replies[0]
+
+
+def test_natural_loanwords_are_not_rewritten_or_banned():
+    replies = [
+        "久しぶりにリフレッシュできた気がする！",
+        "温泉を求めて旅行してる！",
+        "それ最高ですね！",
+    ]
+    assert [generation.sanitize_reply_text(reply) for reply in replies] == replies
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+    )
+    assert "カタカナ語の禁止" not in sysp
+
+
+def test_sanitizer_preserves_reporting_clauses_without_changing_their_meaning():
+    replies = [
+        "温泉を求めて旅行しているとのことですが、楽しそうですね！",
+        "プロフィールにはカフェ好きと書かれていましたので、気になりました！",
+        "旅行に行ったと拝見しました！",
+        "何かおすすめある？",
+        "なにかおすすめある？",
+        "今日は暑くなってきたね！",
+        "寒くなってきたね！",
+    ]
+
+    sanitized = [
+        generation.sanitize_reply_text(
+            reply,
+            current_datetime=datetime(2026, 1, 10) if "暑くなって" in reply else datetime(2026, 7, 10),
+        )
+        for reply in replies
+    ]
+    assert sanitized == replies
+    seasonal_validation = generation.validate_candidate_replies(
+        ["今日は寒くなってきたね！", "おつかれ！", "いいね！"],
+        3,
+        current_datetime=datetime(2026, 7, 10),
+    )
+    assert not any("季節外れ" in violation for violation in seasonal_validation)
 
 
 def test_gold_similarity_aspects():
@@ -86,7 +136,8 @@ def test_counterpart_not_copied():
     )
     assert "オウム返し" in sysp
     assert "温度感" in sysp
-    assert "20〜30%" in sysp
+    assert "20〜30%" not in sysp
+    assert "相手発言のオウム返し・コピーは避け" in sysp
     assert "本人のGold実例とGlobalの本人文体" not in sysp
 
 

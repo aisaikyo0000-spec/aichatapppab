@@ -50,7 +50,7 @@ def test_2_unsupported_inference_policy():
 def test_3_no_question_strategy():
     """Test 3: NO QUESTION が正式な戦略として許可されること。"""
     sysp = _sysp()
-    assert "NO QUESTION" in sysp
+    assert "逆質問は情報の確認や会話上の明確な目的がある場合だけ" in sysp
     replies = ["おつかれさまです", "それは疲れますね", "ゆっくり休んでください"]
     assert validate_candidate_replies(replies, 3) == []
 
@@ -70,7 +70,8 @@ def test_4_short_message_handling():
             counterpart_length_tier=tier,
             counterpart_length_chars=len(contact),
         )
-        assert "短い候補" in sysp
+        assert "内容のある状態共有は、入力の短さだけを理由に同じ一言の労いへまとめない" in sysp
+        assert "短い候補を必ず1案以上" not in sysp
 
 
 def test_5_echo_prevention():
@@ -126,7 +127,13 @@ def test_9_gold_style_preservation(client):
     assert prof["hierarchy_tier"] == "sparse_manual_gold_fallback"
     assert prof["same_contact_gold_samples"] == 1
     policy = style.to_learned_policy_prompt(prof)
-    assert "短い相槌" in policy
+    assert "質問なし・短い返信も正常" in policy
+
+
+def test_imperative_te_endings_are_complete_replies():
+    """「休んで」などの依頼形を未完の接続表現として扱わない。"""
+    assert not _is_fragmented_split(["ゆっくり休んで", "気をつけてね", "楽しんできて"])
+    assert not _is_fragmented_split(["大事にして", "無理しないで", "気をつけて"])
 
 
 def test_10_existing_invariants_regression(client, monkeypatch):
@@ -140,7 +147,11 @@ def test_10_existing_invariants_regression(client, monkeypatch):
     assert generation._parse_replies_strict("a\nb\nc", 3) == []
     # fragmentation: 並列短候補は正常、3分割は検出
     assert not _is_fragmented_split(["14時とかどうですか？？", "14時大丈夫です！", "14時くらいはどうですか？"])
-    assert _is_fragmented_split(["さくらさんそうなんだね笑", "僕もドライブ好きだよ", "休みの日は何してる？"])
+    assert not _is_fragmented_split(["さくらさんそうなんだね笑", "僕もドライブ好きだよ", "休みの日は何してる？"])
+    assert not _is_fragmented_split(["おつかれ！", "大変だったね", "今日は早めに休めそう？"])
+    assert not _is_fragmented_split(["おつかれ！", "僕も昨日仕事で疲れたよ", "今日は早めに休めそう？"])
+    assert not _is_fragmented_split(["いいね！", "😊✨", "最近どう？"])
+    assert _is_fragmented_split(["今日は疲れたから", "ゆっくり休んでね", "ね"])
     # AI_QUESTION fullmatch
     assert generation._extract_ai_question("[AI_QUESTION]行く？[/AI_QUESTION]") == "行く？"
     # E2E 生成が壊れていない
@@ -152,7 +163,7 @@ def test_10_existing_invariants_regression(client, monkeypatch):
 
         def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
             assert "【FACT BOUNDARY】" in "".join(m.get("content", "") for m in messages)
-            return json.dumps({"replies": ["それは眠そう", "今日は早めに休んでね", "ゆっくり休んで"]})
+            return json.dumps({"replies": ["それは眠そう", "早めに休んでね", "ゆっくり休んで"]})
 
         def available_models(self):
             return []

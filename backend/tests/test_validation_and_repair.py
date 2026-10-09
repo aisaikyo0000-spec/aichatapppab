@@ -903,6 +903,21 @@ def test_normal_validator_rejects_bare_state_echo_and_ungrammatical_share_phrase
     ) == []
 
 
+def test_normal_validator_allows_relevant_question_after_fatigue_status_share():
+    assert generation.validate_candidate_replies(
+        ["眠れそう？"], expected_candidates=1, mode="normal",
+        counterpart_message="眠い", known_self_facts=[], chat_history_text="相手: 眠い",
+    ) == []
+
+
+def test_normal_validator_allows_natural_non_question_response_to_fatigue_status():
+    assert generation.validate_candidate_replies(
+        ["それは疲れたね、ゆっくり休んでね"], expected_candidates=1,
+        mode="normal", counterpart_message="仕事で疲れた", known_self_facts=[],
+        chat_history_text="相手: 仕事で疲れた",
+    ) == []
+
+
 def test_normal_validator_rejects_unverified_first_person_desire_about_contact_topic():
     violations = generation.validate_candidate_replies(
         ["キャンプ行きたいですねー！"], expected_candidates=1, mode="normal",
@@ -970,15 +985,35 @@ def test_normal_validator_limits_unnecessary_multi_question_candidates():
     )
     assert any("質問を重ねすぎています" in error for error in violations)
 
-    single_unneeded_question = generation.validate_candidate_replies(
+    relevant_sleep_question = generation.validate_candidate_replies(
         ["おつかれさまです！\n明日も早いんですか？"], expected_candidates=1,
         mode="normal", counterpart_message="眠い", known_self_facts=[],
     )
-    assert any("短い状態共有への不要な質問" in error for error in single_unneeded_question)
+    assert relevant_sleep_question == []
     assert any("本人の未確認の習慣・傾向を追加しています" in error for error in generation.validate_candidate_replies(
         ["僕もたまに考え込んじゃいます！"], expected_candidates=1, mode="normal",
         counterpart_message="将来のこと考えちゃう", known_self_facts=[],
     ))
+
+
+def test_normal_validator_rejects_unconnected_work_schedule_question_but_keeps_sleep_question():
+    unconnected_work_question = generation.validate_candidate_replies(
+        ["明日仕事何時からですか？"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="疲れた",
+        known_self_facts=[],
+    )
+    relevant_sleep_question = generation.validate_candidate_replies(
+        ["明日も早いんですか？"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="眠い",
+        known_self_facts=[],
+    )
+
+    assert any("勤務予定を確認できる情報がありません" in issue for issue in unconnected_work_question)
+    assert relevant_sleep_question == []
 
 
 def test_normal_validator_rejects_unverified_first_person_preference_statement():
@@ -1159,6 +1194,37 @@ def test_normal_validator_rejects_unstated_work_context_inference():
     assert any("仕事の状況を確認できる情報がありません" in e for e in violations)
 
 
+@pytest.mark.parametrize(
+    "counterpart_message",
+    [
+        "今日は仕事じゃないけど疲れた",
+        "今日は仕事はしません",
+        "今日は仕事をしません",
+        "今日は出勤しません",
+        "今日は働いていません",
+        "今日は働いていなかった",
+        "今日は働いていなくて疲れた",
+    ],
+)
+def test_normal_validator_does_not_ground_work_from_negated_work_context(
+    counterpart_message,
+):
+    violations = generation.validate_candidate_replies(
+        ["お仕事おつかれさま"], expected_candidates=1, mode="normal",
+        counterpart_message=counterpart_message, known_self_facts=[],
+        chat_history_text=f"相手: {counterpart_message}",
+    )
+    assert any("仕事の状況を確認できる情報がありません" in error for error in violations)
+
+
+def test_normal_validator_allows_work_acknowledgment_when_counterpart_says_they_worked():
+    assert generation.validate_candidate_replies(
+        ["お仕事おつかれさま"], expected_candidates=1, mode="normal",
+        counterpart_message="今日は働いていました", known_self_facts=[],
+        chat_history_text="相手: 今日は働いていました",
+    ) == []
+
+
 def test_normal_validator_does_not_ground_counterpart_work_from_self_history():
     violations = generation.validate_candidate_replies(
         ["お仕事大変ですね"],
@@ -1185,6 +1251,259 @@ def test_normal_validator_rejects_unverified_recurring_effort_claim_about_counte
     assert any("相手の継続的な状況を確認できる情報がありません" in error for error in violations)
 
 
+def test_normal_validator_rejects_unverified_today_recurrence_in_work_greeting():
+    violations = generation.validate_candidate_replies(
+        ["今日もお仕事おつかれさまです！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 仕事で疲れた",
+    )
+
+    assert any("相手の継続的な状況" in error for error in violations)
+
+
+def test_normal_validator_rejects_today_advice_when_message_has_no_time_reference():
+    violations = generation.validate_candidate_replies(
+        ["今日はゆっくり休んでね！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 仕事で疲れた",
+    )
+
+    assert any("相手の時間情報を確認できる情報がありません" in error for error in violations)
+
+
+def test_normal_validator_rejects_unverified_today_in_a_question():
+    violations = generation.validate_candidate_replies(
+        ["今日は大変でしたか？"], expected_candidates=1, mode="normal",
+        counterpart_message="仕事で疲れた", known_self_facts=[],
+        chat_history_text="相手: 仕事で疲れた",
+    )
+
+    assert any("相手の時間情報を確認できる情報がありません" in error for error in violations)
+
+
+def test_normal_validator_does_not_use_self_time_fact_to_ground_counterpart_question():
+    violations = generation.validate_candidate_replies(
+        ["今日は大変だった？"], expected_candidates=1, mode="normal",
+        counterpart_message="仕事で疲れた", known_self_facts=["今日は休み"],
+        chat_history_text="相手: 仕事で疲れた",
+    )
+
+    assert any("相手の時間情報を確認できる情報がありません" in error for error in violations)
+
+
+def test_time_reference_check_keeps_a_self_disclosure_subject_across_shi():
+    assert not generation._has_unverified_time_reference(
+        "私も昨日忙しかったし今日は一日中忙しかったよ", "仕事で疲れた"
+    )
+
+
+def test_normal_validator_allows_today_advice_when_message_mentions_today():
+    violations = generation.validate_candidate_replies(
+        ["今日はゆっくり休んでね！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今日仕事で疲れた",
+    )
+
+    assert not any(
+        "相手の時間情報を確認できる情報がありません" in error for error in violations
+    )
+
+
+def test_normal_validator_allows_today_recurrence_when_counterpart_says_today_too():
+    violations = generation.validate_candidate_replies(
+        ["今日もお仕事おつかれさまです！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日も仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今日も仕事で疲れた",
+    )
+
+    assert not any("相手の継続的な状況" in error for error in violations)
+
+
+def test_normal_validator_does_not_ground_work_recurrence_from_unrelated_today_clause():
+    violations = generation.validate_candidate_replies(
+        ["今日もお仕事おつかれさまです！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日も雨だね。仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今日も雨だね。仕事で疲れた",
+    )
+
+    assert any("相手の継続的な状況" in error for error in violations)
+
+
+def test_normal_validator_does_not_ground_work_recurrence_across_contrast_clause():
+    violations = generation.validate_candidate_replies(
+        ["今日もお仕事おつかれさまです！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日も雨だけど仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今日も雨だけど仕事で疲れた",
+    )
+
+    assert any("相手の継続的な状況" in error for error in violations)
+
+
+@pytest.mark.parametrize(
+    "counterpart_message",
+    [
+        "今日も仕事じゃないけど疲れた",
+        "今日は仕事じゃないけど、今日も疲れた",
+        "今日も仕事ではなくて疲れた",
+    ],
+)
+def test_normal_validator_requires_positive_work_for_work_recurrence(
+    counterpart_message,
+):
+    violations = generation.validate_candidate_replies(
+        ["今日もお仕事おつかれさまです！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=counterpart_message,
+        known_self_facts=[],
+        chat_history_text=f"相手: {counterpart_message}",
+    )
+
+    assert any("相手の継続的な状況" in error for error in violations)
+
+
+@pytest.mark.parametrize(
+    "counterpart_message",
+    [
+        "今日も仕事してません",
+        "今日も仕事をしていません",
+        "今日も仕事は休みです",
+        "今日も仕事が休みで疲れた",
+        "今日も働いていません",
+    ],
+)
+def test_normal_validator_does_not_ground_work_recurrence_from_non_work_context(
+    counterpart_message,
+):
+    violations = generation.validate_candidate_replies(
+        ["今日もお仕事おつかれさまです！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=counterpart_message,
+        known_self_facts=[],
+        chat_history_text=f"相手: {counterpart_message}",
+    )
+
+    assert any("相手の継続的な状況" in error for error in violations)
+
+
+def test_normal_validator_rejects_unverified_overtime_detail():
+    violations = generation.validate_candidate_replies(
+        ["残業で本当にお疲れさまです"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 仕事で疲れた",
+    )
+
+    assert any(
+        "勤務状況を確認できる情報がありません" in error
+        or "仕事の状況を確認できる情報がありません" in error
+        for error in violations
+    )
+
+
+def test_normal_validator_rejects_unverified_working_claim_from_sleepiness():
+    violations = generation.validate_candidate_replies(
+        ["働いてたんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="眠い",
+        known_self_facts=[],
+        chat_history_text="相手: 眠い",
+    )
+
+    assert any("仕事の状況を確認できる情報がありません" in error for error in violations)
+
+
+def test_normal_validator_allows_overtime_detail_when_counterpart_said_it():
+    violations = generation.validate_candidate_replies(
+        ["残業で本当にお疲れさまです"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日は残業で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今日は残業で疲れた",
+    )
+
+    assert not any("勤務状況を確認できる情報がありません" in error for error in violations)
+
+
+@pytest.mark.parametrize(
+    ("reply", "counterpart_message"),
+    [
+        ("残業おつかれさまです", "今日は残業じゃなくて定時で帰ったけど疲れた"),
+        ("夜勤大変でしたね", "夜勤ではなく普通の仕事で疲れた"),
+        ("残業おつかれさまです", "今日は残業はしてなくて定時で帰った"),
+        ("残業おつかれさまです", "今日は残業していない"),
+        ("残業おつかれさまです", "今日は残業しなかった"),
+        ("残業おつかれさまです", "今日は残業はなかった"),
+        ("残業おつかれさまです", "今日は残業していなかった"),
+        ("残業おつかれさまです", "今日は残業はしていなかった"),
+        ("残業おつかれさまです", "今日は残業をしていなかった"),
+        ("残業おつかれさまです", "今日は残業じゃなかった"),
+        ("残業おつかれさまです", "今日は残業することなく帰った"),
+        ("残業おつかれさまです", "残業することはなく定時で帰った"),
+        ("残業おつかれさまです", "今日は残業には行かず定時だった"),
+        ("残業おつかれさまです", "残業するつもりはない"),
+        ("残業おつかれさまです", "今日は残業する予定はない"),
+        ("仕事おつかれさまです", "今日は仕事するわけではない"),
+        ("仕事おつかれさまです", "今日は仕事をするわけではない"),
+        ("仕事おつかれさまです", "今日は仕事をしているわけではない"),
+        ("仕事おつかれさまです", "今日は仕事をすることはない"),
+        ("仕事おつかれさまです", "今日は仕事をすることはありません"),
+        ("仕事おつかれさまです", "今日は仕事をするつもりはない"),
+        ("仕事おつかれさまです", "今日は仕事をする予定はない"),
+        ("仕事おつかれさまです", "今日は仕事には行っていません"),
+        ("仕事おつかれさまです", "今日は仕事に行かない"),
+        ("働いてたんですね", "今日は働くわけではない"),
+        ("働いてたんですね", "今日は働かない"),
+        ("残業おつかれさまです", "残業の予定はなかった"),
+        ("残業おつかれさまです", "残業したわけではない"),
+        ("残業おつかれさまです", "残業ではありません"),
+        ("残業おつかれさまです", "残業したわけじゃありません"),
+        ("残業おつかれさまです", "残業しておりません"),
+        ("残業おつかれさまです", "残業をしておりません"),
+    ],
+)
+def test_normal_validator_does_not_ground_negated_work_circumstance(
+    reply, counterpart_message
+):
+    violations = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=counterpart_message,
+        known_self_facts=[],
+        chat_history_text=f"相手: {counterpart_message}",
+    )
+
+    assert any(
+        "勤務状況を確認できる情報がありません" in error
+        or "仕事の状況を確認できる情報がありません" in error
+        for error in violations
+    )
+
+
 def test_normal_validator_rejects_unverified_daily_work_greeting_and_effort_claim():
     violations = generation.validate_candidate_replies(
         [
@@ -1199,7 +1518,7 @@ def test_normal_validator_rejects_unverified_daily_work_greeting_and_effort_clai
     )
 
     assert any("相手の継続的な状況を確認できる情報がありません" in error for error in violations)
-    assert any("相手の努力の程度を確認できる情報がありません" in error for error in violations)
+    assert any("相手の負荷や疲れの理由を確認できる情報がありません" in error for error in violations)
     assert generation.validate_candidate_replies(
         ["毎日仕事で忙しくて疲れた"],
         expected_candidates=1,
@@ -1208,6 +1527,220 @@ def test_normal_validator_rejects_unverified_daily_work_greeting_and_effort_clai
         known_self_facts=[],
         chat_history_text="相手: 毎日仕事で忙しくて疲れた",
     ) == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "今日も一日ずっと忙しかったんですね",
+        "今日も一日頑張ったんだね",
+        "ずっと気を張ってて疲れちゃいましたよね",
+        "お疲れが溜まってると思うので、ゆっくりしてくださいね",
+    ],
+)
+def test_normal_validator_rejects_unverified_workload_or_strain_inference(reply):
+    violations = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 仕事で疲れた",
+    )
+
+    assert any(
+        marker in error
+        for error in violations
+        for marker in (
+            "相手の負荷や疲れの理由",
+            "相手の継続的な状況",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "遅くまで本当にお疲れ",
+        "今日も大変でしたね",
+        "ヘトヘトになるまで頑張ったんだね",
+    ],
+)
+def test_normal_validator_rejects_ungrounded_duration_or_effort(reply):
+    violations = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 仕事で疲れた",
+    )
+
+    assert any(
+        marker in error
+        for error in violations
+        for marker in (
+            "相手の負荷や疲れの理由",
+            "相手の継続的な状況",
+        )
+    )
+
+
+def test_normal_validator_allows_generic_empathy_and_suggestion_without_effort_claim():
+    assert generation.validate_candidate_replies(
+        ["大変だったね", "美味しいものでも食べてゆっくりしてね"],
+        expected_candidates=2,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 仕事で疲れた",
+    ) == []
+
+
+def test_normal_validator_allows_workload_or_strain_when_counterpart_said_it():
+    for reply, message in (
+        ("今日も一日ずっと忙しかったんですね", "今日も一日ずっと忙しかった"),
+        ("気を張る仕事だったんですね", "今日はずっと気を張る仕事で疲れた"),
+        ("遅くまで本当にお疲れ", "今日は遅くまで働いた"),
+        ("今日も大変でしたね", "今日も仕事で大変だった"),
+        ("ヘトヘトになるまで頑張ったんだね", "今日はヘトヘトになるまで頑張った"),
+    ):
+        assert generation.validate_candidate_replies(
+            [reply],
+            expected_candidates=1,
+            mode="normal",
+            counterpart_message=message,
+            known_self_facts=[],
+            chat_history_text=f"相手: {message}",
+        ) == []
+
+
+def test_normal_validator_does_not_infer_busyness_from_negated_busy_context():
+    violations = generation.validate_candidate_replies(
+        ["忙しかったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日はバタバタしてないけど仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今日はバタバタしてないけど仕事で疲れた",
+    )
+
+    assert any("相手の負荷や疲れの理由" in issue for issue in violations)
+    assert generation.validate_candidate_replies(
+        ["忙しかったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日はバタバタしていて仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今日はバタバタしていて仕事で疲れた",
+    ) == []
+
+
+def test_normal_validator_does_not_use_old_counterpart_workload_to_ground_current_claim():
+    violations = generation.validate_candidate_replies(
+        ["今日も一日ずっと忙しかったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 先月は一日ずっと忙しかった\n自分: お疲れさま",
+    )
+
+    assert any("相手の負荷や疲れの理由" in error for error in violations)
+
+
+def test_normal_validator_does_not_use_old_work_or_time_off_to_ground_current_claims():
+    violations = generation.validate_candidate_replies(
+        ["お仕事大変ですね", "お休みだったんですね"],
+        expected_candidates=2,
+        mode="normal",
+        counterpart_message="疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 先月は仕事が忙しかった\n自分: お疲れさま\n相手: 休日に映画を見た",
+    )
+
+    assert any("仕事の状況を確認できる情報がありません" in error for error in violations)
+    assert any("休日・休暇を確認できる情報がありません" in error for error in violations)
+
+
+def test_normal_validator_does_not_apply_counterpart_workload_checks_to_self_disclosure():
+    assert generation.validate_candidate_replies(
+        ["私も昨日忙しかったよ"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=["昨日は仕事で忙しかった"],
+        chat_history_text="相手: 仕事で疲れた",
+    ) == []
+
+    assert generation.validate_candidate_replies(
+        ["私も仕事で疲れたよ"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="疲れた",
+        known_self_facts=["仕事で疲れた"],
+        chat_history_text="相手: 疲れた",
+    ) == []
+
+    assert generation.validate_candidate_replies(
+        ["私も昨日休みだったよ"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="疲れた",
+        known_self_facts=["昨日は休みだった"],
+        chat_history_text="相手: 疲れた",
+    ) == []
+
+    # A causal continuation that remains about the speaker must stay exempt.
+    assert generation.validate_candidate_replies(
+        ["私も昨日忙しかったから今日は家でゆっくりしたよ"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=["昨日は仕事で忙しかった"],
+        chat_history_text="相手: 仕事で疲れた",
+    ) == []
+
+    assert generation.validate_candidate_replies(
+        ["私も昨日忙しかったから今日は一日中忙しかったよ"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=["昨日は仕事で忙しかった", "今日は仕事で忙しかった"],
+        chat_history_text="相手: 仕事で疲れた",
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "私も昨日忙しかったし今日は一日中忙しかったんですね",
+        "私も昨日忙しかったし、今日は一日中忙しかったんですね",
+        "私も昨日忙しかったけど毎日頑張ってるんだね",
+        "私も昨日忙しかったのに今日も一日中忙しかったんだね",
+        "私も昨日忙しかったしあなたも今日一日中忙しかったんだね",
+        "私も昨日忙しかったから今日は一日中忙しかったんだね",
+        "私も昨日忙しくて今日も一日ずっと忙しかったんだね",
+    ],
+)
+def test_normal_validator_checks_counterpart_claim_after_self_disclosure(reply):
+    violations = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="仕事で疲れた",
+        known_self_facts=["昨日は仕事で忙しかった"],
+        chat_history_text="相手: 仕事で疲れた",
+    )
+
+    assert any(
+        marker in error
+        for error in violations
+        for marker in (
+            "相手の負荷や疲れの理由",
+            "相手の継続的な状況",
+        )
+    )
 
 
 def test_normal_validator_does_not_ground_counterpart_frequency_from_self_history():
@@ -1259,6 +1792,41 @@ def test_normal_validator_does_not_infer_holiday_from_free_time():
         counterpart_message="今日は仕事がお休みだった", known_self_facts=[],
         chat_history_text="相手: 今日は仕事がお休みだった",
     ) == []
+
+
+@pytest.mark.parametrize(
+    "counterpart_message",
+    [
+        "今日は休みじゃない",
+        "今日は休みがない",
+        "今日は休みがなくて疲れた",
+        "今日は休暇が取れない",
+        "今日は休暇がとれない",
+        "今日は休暇を取ってない",
+        "今日は休暇を取っていない",
+        "今日は休暇を取らない",
+        "今日は休暇を取りません",
+        "今日は休暇を取る予定はない",
+        "今日は休みを取るつもりはない",
+        "今日は休暇を取っておらず疲れた",
+        "今日は休みを取ることはなく疲れた",
+        "今日は休みを取る予定がなくて疲れた",
+        "今日は休みが取れてない",
+        "今日は休みが取れていない",
+        "今日は休日出勤",
+        "今日は休日に出勤",
+        "今日は休日の出勤",
+        "今日は休日勤務",
+    ],
+)
+def test_normal_validator_does_not_infer_holiday_from_negated_time_off(counterpart_message):
+    violations = generation.validate_candidate_replies(
+        ["休みだったんですね"], expected_candidates=1, mode="normal",
+        counterpart_message=counterpart_message, known_self_facts=[],
+        chat_history_text=f"相手: {counterpart_message}",
+    )
+
+    assert any("休日・休暇を確認できる情報がありません" in e for e in violations)
 
 
 def test_normal_validator_allows_grounded_work_context_and_self_status():

@@ -53,15 +53,16 @@ def test_fragmentation_detection():
         "僕もドライブ好きだよ",
         "休みの日は何してる？",
     ]
-    assert _is_fragmented_split(fragmented_replies)
+    assert not _is_fragmented_split(fragmented_replies)
 
-    # 絵文字・記号だけの要素
+    # 絵文字・記号や質問が混ざっても、案3だけが質問という理由では誤分割にしない。
     emoji_replies = [
         "いいね！",
         "😊✨",
         "最近どう？",
     ]
-    assert _is_fragmented_split(emoji_replies)
+    assert not _is_fragmented_split(emoji_replies)
+    assert _is_fragmented_split(["今日は疲れたから", "ゆっくり休んで", "ね"])
 
 
 def test_tone_validation_strict():

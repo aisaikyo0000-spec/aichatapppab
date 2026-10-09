@@ -1,6 +1,6 @@
 """Step 16: 生成内容の自然化テスト。
 
-- 質問不要時の質問なし候補保証（soft repair・初回のみ・ベストエフォート）
+- 質問数はHard quotaにせず、自然さの順位付けで扱う
 - 意味不一致・感情不一致の検出
 - A/B/C 役割の目安（固定なし）
 - 70ケース fixture の維持
@@ -21,50 +21,8 @@ def _ledger(intent="report"):
     }
 
 
-def test_question_free_repair_trigger():
-    """質問不要なのに全案質問つきの場合のみ soft repair 対象。」"""
-    assert generation._needs_question_free_variety(
-        replies=["いいですね！どこで食べたんですか？", "いいですね！何が好きですか？", "いいですね！いつ行ったんですか？"],
-        candidates=3, intent="report", has_unresolved_question=False,
-        condition="", mode="normal",
-    ) is True
-    # 単一候補は対象外
-    assert generation._needs_question_free_variety(
-        replies=["どこで食べたんですか？"],
-        candidates=1, intent="report", has_unresolved_question=False,
-        condition="", mode="normal",
-    ) is False
-    # 質問intent・未解決質問・followup・質問要求は対象外
-    assert generation._needs_question_free_variety(
-        replies=["a？", "b？", "c？"],
-        candidates=3, intent="question", has_unresolved_question=False,
-        condition="", mode="normal",
-    ) is False
-    assert generation._needs_question_free_variety(
-        replies=["a？", "b？", "c？"],
-        candidates=3, intent="report", has_unresolved_question=True,
-        condition="", mode="normal",
-    ) is False
-    assert generation._needs_question_free_variety(
-        replies=["a？", "b？", "c？"],
-        candidates=3, intent="report", has_unresolved_question=False,
-        condition="", mode="followup",
-    ) is False
-    assert generation._needs_question_free_variety(
-        replies=["a？", "b？", "c？"],
-        candidates=3, intent="report", has_unresolved_question=False,
-        condition="質問して", mode="normal",
-    ) is False
-    # 1案でも質問なしがあれば対象外
-    assert generation._needs_question_free_variety(
-        replies=["いいね", "b？", "c？"],
-        candidates=3, intent="report", has_unresolved_question=False,
-        condition="", mode="normal",
-    ) is False
-
-
-def test_question_free_repair_e2e(client, monkeypatch):
-    """E2E: 全案質問つきの初回出力で repair が1回走り、200で返ること。」"""
+def test_question_count_does_not_force_a_questionless_option_e2e(client, monkeypatch):
+    """候補すべてに質問があっても、それだけを理由に再生成しない。"""
     cid = client.post("/api/contacts", json={"name": "質問なし相手", "profile": ""}).json()["id"]
     client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": "今日ラーメン食べた"})
 
@@ -75,16 +33,10 @@ def test_question_free_repair_e2e(client, monkeypatch):
 
         def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
             calls.append(len(messages))
-            if len(calls) == 1:
-                return json.dumps({"replies": [
-                    "いいですね！どこで食べたんですか？",
-                    "いいですね！何が好きですか？",
-                    "いいですね！いつ行ったんですか？",
-                ]})
             return json.dumps({"replies": [
-                "いいね",
                 "いいですね！どこで食べたんですか？",
-                "ラーメン食べたんだね",
+                "いいですね！何が好きですか？",
+                "いいですね！いつ行ったんですか？",
             ]})
 
         def available_models(self):
@@ -97,8 +49,8 @@ def test_question_free_repair_e2e(client, monkeypatch):
     })
     r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
     assert r.status_code == 200
-    assert len(calls) == 2  # 初回 + soft repair
-    assert len(r.json()["replies"]) == 3
+    assert len(calls) == 1
+    assert all("？" in reply for reply in r.json()["replies"])
 
 
 def test_meaning_mismatch():
@@ -126,13 +78,14 @@ def test_sentiment_mismatch():
 
 
 def test_candidate_roles_guidance():
-    """§23-26: A/B/C 役割は目安であり固定ではないこと。」"""
+    """候補の順序に固定の役割を割り当てず、自然さを優先すること。"""
     sysp = prompt.build_system_prompt(
         contact={"name": "相手", "profile": ""},
         condition="",
         chat_history_text="相手: 今日疲れた",
     )
-    assert "案1は最も自然で短い反応" in sysp
+    assert "案の順序によって役割を固定しない" in sysp
+    assert "案1は最も自然で短い反応" not in sysp
     assert "固定パターンは禁止" in sysp
 
 

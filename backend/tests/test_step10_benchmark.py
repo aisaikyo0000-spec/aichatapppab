@@ -43,6 +43,8 @@ def test_question_necessity():
     assert reply_policy.question_necessity("了解", "report", has_unresolved_question=True) == "needed"
     assert reply_policy.question_necessity("そろそろ寝るね", "report") == "optional"
     assert reply_policy.question_necessity("おやすみ", "report") == "unnecessary"
+    assert reply_policy.question_necessity("眠い", "reaction") == "optional"
+    assert reply_policy.question_necessity("疲れた", "emotional_share") == "optional"
     assert reply_policy.question_necessity("今日バイト8時間だった", "report") == "optional"
     # Gold 質問率が低い場合は optional → unnecessary
     assert (

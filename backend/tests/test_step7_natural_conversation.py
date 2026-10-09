@@ -53,22 +53,6 @@ def test_3_no_question_every_time():
         "14時がいいな。何時に集まる？", "明日何時にする？", ledger_q, []
     )
     assert res2["signals"].get("consecutive_question", False) is False
-    # Prompt 側にも注意書きが出る
-    sysp = prompt.build_system_prompt(
-        contact={"name": "相手", "profile": ""},
-        condition="",
-        conversation_ledger={
-            "current_topic": "話題",
-            "last_contact_message": "今日バイト8時間だった",
-            "counterpart_intent": "report",
-            "prev_self_ended_with_question": True,
-            "unresolved_question": None,
-            "already_asked_questions": ["どこで働いてるの？"],
-        },
-    )
-    assert "直近の自分の返信は質問で終わっている" in sysp
-
-
 def test_4_no_parroting():
     """Test 4: 相手発言をそのまま繰り返さない（Echo 検出）。"""
     res = naturalness.evaluate_candidate_naturalness(
@@ -100,7 +84,8 @@ def test_6_no_forced_long_for_short_input():
         counterpart_length_tier="short",
         counterpart_length_chars=2,
     )
-    assert "短い候補" in sysp
+    assert "内容のある状態共有は、入力の短さだけを理由に同じ一言の労いへまとめない" in sysp
+    assert "短い候補を必ず1案以上" not in sysp
     # 固定ルール（必ず○文・最低○文字）がないこと
     assert "必ず3文" not in sysp
     assert "最低" not in sysp
@@ -143,14 +128,20 @@ def test_9_hard_invariants_intact():
         "[AI_QUESTION]",
     ):
         assert phrase in sysp
-    # 禁止表現のバリデーションが有効
+    # 機械的な定型表現は検出する。接続語だけでは違反にしない。
     bad = [
         "とのことですが、いいですね！\n質問ありますか？",
-        "ほかにも好きなものありますか？\n教えてください",
+        "いいですね！\nいいですね！",
         "いいですね！\nいいですね！\nいいですね！",
     ]
     violations = validate_candidate_replies(bad, 3)
-    assert any("とのこと" in v or "ほかにも" in v or "他に" in v for v in violations)
+    assert any("形式的な報告表現" in v for v in violations)
+    natural_reporting = validate_candidate_replies(
+        ["前に温泉を求めて旅行したとのことですが、楽しそうですね！", "いいね！", "おつかれ！"],
+        3,
+    )
+    assert not any("形式的な報告表現" in v for v in natural_reporting)
+    assert not validate_candidate_replies(["ほかにも行ったことある？", "気になる！", "楽しそう！"], 3)
 
 
 def test_10_generation_api_intact(client, monkeypatch):

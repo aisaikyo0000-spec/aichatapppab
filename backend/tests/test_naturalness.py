@@ -166,6 +166,26 @@ def test_question_itself_is_not_penalized():
     assert q is None or q["score"] >= 0.80
 
 
+def test_question_necessity_uses_reliable_same_contact_gold_rate():
+    low_rate = evaluate_candidate_naturalness(
+        "眠れそう？",
+        "眠い",
+        _ledger("reaction"),
+        [],
+        gold_question_rate=0.1,
+    )
+    high_rate = evaluate_candidate_naturalness(
+        "眠れそう？",
+        "眠い",
+        _ledger("reaction"),
+        [],
+        gold_question_rate=0.7,
+    )
+
+    assert low_rate["signals"]["question_necessity"] == "unnecessary"
+    assert high_rate["signals"]["question_necessity"] == "optional"
+
+
 def test_count_meaningful_questions():
     """質問数カウント: 情報取得3問とリアクション質問の区別。"""
     q = count_meaningful_questions("どこ？\nいつ？\n誰と？")

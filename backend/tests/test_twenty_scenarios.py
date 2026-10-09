@@ -268,8 +268,8 @@ def test_21_honorific_san_rule():
     assert "相手の呼称: 相手の名前を呼ぶ時は必ず「さん」付け（呼び捨て・あだ名禁止）" in p
 
 
-def test_22_no_unnatural_katakana_words():
-    """TEST 22: オウム返し・コピー禁止"""
+def test_22_prompt_avoids_echo_without_banning_natural_katakana():
+    """TEST 22: 相手文の言い換えを避け、語彙は文脈に合わせて選ぶ。"""
     p = prompt.build_system_prompt(
         rules=prompt.load_knowledge_texts("rules"),
         references=[],
@@ -281,4 +281,9 @@ def test_22_no_unnatural_katakana_words():
         self_profile={},
         role="self",
     )
-    assert "相手発言のオウム返し・コピー禁止" in p
+    assert "言い換え" in p
+    assert "一律に禁止しない" in p
+    assert "リフレッシュ" not in p
+    assert "ほかに" not in p
+    assert "〜を求めて行ってきました" not in p
+    assert "『何か』は漢字を使わず平仮名" not in p

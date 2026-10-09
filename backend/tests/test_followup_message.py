@@ -158,6 +158,7 @@ def test_followup_does_not_force_three_distinct_conversation_directions():
     )
     followup_text = "\n".join(message["content"] for message in followup_messages)
 
+    assert "文脈に合う3案を作成します" in followup_text
     assert "異なる3つの会話展開で3案作成します" not in followup_text
     assert "候補の違いを作るために話題や反応を無理に変えず" in followup_text
     assert "同じ話題から自然に成立する複数案を作ってよい" in followup_text
@@ -166,7 +167,8 @@ def test_followup_does_not_force_three_distinct_conversation_directions():
         contact={"name": "みお", "profile": "映画と猫が好きです"},
         mode="normal",
     )
-    assert "異なる3つの会話展開で3案作成します" in normal_prompt
+    assert "文脈に合う3案を作成します" in normal_prompt
+    assert "異なる3つの会話展開で3案作成します" not in normal_prompt
 
 
 def test_followup_does_not_echo_latest_self_message_or_invent_time_context():
@@ -331,8 +333,11 @@ def test_followup_profile_hook_is_optional_and_does_not_force_questions():
     assert "プロフィールや過去の共有情報を使うかどうかは任意" in all_prompt_text
     assert "プロフィールや共有済みの話題をフックにすること" not in all_prompt_text
     assert "質問の有無だけで候補を差別化しない" in all_prompt_text
+    assert "原則1案までを目安" not in all_prompt_text
+    assert "複数案に含めてかまいません" in all_prompt_text
     assert "短い一文だけで自然に成立するなら、そのまま返してよい" in all_prompt_text
     assert "1文1行改行の絶対遵守" not in all_prompt_text
+    assert "改行は読みやすさに応じて使うこと" in all_prompt_text
 
 
 def test_followup_one_line_reaction_is_allowed_and_length_is_only_a_guideline():
@@ -357,13 +362,15 @@ def test_normal_prompt_does_not_include_followup_only_topic_rules():
         contact={"name": "みお", "profile": "カフェ巡りが好きです"},
         mode="normal",
     )
+    assert "1文1行改行の絶対遵守" not in system_prompt
+    assert "改行は読みやすさに応じて使うこと" in system_prompt
     messages = prompt.build_initial_generation_messages(system_prompt=system_prompt, mode="normal")
     all_prompt_text = "\n".join(message["content"] for message in messages)
 
     assert "追いメッセージ出力契約" not in all_prompt_text
     assert "追いメッセージ生成命令" not in all_prompt_text
     assert "未返信の質問を繰り返したり、最後の会話を単に言い換えたりしない" not in all_prompt_text
-    assert "1文1行改行の絶対遵守" in all_prompt_text
+    assert "1文1行改行の絶対遵守" not in all_prompt_text
 
 
 def test_followup_prompt_does_not_force_topic_deepening_or_new_questions():
@@ -374,23 +381,39 @@ def test_followup_prompt_does_not_force_topic_deepening_or_new_questions():
         conversation_ledger={"already_asked_questions": ["どこのカフェが好きですか？"]},
     )
 
-    assert "話題を無理に広げず、質問は必要な場合だけにする" in system_prompt
+    assert "話題を無理に広げず、質問は直近の話題に沿い会話上の意味がある場合に限って使う" in system_prompt
     assert "必ず相手が出した話題そのもの" not in system_prompt
     assert "相手の発言を踏まえた新しい自然な質問を用意すること" not in system_prompt
-    assert "新しい質問は無理に用意せず、必要な場合だけ自然に入れること" in system_prompt
+    assert "新しい質問は無理に用意せず、直近の会話に沿い会話上の意味がある場合に限り自然に入れてよい" in system_prompt
 
 
-def test_normal_prompt_keeps_topic_deepening_and_new_question_guidance():
-    """通常返信では既存の話題深掘り・新質問方針を維持する。"""
+def test_normal_prompt_does_not_turn_old_questions_into_a_new_question_mandate():
+    """既出質問は再質問防止にだけ使い、新しい質問も必須にしない。"""
     system_prompt = prompt.build_system_prompt(
         contact={"name": "みお", "profile": "カフェ巡りが好きです"},
         mode="normal",
         conversation_ledger={"already_asked_questions": ["どこのカフェが好きですか？"]},
     )
 
-    assert "必ず相手が出した話題そのもの" in system_prompt
-    assert "相手の発言を踏まえた新しい自然な質問を用意すること" in system_prompt
-    assert "新しい質問は無理に用意せず、必要な場合だけ自然に入れること" not in system_prompt
+    assert "質問や話題の深掘りは必須ではなく" in system_prompt
+    assert "相手の発言を踏まえた新しい自然な質問を用意すること" not in system_prompt
+    assert "この一覧は質問を増やす指示ではない" in system_prompt
+    assert "原則1案までを目安" not in system_prompt
+    assert "複数案に含めてかまいません" not in system_prompt
+    messages = prompt.build_initial_generation_messages(system_prompt=system_prompt)
+    full_prompt = "\n".join(message["content"] for message in messages)
+    assert "質問する場合も相手が出した話題そのものを深掘りして広げること" not in full_prompt
+
+
+def test_candidate_count_does_not_force_short_reply_mix_or_reaction_diversity():
+    system_prompt = prompt.build_system_prompt(
+        contact={"name": "みお", "profile": ""},
+        mode="normal",
+    )
+
+    assert "短い候補を必ず1案以上含める" not in system_prompt
+    assert "候補群の反応の焦点を変えること" not in system_prompt
+    assert "内容のある状態共有は、入力の短さだけを理由に同じ一言の労いへまとめない" in system_prompt
 
 
 def test_followup_candidates_are_ordered_by_quality_not_experience_keywords():
@@ -506,5 +529,8 @@ def test_e2e_generate_followup_mode(client, monkeypatch):
         message == "はじめまして！\nカフェよく行かれるんですか？"
         for message in validator_calls
     )
-    for rep in data["replies"]:
-        assert "\n" in rep
+    assert set(data["replies"]) == {
+        "みおさんカフェ巡り好きなんですね笑\nパンケーキならふわふわ系としっかり系どっち派ですか？",
+        "パンケーキも好きなんですね！ふわふわ系って見た目もかわいいですよね笑",
+        "ドライブ好きなのいいですね！\n高速と下道ならどっちを走るのが好きですか？",
+    }

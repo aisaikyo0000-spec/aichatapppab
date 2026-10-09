@@ -2192,7 +2192,7 @@ def test_private_place_invitation_is_repaired_before_reply_is_returned(client, m
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["replies"] == ["わかりました。\n教えてくれてありがとう。"]
+    assert response.json()["replies"] == ["わかりました。教えてくれてありがとう。"]
     assert response.json()["strategy"]["action"] == "stop"
 
 
@@ -2659,7 +2659,7 @@ def test_production_generation_repairs_pressure_after_historical_hesitation(
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["replies"] == ["分かりました。\n無理に会わなくて大丈夫です。"]
+    assert response.json()["replies"] == ["分かりました。無理に会わなくて大丈夫です。"]
     assert response.json()["strategy"]["action"] == "wait"
     assert responses == []
 
@@ -4513,7 +4513,7 @@ def test_strategy_comes_from_the_repaired_output_when_repair_is_accepted(client,
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["replies"] == ["いいですね！\nどんなカフェが好きですか？"]
+    assert response.json()["replies"] == ["いいですね！どんなカフェが好きですか？"]
     assert response.json()["strategy"]["action"] == "continue"
 
 
@@ -4600,7 +4600,7 @@ def test_decline_reinvitation_is_repaired_before_a_reply_is_returned(
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["replies"] == ["わかった、教えてくれてありがとう。\n無理しないでね。"]
+    assert response.json()["replies"] == ["わかった、教えてくれてありがとう。無理しないでね。"]
     assert response.json()["strategy"]["action"] == "stop"
 
 

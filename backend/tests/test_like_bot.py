@@ -15,17 +15,29 @@ def test_format_one_sentence_per_line():
 
 
 def test_like_bot_prompt_hobby_focus_and_forbid_work():
-    """いいねBOTプロンプトが趣味特化であり、仕事・学業・考え方への言及および『〜とのこと』が禁止されていることの検証。"""
+    """いいねBOTは話題範囲を保ち、語句の機械的な一律禁止はしない。"""
     profile_sample = "休日はカフェ巡りや映画鑑賞をして過ごしています。最近はドライブも始めました。"
     req = like_bot.LikeBotRequest(profile_text=profile_sample)
 
     import inspect
     source = inspect.getsource(like_bot.generate_like_message)
-    assert "本人のリアル文体 & 『〜とのこと』等の機械的AI表現の完全禁止" in source
+    assert "リアルなチャット言葉・文体" in source
     assert "仕事・学業・考え方・価値観への言及・共感は完全禁止" in source
     assert "1文ごとの改行の絶対遵守" in source
     assert "相手の名前呼びは必ず「さん」付け" in source
-    assert "『〜とのこと』『〜と拝見しました』等の機械的AI表現の完全禁止" in source
+    assert "特定の語句を一律に禁止せず" in source
+
+
+def test_like_bot_sanitizer_preserves_wording_and_reporting_clauses():
+    messages = [
+        "温泉を求めて旅行してきました！",
+        "何かおすすめありますか？",
+        "他に好きな映画はありますか？",
+        "プロフィールにカフェ好きと書かれていたとのことですが、素敵ですね！",
+        "旅行でリフレッシュできました！",
+    ]
+
+    assert [like_bot._sanitize_like_message(message) for message in messages] == messages
 
 
 def test_like_bot_empty_profile_returns_400(client):
@@ -46,14 +58,14 @@ def test_like_bot_generate_success(client, monkeypatch):
         def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
             # システムプロンプトに禁止事項が含まれていることを検証
             sys_msg = [m["content"] for m in messages if m["role"] == "system"][0]
-            assert "本人のリアル文体 & 『〜とのこと』等の機械的AI表現の完全禁止" in sys_msg
+            assert "リアルなチャット言葉・文体" in sys_msg
             assert "仕事・学業・考え方・価値観への言及・共感は完全禁止" in sys_msg
             assert "1文ごとの改行の絶対遵守" in sys_msg
             assert "さん」付け" in sys_msg
-            assert "〜とのこと" in sys_msg
+            assert "特定の語句や表現を一律に禁止せず" in sys_msg
 
             user_msg = [m["content"] for m in messages if m["role"] == "user"][0]
-            assert "仕事・学業・価値観への言及は完全禁止" in user_msg
+            assert "仕事・学業・価値観には触れない" in user_msg
 
             return (
                 "花子さん、はじめまして！\nカフェ巡りの趣味、お店のチョイスがすごく素敵ですね！\n僕も美味しい珈琲が好きなので共感しました！\nたくさんお話しできるとうれしいです😊\n"

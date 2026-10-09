@@ -90,6 +90,36 @@ def test_d_no_forced_three_step_structure_for_short_message():
     assert "長めの傾向が明確なら" in sysp
 
 
+def test_short_input_does_not_override_well_sampled_contact_gold_length():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事で疲れた",
+        same_contact_gold_samples=6,
+        same_contact_gold_block="同一相手Goldの文量中央値は109字",
+        counterpart_length_tier="short",
+        counterpart_length_chars=7,
+    )
+
+    assert "相手別Goldの文量傾向を主な参考にする" in sysp
+    assert "短文という理由だけで一言返信に縮めない" in sysp
+    assert "長い文章や無理な話題拡張は避けること" not in sysp
+
+
+def test_extremely_short_input_keeps_one_line_safeguard_with_contact_gold():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: え",
+        same_contact_gold_samples=6,
+        counterpart_length_tier="short",
+        counterpart_length_chars=1,
+    )
+
+    assert "ごく短い相づち・挨拶" in sysp
+    assert "2行以上の返信は避ける" in sysp
+
+
 def test_e_all_three_without_questions_pass():
     """Test E: 3案すべてに質問がなくても validation を通過できる。"""
     replies = [

@@ -200,6 +200,16 @@ def test_contact_gold_fixture_rejects_named_groups_and_insufficient_gold(tmp_pat
             "empty incoming",
         ),
         (
+            "empty_gold",
+            {
+                "contacts": {
+                    label: [{"incoming": "相手", "gold": " "}] * 6
+                    for label in ("A", "B", "C")
+                }
+            },
+            "empty gold",
+        ),
+        (
             "overlong_message",
             {
                 "contacts": {
@@ -218,6 +228,16 @@ def test_contact_gold_fixture_rejects_named_groups_and_insufficient_gold(tmp_pat
                 }
             },
             "at most 12",
+        ),
+        (
+            "invalid_contacts_shape",
+            {"contacts": ["A", "B", "C"]},
+            "A, B, C",
+        ),
+        (
+            "missing_contact",
+            {"contacts": {"A": [], "B": [], "D": []}},
+            "A, B, C",
         ),
     ],
 )
@@ -251,21 +271,32 @@ def test_contact_benchmark_marks_generated_outputs_for_manual_quality_review():
     }
 
 
-def test_contact_benchmark_rejects_overlong_probe_before_reading_api_key(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("probe", [" ", "x" * 2001])
+def test_contact_benchmark_rejects_invalid_probe_before_setup_or_api(
+    tmp_path, monkeypatch, probe
 ):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_contact_benchmark.py", "--out", str(tmp_path / "result.json"), "--probe", "x" * 2001],
+        ["run_contact_benchmark.py", "--out", str(tmp_path / "result.json"), "--probe", probe],
     )
 
-    def fail_if_api_key_is_read(*_args, **_kwargs):
-        raise AssertionError("API key must not be read for invalid probe input")
+    def fail_if_setup_or_api_is_reached(*_args, **_kwargs):
+        raise AssertionError("invalid probe must be rejected before setup or API work")
 
-    monkeypatch.setattr(contact_benchmark, "read_gemini_api_key", fail_if_api_key_is_read)
+    monkeypatch.setattr(contact_benchmark, "read_gemini_api_key", fail_if_setup_or_api_is_reached)
+    monkeypatch.setattr(contact_benchmark.database, "init_db", fail_if_setup_or_api_is_reached)
+    monkeypatch.setattr(contact_benchmark, "seed_and_generate", fail_if_setup_or_api_is_reached)
 
     assert contact_benchmark.main() == 2
+
+
+def test_contact_gold_fixture_rejects_file_larger_than_bound(tmp_path):
+    path = tmp_path / "too-large.json"
+    path.write_bytes(b" " * 256_001)
+
+    with pytest.raises(ValueError, match="exceeds 256000 bytes"):
+        load_contact_fixture(path)
 
 
 def test_contact_benchmark_keeps_supplied_fixture_gold_isolated_by_contact(

@@ -3,7 +3,18 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 Contact Adaptationの実API再評価と回帰修正を記録
+最終更新: 2026-10-09 / Step 18-R4および意味検索の比較結果を記録
+
+## 2026-10-09 最新状況
+
+- 作業基点はGitHub `main`の`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branch `codex/chat-quality-20261008`には評価基盤コード`87c0049`・資料`e3e4ab1`をpush済み。今回のEmbedding比較コードは`c1d3a6c`でcommit済み。資料更新後にfork作業branchへpushする。`main`は変更していない。
+- ローカル限定の合成10ケースで、現行lexical検索・`intfloat/multilingual-e5-small`（revision `5697a65b0a002a92fe8c4fc9d495303ffff9c7d2`）・現行lexical順位とdense順位を融合するRRFを比較した。正解あり9件のRecall@4は全方式**0.889**、完全順位のMRRはlexical **0.889**、dense/RRF **0.911**。ただしMRR差は疲労の言い換えが5位に現れた分で、アプリが取る上位4件には入らない。
+- EmbeddingとRRFは正解のない陶芸ケースにも候補を返した（1/1）。さらに「今日はくたくた」から「仕事で疲れちゃった」への合成言い換えをdense/hybridとも上位1位で拾えず、語彙検索と同じく関連例なしになった。小規模・人手判断未校正の合成評価なので本番品質の結論には使わないが、今の結果ではEmbeddingを本番採用しない。
+- `scripts/benchmark_embedding_retrieval.py`と4件の回帰テストを追加。モデル取得後はCPUで推論し、ユーザー会話・DB・APIは使わない。E5のランキング接頭辞は公開model cardに従っている。既存lexicalは相手文と返信文を採点し、dense側は相手文のみを符号化するという比較上の差もartifactに明記した。
+- 独立Python Reviewer v1はRRFの追加metadata bonus、v2はMRRの上位4件切り詰めとlexical順位に含まれる既存metadataの説明不足、v2の後続確認は資料のテスト件数誤記を見つけた。追加加点を除き、MRRを完全順位から計算し、既存lexical metadataとの関係・4テスト件数を明記した。fresh Reviewer v3は**PASS**。指摘は解消済み。
+- 最終確認はbackend **1,344 passed / 2 warnings**、frontend `npm run build`、Python `compileall`、CLI `--help`、`git diff --check`が**PASS**。警告は既存のFastAPI `on_event`非推奨通知。Embedding比較スクリプトのfocused testは**4 passed**。RRF・実Embedding benchmarkの数値は資料と一致した。
+- `reply-quality-evaluation.md`のyomiyasu lintは**95/100**。残る指摘は仕様チェックリストに伴う箇条書き比率のみ。古い作業履歴を含むLIAISONとcurrent analysisの箇条書き指摘は過去記録の大規模な書換えになるため変更しない。
+- 一般70ケースへの意味評価層の導入、人手採点とLLM graderの一致、本人Goldでのleave-one-contact-out、候補なし閾値の校正、生成promptの整理、実APIでの送信可能性は未完了。Step 18-R4も未完成のまま。実API Contact Bench r41の品質FAILは解消確認できていない。
 
 ## 2026-10-09 作業中の進捗
 

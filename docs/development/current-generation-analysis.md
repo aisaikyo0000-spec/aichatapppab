@@ -2226,6 +2226,22 @@ fresh reviewer v47のHIGHを再現し、「好きです。でも嫌いです」�
 
 このIterationではAPI・ユーザー会話データを使っていない。`run_pipeline_benchmark.py --trace`はケースの入力・意図、匿名化した検索pair IDとscore、provider/account/model、prompt hashを記録する。完全なprompt本文は`--include-prompt-text`の明示指定時だけ保存する。`reply_quality_annotations.py export`はモデル情報・既存スコアを隠したCSVを生成し、`agreement`は2名分の一致率とweighted kappaを集計する。CSV本文は表計算式として評価されないよう無害化し、ローカル限定の警告を表示する。
 
-これらは評価を記録・実施する道具であり、まだ人間の採点結果やLLM graderとの一致度はない。prompt重複の統合、Goldデータを使った人手検索評価、ローカルEmbedding対hybridの比較、実API評価、Contact Bench/70ケース/Tappleの実返信レビューも未完了。現行ベンチ数値を完成判定に流用せず、Step 18-R4は未完成のままとする。
+これらは評価を記録・実施する道具であり、まだ人間の採点結果やLLM graderとの一致度はない。prompt重複の統合、Goldデータを使った人手検索評価、実API評価、Contact Bench/70ケース/Tappleの実返信レビューも未完了。現行ベンチ数値を完成判定に流用せず、Step 18-R4は未完成のままとする。
 
 実装コードcommitは`87c0049`。最新backend suiteは**1,340 passed / 2 warnings**、frontend production build、Python `compileall`、benchmark CLI `--help`、`git diff --check`は**PASS**。fresh reviewersはそれぞれの実装差分を**PASS**とした。GitHub main `a75ba76`は未変更。コードとこの記録をfork作業branchへ更新する。
+
+## 2026-10-09: ローカルEmbeddingとRRFの探索的比較
+
+ユーザー会話を外部へ送らず、合成短文10ケース（正解あり9件、no-hit 1件）で現行lexical順位、`intfloat/multilingual-e5-small` dense順位、両順位を使うRRFを測定した。モデルrevisionは`5697a65b0a002a92fe8c4fc9d495303ffff9c7d2`。モデルカードに従い`query:`／`passage:`接頭辞を付け、公開重みを取得した後はローカルCPU上だけで推論した。評価用スクリプトは生成・DB経路に接続していない。
+
+| 方式 | Recall@4 | MRR | no-hitに候補を返した数 |
+|---|---:|---:|---:|
+| 現行lexical | 0.889 | 0.889 | 0/1 |
+| E5 dense | 0.889 | 0.911 | 1/1 |
+| lexical+dense RRF | 0.889 | 0.911 | 1/1 |
+
+正解ありの平均だけでは差が見えないため、失敗ケースも確認した。「今日はくたくた」からGold「仕事で疲れちゃった」への意味的な言い換えはlexicalが対象を候補化せず、E5は対象を5位、RRFは5位に置き、上位4件には別のsoft decline例を返した。完全順位のMRRは0.022上がったが、実際の取得上限4件では改善にならない。陶芸のno-hit queryではdense/RRFが各1件返し、lexicalは0件だった。この手書きデータでは運用上の改善を確認できず、no-hit安全性は悪化した。従ってEmbeddingを本番採用せず、RRFに同一相手・Gold・phase加点を二重に足さない。少数合成ケースなので、これは候補モデルへの探索的な不採用判断であり、実データ品質の証明ではない。
+
+比較上の留意点として、現行lexical scorerは相手文と本人返信文を採点し、Gold品質・同一相手・phaseの既存加点も含む一方、dense側は相手文だけを符号化する。RRFは現行lexical順位を融合するため、lexical順位に含まれるmetadata効果は残るが、融合時に同じbonusを重ねない。全候補にdense順位が付く場合でも、候補なしの件数を隠さない。本人Goldを外部送信せずローカルに限定したleave-one-contact-out評価、人手の候補有用性ラベル、no-hit閾値を用意できるまでは本番変更をしない。
+
+追加物は`benchmark_embedding_retrieval.py`とその4件のテスト。RRFに重ねるmetadata bonusが小さな順位差を逆転し得る初回レビューFAILを受け、融合式の追加加点を除いた。回帰テストはlexical順位を固定して融合段階を分離し、同一相手Gold候補が融合段階で追加bonusを受けないことを検証する。MRRの全順位計算、metadata説明、テスト件数を直した後のfresh Reviewer v3は**PASS**。コードcommitは`c1d3a6c`。最終backend suiteは**1,344 passed / 2 warnings**、frontend build・compileall・CLI `--help`・`git diff --check`も**PASS**。警告は既存のFastAPI `on_event`非推奨通知。

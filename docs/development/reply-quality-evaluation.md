@@ -53,4 +53,12 @@ python scripts/reply_quality_annotations.py agreement ratings-a.csv ratings-b.cs
 
 既存70ケースの軸が`naturalness`の決定論的代理指標であること、意味の偽陰性と単純な話題再利用の偽陽性があることをコードと既存資料から確認した。既存thresholdは未変更。合成6ケースによるlexical retrieval baselineはRecall@4 1.0、MRR 1.0、Negative混入0件だったが、no-hitケースに無関係なpairを返したため、内容一致のない候補を外す最小ゲートを追加した。これらは小さな合成セットの結果であり、実利用の品質証明ではない。
 
-未実施の項目は、二重盲検の人手評価、LLM graderとの一致度測定、ユーザーGoldによるleave-one-contact-out検索比較、ローカルEmbedding対hybridの測定、実API返信候補の送信可能性評価である。
+## ローカルEmbeddingの探索的比較
+
+`scripts/benchmark_embedding_retrieval.py`は、合成短文10ケース（正解あり9件・no-hit 1件）で本番lexical順位、ローカルdense順位、両者のreciprocal-rank fusionを比較する。デフォルトは`intfloat/multilingual-e5-small`のrevision `5697a65b0a002a92fe8c4fc9d495303ffff9c7d2`。E5の`query:`／`passage:`接頭辞を使い、モデル重みはローカルCPUで実行する。ユーザーデータ、DB、外部推論APIは参照しない。全候補のスコア確認は`--full-details`を指定する。
+
+この小規模プローブでは、正解あり9件のRecall@4はlexical・dense・hybridいずれも**0.889**。完全順位から計算したMRRはlexical **0.889**、dense・hybrid **0.911**だった。この差は「今日はくたくた」の対象Goldがdense・hybridの5位まで上がったためで、実際に取得する上位4件には含まれない。RRFは現行lexical順位とdense順位を融合する。lexical順位には既存のGold品質・同一相手・phase加点が含まれるが、RRFでは同じ加点を重ねない。no-hitケースへの候補返却はlexical **0/1**に対しdense・hybridは**1/1**だった。運用上の改善とno-hitの安全性を確認できていないため、本番検索へは採用しない。
+
+この比較にも限界がある。ケースと正解ラベルは手書きの合成データで、実ユーザーの有用性ラベルではない。また現行lexical rankerは相手文と返信文を採点する一方、dense rankerは相手文だけを符号化する。数値をモデル一般の優劣や実データの精度と解釈しない。次は本人Goldを外部送信せずローカルで使い、複数相手を跨ぐholdoutと人手の有用性ラベルを整備してから再判断する。
+
+未実施の項目は、二重盲検の人手評価、LLM graderとの一致度測定、ユーザーGoldによるleave-one-contact-out検索比較、no-hit閾値の校正、実API返信候補の送信可能性評価である。Embeddingを本番に加える判断も保留する。

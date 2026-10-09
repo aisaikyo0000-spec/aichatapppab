@@ -4147,6 +4147,11 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         counterpart_style_block=counterpart_style_data["summary"],
         same_contact_gold_block=same_contact_gold_block,
         same_contact_gold_samples=hierarchical_profile["same_contact_gold_samples"],
+        same_contact_gold_length_median=(
+            hierarchical_profile["same_contact_blended_gold_profile"].char_median
+            if hierarchical_profile["same_contact_gold_samples"] >= 5
+            else None
+        ),
         conversation_ledger=conversation_ledger,
         counterpart_length_tier=counterpart_length_tier,
         counterpart_length_chars=counterpart_length_chars,

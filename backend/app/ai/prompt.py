@@ -473,6 +473,7 @@ def build_system_prompt(
     learned_preferences: str = "",
     same_contact_gold_block: str = "",
     same_contact_gold_samples: int = 0,
+    same_contact_gold_length_median: int | None = None,
     counterpart_length_tier: str = "",
     counterpart_length_chars: int = 0,
 ) -> str:
@@ -722,6 +723,11 @@ def build_system_prompt(
     # Block 7: COUNTERPART STYLE ADAPTATION / COUNTERPART WRITING STYLE
     # Step 2: 相手メッセージの長さ区分を傾向情報として付与（Hard Limit ではない）
     length_lines = []
+    if same_contact_gold_samples >= 5 and same_contact_gold_length_median is not None:
+        length_lines.append(
+            f"【CONTACT GOLD LENGTH】本人Goldの文量中央値（観測値）: {same_contact_gold_length_median}文字。"
+            "固定の文字数目標ではなく、相手ごとの返信傾向を示す参考情報として扱うこと。"
+        )
     if counterpart_length_tier in ("short", "medium", "long"):
         tier_label = {"short": "短文", "medium": "中文", "long": "長文"}[counterpart_length_tier]
         length_lines.append(

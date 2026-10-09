@@ -163,7 +163,7 @@ def test_prompt_exposes_contact_gold_median_as_soft_evidence():
     )
 
     assert "本人Goldの文量中央値（観測値）: 109文字" in sysp
-    assert "固定の文字数目標ではない" in sysp
+    assert "固定の文字数目標ではなく" in sysp
 
 
 def test_e_all_three_without_questions_pass():

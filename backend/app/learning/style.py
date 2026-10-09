@@ -493,7 +493,8 @@ def build_relationship_summary(contact_id: int | None) -> str:
         if prof.hybrid_ratio + prof.tame_ratio >= 0.6:
             tone_guidance += (
                 "自然な話題では3案中少なくとも2案を敬語だけで終わらせず、"
-                "Goldにある会話調や丁寧さと砕け具合の混ざり方を反映する。"
+                "Goldにある会話調や丁寧さと砕け具合の混ざり方を文全体に反映する。"
+                "そのうち敬語語尾を使わない案を少なくとも1つ含め、笑や絵文字だけでは口調適応と見なさない。"
             )
         else:
             tone_guidance += (

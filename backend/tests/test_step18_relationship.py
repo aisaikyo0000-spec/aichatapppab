@@ -281,7 +281,7 @@ def test_contact_style_soft_repair_detects_large_gold_mismatch_but_honors_explic
         explicit_tone="keigo",
     )
 
-    assert any("Goldにある会話調" in issue for issue in issues)
+    assert any("Goldでは会話調の返信" in issue for issue in issues)
     assert any("少し厚み" in issue for issue in issues)
     assert explicit_tone_issues == []
 

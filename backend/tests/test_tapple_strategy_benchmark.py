@@ -94,6 +94,95 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
     )
 
 
+@pytest.mark.parametrize(
+    "scenario_id, reply",
+    [
+        ("explicit_interest", "カフェ"),
+        ("counterproposal", "日曜"),
+        ("unlisted_shared_hobby", "ボルダリング"),
+    ],
+)
+def test_tapple_benchmark_rejects_fragmentary_replies_despite_matching_markers(
+    scenario_id, reply
+):
+    scenario = next(item for item in SCENARIOS if item["id"] == scenario_id)
+    latest_contact = next(
+        turn["content"]
+        for turn in reversed(scenario["messages"])
+        if turn["sender"] == "contact"
+    )
+    action = scenario["expected_action"]
+    result = {
+        "strategy": {
+            "action": action,
+            "rationale": "会話の反応に沿って判断します。",
+            "evidence": [latest_contact],
+            "invite_example": "駅前のカフェでお茶しませんか？" if action == "invite" else None,
+        },
+        "replies": [reply],
+    }
+
+    assert not expectation_met(scenario, result)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "いいですね、カフェ楽しみです！自宅で会いましょう。",
+        "バカですね、カフェ楽しみです！",
+    ],
+)
+def test_tapple_benchmark_applies_production_reply_validation_to_invite_scenarios(
+    reply,
+):
+    scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
+    latest_contact = scenario["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": "invite",
+            "rationale": "相手の希望に沿って返します。",
+            "evidence": [latest_contact],
+            "invite_example": "駅前のカフェでお茶しませんか？",
+        },
+        "replies": [reply],
+    }
+
+    assert not expectation_met(scenario, result)
+
+
+@pytest.mark.parametrize(
+    "scenario_id, action, rationale",
+    [
+        (
+            "ambiguous_interest",
+            "continue",
+            "相手は明確に会いたいと強く希望しています。",
+        ),
+        (
+            "tentative_interest",
+            "wait",
+            "断られたので今後の誘いは完全にやめるべきです。",
+        ),
+    ],
+)
+def test_tapple_benchmark_rejects_rationales_that_overstate_contact_intent(
+    scenario_id, action, rationale
+):
+    scenario = next(item for item in SCENARIOS if item["id"] == scenario_id)
+    latest_contact = scenario["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": action,
+            "rationale": rationale,
+            "evidence": [latest_contact],
+            "invite_example": None,
+        },
+        "replies": ["カフェの話、もう少し聞いてみたいです。"],
+    }
+
+    assert not expectation_met(scenario, result)
+
+
 def test_tapple_benchmark_scenarios_include_chat_context_and_allowed_actions():
     for scenario in SCENARIOS:
         assert [turn["sender"] for turn in scenario["messages"]][-1] == "contact"

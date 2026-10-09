@@ -151,6 +151,21 @@ def test_medium_incoming_does_not_force_same_line_count_for_contact_gold():
     assert "2〜3行程度の自然な返信を基本とすること" not in sysp
 
 
+def test_prompt_exposes_contact_gold_median_as_soft_evidence():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事で疲れた",
+        same_contact_gold_samples=6,
+        same_contact_gold_length_median=109,
+        counterpart_length_tier="short",
+        counterpart_length_chars=7,
+    )
+
+    assert "本人Goldの文量中央値（観測値）: 109文字" in sysp
+    assert "固定の文字数目標ではない" in sysp
+
+
 def test_e_all_three_without_questions_pass():
     """Test E: 3案すべてに質問がなくても validation を通過できる。"""
     replies = [

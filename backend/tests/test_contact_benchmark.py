@@ -16,6 +16,7 @@ import run_contact_benchmark as contact_benchmark
 from run_contact_benchmark import (
     CONTACTS,
     PROBE,
+    build_contact_report_entry,
     contact_quality_status,
     load_contact_fixture,
     seed_and_generate,
@@ -269,6 +270,24 @@ def test_contact_benchmark_marks_generated_outputs_for_manual_quality_review():
         "adaptation_pass": False,
         "expected_replies": 9,
     }
+
+
+def test_contact_benchmark_report_records_successful_route_without_credentials():
+    result = build_contact_report_entry(
+        {
+            "replies": ["返信1", "返信2", "返信3"],
+            "successful_route": {"account": "primary", "model": "gemini-3.5-flash-lite"},
+            "models_used": ["gemini-3.5-flash-lite"],
+        },
+        gold_pairs=[("相手", "Gold")],
+    )
+
+    assert result["successful_route"] == {
+        "account": "primary",
+        "model": "gemini-3.5-flash-lite",
+    }
+    assert result["models_used"] == ["gemini-3.5-flash-lite"]
+    assert "api_key" not in result
 
 
 @pytest.mark.parametrize("probe", [" ", "x" * 2001])

@@ -147,8 +147,10 @@ class GeminiProvider(AIProvider):
 
     def _parse_response(self, resp: httpx.Response, body_text: str) -> str:
         """APIレスポンスを解析し、テキストを返す。エラー場合はAIErrorを送出。"""
+        body_lower = body_text.lower()
         if resp.status_code == 401 or (
-            resp.status_code == 400 and "api key" in body_text.lower()
+            resp.status_code == 400
+            and ("api key" in body_lower or "invalid auth key" in body_lower)
         ):
             raise AIError(
                 "API Keyが正しくありません。Google AI Studioで発行したGemini API Keyを確認してください。",

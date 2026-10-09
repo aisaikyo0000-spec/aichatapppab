@@ -1311,7 +1311,7 @@ _TAPPLE_SCHEDULING_PROPOSAL_RE = re.compile(
     r"大丈夫|行こう|会おう|しませんか|しよう)"
     r"|(?:都合|空き|予定).{0,12}(?:ありますか|どうですか|つきますか|合いますか)"
 )
-_TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|飲食店|ボルダリングジム|スポーツジム|スポーツ施設|体育館|ボウリング場|公共の場所|人通りのある場所|人の多い場所|商業施設|フードコート|駅前|公園)")
+_TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|飲食店|ホテルのロビー|ボルダリングジム|スポーツジム|スポーツ施設|体育館|ボウリング場|公共の場所|人通りのある場所|人の多い場所|商業施設|フードコート|駅前|公園)")
 _TAPPLE_PRIVATE_PLACE_RE = re.compile(
     r"(?:自宅|お?うち(?:で|に|へ|集合|待ち合わせ|飲み)|お?家(?:で|に|へ|集合|待ち合わせ|飲み)|ホテル|客室|個室|スイートルーム|スイート|ルーム)"
 )
@@ -1323,7 +1323,6 @@ def _is_tapple_invitation_example_safe(example: object) -> bool:
         return False
     return not (
         not _TAPPLE_PUBLIC_PLACE_RE.search(example)
-        or _TAPPLE_PRIVATE_PLACE_RE.search(example)
         or _is_tapple_private_place_proposal(example)
         or _TAPPLE_CONTACT_EXCHANGE_RE.search(example)
         or _TAPPLE_INVITATION_EXAMPLE_PRESSURE_RE.search(example)

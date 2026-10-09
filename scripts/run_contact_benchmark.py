@@ -224,6 +224,32 @@ def style_sig(text):
             "laugh": 1 if ("笑" in text or "w" in text) else 0}
 
 
+def build_contact_report_entry(result: dict, gold_pairs: list[tuple[str, str]]) -> dict:
+    """Build a credential-free entry with enough evidence to review its route and style."""
+    if "error" in result:
+        return result
+    replies = result.get("replies", [])
+    signatures = [style_sig(reply) for reply in replies]
+    own_gold = [style_sig(gold) for _, gold in gold_pairs]
+    entry = {
+        "replies": replies,
+        "sigs": signatures,
+        "style_profile": result["style_profile"],
+        "successful_route": result.get("successful_route"),
+        "models_used": result.get("models_used", []),
+    }
+    if own_gold and signatures:
+        entry["own_gold"] = {
+            "laugh": round(sum(sig["laugh"] for sig in own_gold) / len(own_gold), 2),
+            "len": round(sum(sig["len"] for sig in own_gold) / len(own_gold), 1),
+        }
+        entry["reply_avg"] = {
+            "laugh": round(sum(sig["laugh"] for sig in signatures) / len(signatures), 2),
+            "len": round(sum(sig["len"] for sig in signatures) / len(signatures), 1),
+        }
+    return entry
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -287,27 +313,9 @@ def main():
         args.active_account,
         contact_fixtures,
     )
-    # discrimination: each reply closer to own Gold than to others?
-    gold_sig = {n: [style_sig(sm) for _, sm in pairs] for n, pairs in contact_fixtures.items()}
     report = {}
     for name, res in out.items():
-        if "error" in res:
-            report[name] = res
-            continue
-        entry = {
-            "replies": res["replies"],
-            "sigs": [style_sig(c) for c in res["replies"]],
-            "style_profile": res["style_profile"],
-        }
-        # avg laugh/len vs own Gold avg laugh/len
-        own = gold_sig[name]
-        own_laugh = sum(g["laugh"] for g in own) / len(own)
-        own_len = sum(g["len"] for g in own) / len(own)
-        rep_laugh = sum(s["laugh"] for s in entry["sigs"]) / len(entry["sigs"])
-        rep_len = sum(s["len"] for s in entry["sigs"]) / len(entry["sigs"])
-        entry["own_gold"] = {"laugh": round(own_laugh, 2), "len": round(own_len, 1)}
-        entry["reply_avg"] = {"laugh": round(rep_laugh, 2), "len": round(rep_len, 1)}
-        report[name] = entry
+        report[name] = build_contact_report_entry(res, contact_fixtures[name])
     report["probe"] = args.probe
     case_results = [report[name] for name in contact_fixtures if name in report]
     run_state = benchmark_run_state(case_results, len(contact_fixtures))

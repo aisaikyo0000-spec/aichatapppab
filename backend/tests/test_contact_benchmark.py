@@ -276,6 +276,7 @@ def test_contact_benchmark_report_records_successful_route_without_credentials()
     result = build_contact_report_entry(
         {
             "replies": ["返信1", "返信2", "返信3"],
+            "style_profile": {"tier": "same_contact_recent_manual_gold"},
             "successful_route": {"account": "primary", "model": "gemini-3.5-flash-lite"},
             "models_used": ["gemini-3.5-flash-lite"],
         },
@@ -351,6 +352,11 @@ def test_contact_benchmark_keeps_supplied_fixture_gold_isolated_by_contact(
 
     assert list(result) == ["A", "B", "C"]
     for label, other_labels in {"A": ("B", "C"), "B": ("A", "C"), "C": ("A", "B")}.items():
+        assert result[label]["successful_route"] == {
+            "account": "primary",
+            "model": "gemini-3.5-flash-lite",
+        }
+        assert result[label]["models_used"] == ["gemini-3.5-flash-lite"]
         matching_prompts = [
             messages[0]["content"]
             for messages in captured_messages

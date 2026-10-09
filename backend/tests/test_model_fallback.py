@@ -148,14 +148,20 @@ def test_explicit_gemini_primary_key_file_takes_precedence_over_database_key(
     database.set_setting("ai_provider", "gemini")
     database.set_setting("ai_model", "gemini-3.5-flash-lite")
     database.set_setting("api_key_gemini", "stale-database-key")
+    database.set_setting("ai_fallback_provider", "gemini")
+    database.set_setting("ai_fallback_model", "gemini-3.1-flash-lite")
+    database.set_setting("ai_fallback_api_key", "")
 
     cfg = get_ai_config()
     response = client.get("/api/settings")
 
     assert cfg["api_key"] == secret
     assert cfg["api_key_from_env"] is True
+    assert cfg["fallback_api_key"] == secret
+    assert cfg["fallback_api_key_from_env"] is True
     assert response.status_code == 200
     assert response.json()["has_api_key"] is True
+    assert response.json()["fallback_api_key_env"] is True
     assert secret not in response.text
 
 

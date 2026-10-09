@@ -5,13 +5,20 @@ import json
 import sys
 from statistics import median
 from pathlib import Path
+import pytest
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from app.ai import factory
 from app.routers import generation
-from run_contact_benchmark import CONTACTS, PROBE, seed_and_generate, style_sig
+from run_contact_benchmark import (
+    CONTACTS,
+    PROBE,
+    load_contact_fixture,
+    seed_and_generate,
+    style_sig,
+)
 
 
 def test_style_signature_detects_casual_laugh_and_length():
@@ -122,3 +129,94 @@ def test_contact_benchmark_generates_same_probe_with_contact_specific_gold_conte
         for name, replies in returned_replies.items()
         for reply in replies
     )
+
+
+def test_contact_gold_fixture_requires_anonymous_a_b_c_groups_with_six_pairs(
+    tmp_path,
+):
+    fixture = {
+        "contacts": {
+            label: [
+                {"incoming": f"相手の発言{index}", "gold": f"自分の返信{label}{index}"}
+                for index in range(6)
+            ]
+            for label in ("A", "B", "C")
+        }
+    }
+    path = tmp_path / "contact-gold.json"
+    path.write_text(json.dumps(fixture, ensure_ascii=False), encoding="utf-8")
+
+    loaded = load_contact_fixture(path)
+
+    assert list(loaded) == ["A", "B", "C"]
+    assert all(len(pairs) == 6 for pairs in loaded.values())
+    assert loaded["B"][0] == ("相手の発言0", "自分の返信B0")
+
+
+def test_contact_gold_fixture_rejects_named_groups_and_insufficient_gold(tmp_path):
+    named_fixture = {
+        "contacts": {
+            label: [{"incoming": "相手", "gold": "返信"} for _ in range(6)]
+            for label in ("Alice", "Bob", "Carol")
+        }
+    }
+    too_small_fixture = {
+        "contacts": {
+            label: [{"incoming": "相手", "gold": "返信"} for _ in range(5)]
+            for label in ("A", "B", "C")
+        }
+    }
+    named_path = tmp_path / "named.json"
+    small_path = tmp_path / "small.json"
+    named_path.write_text(json.dumps(named_fixture), encoding="utf-8")
+    small_path.write_text(json.dumps(too_small_fixture), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="A, B, C"):
+        load_contact_fixture(named_path)
+    with pytest.raises(ValueError, match="six"):
+        load_contact_fixture(small_path)
+
+
+def test_contact_benchmark_keeps_supplied_fixture_gold_isolated_by_contact(
+    client, monkeypatch
+):
+    captured_messages = []
+
+    class FakeProvider:
+        def generate(self, **kwargs):
+            captured_messages.append(kwargs["messages"])
+            return json.dumps(
+                {"replies": ["今日はゆっくり休めそう？笑", "無理せず休んでくださいね", "そうなんだね！"]},
+                ensure_ascii=False,
+            )
+
+    fixtures = {
+        label: [
+            (f"相手の話題{index}", f"Gold{label}固有の返信{index}")
+            for index in range(6)
+        ]
+        for label in ("A", "B", "C")
+    }
+    monkeypatch.setattr(factory, "get_provider", lambda *_args, **_kwargs: FakeProvider())
+
+    result = seed_and_generate(
+        client,
+        key="test-only-key",
+        model="gemini-3.5-flash-lite",
+        delay_seconds=0,
+        probe=PROBE,
+        contacts=fixtures,
+    )
+
+    assert list(result) == ["A", "B", "C"]
+    for label, other_labels in {"A": ("B", "C"), "B": ("A", "C"), "C": ("A", "B")}.items():
+        matching_prompts = [
+            messages[0]["content"]
+            for messages in captured_messages
+            if f"Gold{label}固有の返信" in messages[0]["content"]
+        ]
+        assert matching_prompts
+        assert all(
+            all(f"Gold{other}固有の返信" not in text for other in other_labels)
+            for text in matching_prompts
+        )

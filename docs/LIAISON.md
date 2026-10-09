@@ -664,4 +664,4 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - Gemini 3.5 Flash Liteで同一入力のContact Benchを実行し、A/B/Cすべて生成完了。ただし独立GAN受け入れ評価は**FAIL**。A/B/Cの距離感・文量の差が弱く、Bでは意味の近い質問が重複し、定型的な労いに偏った。質問頻度のGold cueを生成promptから外すだけでは、相手別の自然な適応に届かなかった
 - 変更コードの独立レビューは**PASS**。全backend suiteは当初**1 failed / 1,536 passed / 2 warnings**。失敗は質問ペースcueの配置変更後も旧表現をsystem prompt内に期待していたテストだった。文言のassertを外し、会話上の質問抑制を自然さ評価で確認する形へ直した。重複assertも除去。`test_step7_natural_conversation.py`と関連テストは**117 passed**、テスト差分の独立Pythonレビューも**PASS**。更新後の全suiteを再実行中
 - 既存条件の調査では、短文・質問なしを許容する指示が複数ブロックに繰り返される一方、相手別Styleは主に参考情報で、トーン加点も小さいことを確認した。これはR27の類似した文体に影響した可能性があるが、因果は未確定。次は事実安全性・Gold優先を保ち、短文/質問指示を一か所に整理する最小比較を行う
-- 更新後の全backend suiteは**1,537 passed / 2 warnings**、frontend production buildと`git diff --check`も**PASS**。Contact Benchは未達で、最新70ケースと全差分Reviewerは未完了。Step 18-R4は未完成。GitHub mainは変更していない
+- 更新後の全backend suiteは**1,537 passed / 2 warnings**、frontend production buildと`git diff --check`も**PASS**。Contact Benchは未達で、最新70ケースと全差分Reviewerは未完了。Step 18-R4は未完成。コード・資料のWIP commitは`1905286`。GitHub mainは変更していない

@@ -5010,6 +5010,10 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         # Gold 3件未満は中立。Context/Human/Personal Gold より下位。
         tone_fit = learning.contrast.contact_tone_fit(r, body.contact_id)
         final = round(final + 0.04 * (tone_fit - 0.5), 3)
+        # Step 18-R4: 同一相手Goldの文量は、質が近い候補の選択にだけ使う最弱の補助項（±0.01）。
+        # 少数Goldでは中立。文脈・自然さ・本人の基本文体を上書きしない。
+        contact_length_fit = learning.contrast.contact_length_fit(r, body.contact_id)
+        final = round(final + 0.02 * (contact_length_fit - 0.5), 3)
         # Step 17-R6 §3: FORCED（不要な文脈での質問）は軽く順位を下げる。質問そのものは禁止しない。
         _r6_q = naturalness.count_meaningful_questions(r)
         _r6_forced = _r6_necessity == "unnecessary" and _r6_q["informative"] >= 1

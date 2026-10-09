@@ -525,6 +525,27 @@ def contact_tone_fit(candidate: str, contact_id: int | None) -> float:
     return round(max(0.0, min(1.0, (tone_sim + laugh_sim + emoji_sim) / 3.0)), 3)
 
 
+def contact_length_fit(candidate: str, contact_id: int | None) -> float:
+    """同一相手への本人Goldの文量傾向との弱い適合度。
+
+    Gold 5件未満は中立。文脈や自然さを上書きする目標文字数ではなく、
+    候補の質が近い場合にだけ使う補助シグナル。
+    """
+    if not contact_id:
+        return 0.5
+    from . import style as style_mod
+
+    gold_pairs = style_mod.corpus.extract_same_contact_manual_gold_pairs(contact_id, limit=10)
+    texts = [p.self_turn.text.strip() for p in gold_pairs if not p.excluded and p.self_turn.text.strip()]
+    if len(texts) < 5:
+        return 0.5
+    median_length = max(int(statistics.median(len(text) for text in texts)), 1)
+    candidate_length = len((candidate or "").strip())
+    # 余裕幅を設け、わずかな文字数差やGold中央値への過剰追従を避ける。
+    scale = max(median_length, 20)
+    return round(max(0.0, min(1.0, 1.0 - abs(candidate_length - median_length) / scale)), 3)
+
+
 # --- Step 12: データ不足時の観測統計（ランキング変更なし） ---
 
 # Step 12 §2 のしきい値

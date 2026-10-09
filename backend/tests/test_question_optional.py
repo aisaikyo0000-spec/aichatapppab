@@ -136,6 +136,21 @@ def test_counterpart_short_style_cannot_override_user_contact_gold_length():
     assert "相手が短文中心の場合、説明的な長文にせず短く返すこと" not in sysp
 
 
+def test_medium_incoming_does_not_force_same_line_count_for_contact_gold():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事が忙しくて疲れた",
+        same_contact_gold_samples=6,
+        same_contact_gold_block="同一相手Goldの文量中央値は109字",
+        counterpart_length_tier="medium",
+        counterpart_length_chars=12,
+    )
+
+    assert "相手別Goldの文量傾向を主な参考にする" in sysp
+    assert "2〜3行程度の自然な返信を基本とすること" not in sysp
+
+
 def test_e_all_three_without_questions_pass():
     """Test E: 3案すべてに質問がなくても validation を通過できる。"""
     replies = [

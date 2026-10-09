@@ -2209,3 +2209,23 @@ Gemini 3.5 Flash Liteで同一入力「仕事で疲れた」を相手A/B/Cに生
 v46の再現ケースを直した後の全backend suiteは1,323 passed / 2 failed / 2 warnings。省略回答の極性と直接嗜好回答に関する2件は、その後のfocused testでPASSを確認したが、全suiteは再実行していない。fresh reviewer v47は、「好きです。でも嫌いです」のように矛盾する嗜好回答を、最初に現れた「好き」の極性だけでGold一致として通すHIGHを報告し、FAILとした。再現テストと修正は未実施。frontend production buildは前回PASS、最新差分のbuildと`git diff --check`は未確認。警告は既存のFastAPI `on_event` deprecationのみ。
 
 最新差分での実API Contact Bench再実行、返信全文の3相手比較、正規70ケース回帰、Tapple実生成評価、資料を含む最終reviewは未完了。r41の品質FAILは未解消であり、Step 18-R4は未完成。モデル変更・評価器変更・ケース除外で合格に見せず、GitHub `main`にも反映しない。次は自動テストと独立コードレビューが通った後、利用API枠を考慮した必要最小限のContact Benchを実行し、品質判定を更新する。
+
+## 2026-10-09: 評価方式・RAGの追加調査と小規模実装
+
+### 評価器
+
+70ケースの現行4軸は、人手採点ではなく自然さheuristicの代理指標である。Context Fitは主にrelevance、Humanはquestion/echo/length/overreactの最小値、Conversationはrepetition/lengthの最小値で構成される。したがって、語彙のずれや短い共感を誤って低評価するケースと、同じ話題語を返すだけで高評価になるケースが混在する。評価器の定義・しきい値・70ケースは維持し、追加の意味評価を生成/ranking/repairへ戻さないposthoc層として検証する。意味評価と本人が実際に送れるかの評価は別の評価セットにする。LLM graderは人手ラベルとの一致を測るまで受け入れゲートにしない。
+
+### RAG
+
+既存lexical rankingは文字bi-gram/話題一致にGold品質・同一相手・phaseの加点を足すため、内容一致がなくてもmetadataだけで正点となる場合があった。`scripts/benchmark_retrieval_quality.py`に合成6ケースの局所ベースラインを追加した。Recall@4 / MRRは5つの正解ありケースで**1.0 / 1.0**、Negative混入は**0**。ただし、正解なしの「宇宙旅行」には旧方式が例文を返していた。この発見を受け、相手の入力文とのlexical content signalがない候補をmetadata加点だけで昇格させないゲートを追加し、no-hit queryの返却を**0件**にした。これは語彙検索で同義表現を拾える証明ではないため、Embedding導入の根拠にはまだ使わない。実データを使った人手関連性ラベルと、bi-gram / local embedding / hybridの比較を次段階に残す。
+
+### 返信validatorの境界修正
+
+fresh reviewer v47のHIGHを再現し、「好きです。でも嫌いです」のように同一話題で肯否が混在する返信を検知するよう修正した。別の話題（例: 犬・コーヒー）の好みは質問対象への矛盾として数えず、漢字・ひらがな・カタカナの主語を含む回帰ケースを追加。レビューは後続の境界修正後に**PASS**。これはデータの整合性を保つvalidator修正であり、生成文の自然さを改善したとの主張ではない。
+
+このIterationではAPI・ユーザー会話データを使っていない。`run_pipeline_benchmark.py --trace`はケースの入力・意図、匿名化した検索pair IDとscore、provider/account/model、prompt hashを記録する。完全なprompt本文は`--include-prompt-text`の明示指定時だけ保存する。`reply_quality_annotations.py export`はモデル情報・既存スコアを隠したCSVを生成し、`agreement`は2名分の一致率とweighted kappaを集計する。CSV本文は表計算式として評価されないよう無害化し、ローカル限定の警告を表示する。
+
+これらは評価を記録・実施する道具であり、まだ人間の採点結果やLLM graderとの一致度はない。prompt重複の統合、Goldデータを使った人手検索評価、ローカルEmbedding対hybridの比較、実API評価、Contact Bench/70ケース/Tappleの実返信レビューも未完了。現行ベンチ数値を完成判定に流用せず、Step 18-R4は未完成のままとする。
+
+実装コードcommitは`87c0049`。最新backend suiteは**1,340 passed / 2 warnings**、frontend production build、Python `compileall`、benchmark CLI `--help`、`git diff --check`は**PASS**。fresh reviewersはそれぞれの実装差分を**PASS**とした。GitHub main `a75ba76`は未変更。コードとこの記録をfork作業branchへ更新する。

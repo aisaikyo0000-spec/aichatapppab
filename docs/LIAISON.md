@@ -606,3 +606,11 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - 「今回だけ会って」「そう言わずに会って」「もう少し考えて」「考え直していただけると幸い」などの間接的な説得表現と、複数の日程理由を含む発言の拒否分類について回帰テストを追加した。引用・伝聞で明るい承諾に見えても、第三者の発言なら本人の承諾として扱わない
 - `python -m pytest backend/tests -q` **968 passed / 2 warnings**。第三者境界を含むTapple strategy tests **403 passed**。Gemini primary3.5→primary3.1→secondary3.5→secondary3.1のrate-limit切替テスト **45 passed**。frontend production build、Python compileall、benchmark `--help`、`git diff --check` **PASS**。独立Safety ReviewerとPython Reviewerはともに**PASS**
 - Gemini APIは未呼出し。朝の確認までは実キー疎通を保留する。実APIでの最新70ケース、Contact Bench 3/3、Tapple全11ケースの生成文と目視評価が残るため、最終判定は**未完成**。作業branchのWIPを更新し、upstream mainは変更しない
+
+## 2026-10-09 評価・検索の原因分離（Iteration 1）
+
+- 既存70ケースの4軸は独立した人手評価ではなく、`naturalness`の語彙・パターン指標を`min`等でまとめた代理指標と確認した。語彙一致による偽陰性と、話題を一語繰り返すだけの偽陽性が記録されている。評価器・閾値・70ケースは変更せず、意味評価と送信可能性評価を別層にする
+- 新しいオフライン検索ベンチを追加。合成6ケースで現行lexical RAGのRecall@4 **1.0**、MRR **1.0**、Negative混入 **0件**。ただし、正解のない「宇宙旅行」にmetadata加点だけで無関係な例が返る失敗を確認したため、問い合わせ本文とのlexical content signalがない候補を弾く最小ゲートを実装した。変更後はno-hit queryへの例文返却 **0件**、空コーパス時のprompt blockは空のまま。合成セットの成績は実利用性能の証明ではなく、Embedding採否の結論にも使わない
+- 独立レビューで見つかった「好きです。でも嫌いです」の矛盾嗜好回答すり抜けを修正。別話題の好みを矛盾と誤判定しない漢字・かな・カタカナの回帰テストも追加。fresh Python Reviewer **PASS**
+- 評価artifactのtraceを追加。`--trace`で入力・intent・検索pairの匿名ID/score/metadata・各呼出のprovider/account/model/prompt SHA-256を保存する。完全なprompt本文は個人情報を含み得るため、`--include-prompt-text`指定時のみ保存し、実行前に警告する。provider失敗回数とraw応答数のずれによるcase間の誤対応も修正した。別ツールで候補を盲検化した採点CSVと、2名分の完全一致率・quadratic weighted kappaを計算できる。式に見える本文のCSV injectionも防ぐ
+- 最新コード`87c0049`で`python -m pytest backend/tests -q` **1,340 passed / 2 warnings**、frontend production build、対象Python `compileall`、benchmark CLI `--help`、`git diff --check`は**PASS**。full-diff Python Reviewer、validator/retrieval Reviewer、traceability Reviewer、盲検評価ツール Reviewerは**PASS**。Gemini API・ユーザー会話データは未使用。RAGの意味検索比較、人手関連性評価、LLM graderとの一致度、実API受入、Contact Bench/70ケース/Tapple実生成は未完了。Step 18-R4は未完成。GitHub main基点 `a75ba76` は維持。コードWIPはfork作業branchへ公開予定

@@ -159,7 +159,9 @@ SCENARIOS = (
         ],
         "allowed_actions": ["continue", "clarify", "wait"],
         "no_reinvitation": True,
-        "reply_must_contain_any": ["カフェ", "コーヒー", "気になります", "どんな", "おすすめ", "いいですね"],
+        "reply_must_contain_any": [
+            "いいですね", "気になります", "行ってみたい", "どんなお店", "おすすめ",
+        ],
     },
     {
         "id": "tentative_interest",

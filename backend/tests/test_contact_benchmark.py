@@ -12,6 +12,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from app.ai import factory
 from app.routers import generation
+import run_contact_benchmark as contact_benchmark
 from run_contact_benchmark import (
     CONTACTS,
     PROBE,
@@ -248,6 +249,23 @@ def test_contact_benchmark_marks_generated_outputs_for_manual_quality_review():
         "adaptation_pass": False,
         "expected_replies": 9,
     }
+
+
+def test_contact_benchmark_rejects_overlong_probe_before_reading_api_key(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_contact_benchmark.py", "--out", str(tmp_path / "result.json"), "--probe", "x" * 2001],
+    )
+
+    def fail_if_api_key_is_read(*_args, **_kwargs):
+        raise AssertionError("API key must not be read for invalid probe input")
+
+    monkeypatch.setattr(contact_benchmark, "read_gemini_api_key", fail_if_api_key_is_read)
+
+    assert contact_benchmark.main() == 2
 
 
 def test_contact_benchmark_keeps_supplied_fixture_gold_isolated_by_contact(

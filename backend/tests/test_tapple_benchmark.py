@@ -73,7 +73,9 @@ def _valid_results():
     return results
 
 
-def test_selected_scenario_artifact_can_complete_without_claiming_full_benchmark():
+def test_selected_scenario_artifact_can_complete_without_claiming_full_benchmark(
+    tmp_path,
+):
     scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
     result = {
         "id": scenario["id"],
@@ -86,14 +88,18 @@ def test_selected_scenario_artifact_can_complete_without_claiming_full_benchmark
         "replies": ["一緒に行けるの嬉しいです！"],
     }
 
-    summary = summarize_expectations(
-        [result], complete=True, scenarios=(scenario,)
-    )
+    artifact_path = tmp_path / "selected-scenario.json"
+    _write_artifact(artifact_path, [result], complete=True, scenarios=(scenario,))
+    summary = json.loads(artifact_path.read_text(encoding="utf-8"))["summary"]
 
     assert summary["complete"] is True
     assert summary["expectation_failure_reasons"] == {}
     assert summary["quality_pass"] is True
     assert summary["expectation_total"] == 1
+    assert summary["benchmark_scope"] == "selected_scenarios"
+    assert summary["is_full_benchmark"] is False
+    assert summary["selected_scenario_ids"] == [scenario["id"]]
+    assert summary["full_suite_pass"] is False
 
 
 def test_tapple_benchmark_passes_only_when_all_scenarios_have_evidence_and_replies():
@@ -105,6 +111,33 @@ def test_tapple_benchmark_passes_only_when_all_scenarios_have_evidence_and_repli
     assert summary["expectations_met"] == len(SCENARIOS)
     assert summary["expectation_failures"] == []
     assert summary["exit_code"] == 0
+    assert summary["benchmark_scope"] == "full_suite"
+    assert summary["is_full_benchmark"] is True
+    assert summary["selected_scenario_ids"] == [item["id"] for item in SCENARIOS]
+    assert summary["full_suite_pass"] is True
+
+
+@pytest.mark.parametrize(
+    "invite_example",
+    [
+        "駅前のカフェで絶対来てね！",
+        "駅前のカフェなら来るよね？",
+        "断るなんてないよね、駅前のカフェで会おう！",
+    ],
+)
+def test_tapple_benchmark_rejects_pressuring_invitation_examples(invite_example):
+    results = _valid_results()
+    explicit_interest = next(
+        result for result in results if result["id"] == "explicit_interest"
+    )
+    explicit_interest["strategy"]["invite_example"] = invite_example
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert "unsafe_invitation_example" in summary["expectation_failure_reasons"][
+        "explicit_interest"
+    ]
 
 
 def test_tapple_benchmark_rejects_complete_run_with_wrong_strategy():

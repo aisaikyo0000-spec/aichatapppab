@@ -4178,6 +4178,37 @@ def test_invitation_example_must_be_public_and_must_not_suggest_contact_exchange
         assert result.invite_example is None, private_itinerary
 
 
+@pytest.mark.parametrize(
+    "coercive_example",
+    [
+        "駅前のカフェで絶対来てね！",
+        "駅前のカフェなら来るよね？",
+        "断るなんてないよね、駅前のカフェで会おう！",
+        "駅前のカフェに行くって約束したよね？考え直して！",
+    ],
+)
+def test_tapple_invitation_example_rejects_pressure_and_assumed_consent(
+    coercive_example,
+):
+    conversation = "相手: 今度一緒に行きたいです"
+    result = _parse_tapple_strategy(
+        _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "相手に明確な参加意思があります。",
+                "evidence": ["今度一緒に行きたいです"],
+                "invite_example": coercive_example,
+            }
+        ),
+        conversation,
+    )
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example is None
+    assert _tapple_strategy_output_violations(result)
+
+
 def test_tapple_reply_candidates_reject_contact_exchange_requests_only_in_tapple_mode():
     unsafe_replies = [
         "今度カフェ行こう！よかったらLINE交換しない？",

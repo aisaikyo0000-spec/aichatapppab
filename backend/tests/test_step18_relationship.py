@@ -441,6 +441,24 @@ def test_learned_policy_does_not_override_contact_length_with_short_reply_bias()
     assert "短い相槌・一言反応を優先すること" not in profile
 
 
+def test_relationship_summary_preserves_reliably_longer_contact_style(client):
+    _seed_gold(client, "短いGlobal", [
+        (f"入力{i}", "いいね！") for i in range(6)
+    ])
+    long_replies = [
+        (f"相手の入力{i}", "それは大変だったね！今日は無理せずゆっくり休んで、明日は少しでも楽になるといいね！"
+         "落ち着いたらまた話そう！")
+        for i in range(6)
+    ]
+    cid = _seed_gold(client, "比較的長く返す相手", long_replies)
+
+    summary = style.build_relationship_summary(cid)
+
+    assert "Global Goldより長い返信が多い" in summary
+    assert "話題が許す場合" in summary
+    assert "毎回この文量にする必要はない" in summary
+
+
 def test_automatic_contact_tone_uses_confident_manual_gold_only(client):
     casual_id = _seed_gold(client, "砕けた相手", TAME_PAIRS)
     polite_id = _seed_gold(client, "丁寧な相手", KEIGO_PAIRS)

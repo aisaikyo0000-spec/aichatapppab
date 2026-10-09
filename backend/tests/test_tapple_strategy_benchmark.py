@@ -226,6 +226,37 @@ def test_tapple_benchmark_does_not_use_superseded_interest_to_support_rationale(
     assert not expectation_met(scenario, result)
 
 
+@pytest.mark.parametrize(
+    "scenario_id, rationale",
+    [
+        (
+            "ambiguous_interest",
+            "相手は明確に会いたいとは言っていません。会話を続けます。",
+        ),
+        (
+            "tentative_interest",
+            "断られたわけではないので、急がず様子を見ます。",
+        ),
+    ],
+)
+def test_tapple_benchmark_allows_rationales_that_explicitly_deny_overclaim(
+    scenario_id, rationale
+):
+    scenario = next(item for item in SCENARIOS if item["id"] == scenario_id)
+    latest_contact = scenario["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": scenario["allowed_actions"][0],
+            "rationale": rationale,
+            "evidence": [latest_contact],
+            "invite_example": None,
+        },
+        "replies": ["カフェの話、もう少し聞いてみたいです。"],
+    }
+
+    assert expectation_met(scenario, result)
+
+
 def test_tapple_benchmark_scenarios_include_chat_context_and_allowed_actions():
     for scenario in SCENARIOS:
         assert [turn["sender"] for turn in scenario["messages"]][-1] == "contact"

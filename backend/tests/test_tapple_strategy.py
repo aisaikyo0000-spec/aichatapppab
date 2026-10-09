@@ -2661,6 +2661,8 @@ def test_hard_meeting_refusal_is_not_reopened_by_later_availability(statement):
     [
         "会うことは考えられません。",
         "会う気分ではありません。",
+        "今は会う気分ではないです。",
+        "会う気分じゃないです。",
         "会うのはできれば避けたいです。",
     ],
 )

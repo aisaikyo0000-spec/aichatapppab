@@ -82,7 +82,7 @@ def test_tapple_system_and_generation_prompts_share_one_compatible_json_contract
         assert '"replies"' in message["content"]
         assert '出力は必ず JSON形式の {"replies": ["案1の返信文章"' not in message["content"]
         assert '"invite_example":null' in message["content"]
-        assert "strategyは会話上の根拠がある場合のみ含め" in message["content"]
+        assert "strategyは任意のトップレベル項目" in message["content"]
         assert "invite_exampleはinvite時のみ文字列" in message["content"]
 
 
@@ -158,7 +158,9 @@ def test_tapple_prompts_require_a_safe_example_for_invite():
     assert "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め" in initial_text
     assert "具体的な店名や日時を会話にないのに作らない" in initial_text
     assert "invite_exampleの文面にも駅前やカフェなど公共の場所だと分かる表現" in initial_text
-    assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' in initial_text
+    assert '"invite_example":null' in initial_text
+    assert "strategyは任意のトップレベル項目" in initial_text
+    assert "invite_exampleはinvite時のみ文字列" in initial_text
 
     repair = _build_repair_messages(
         initial,
@@ -180,7 +182,9 @@ def test_tapple_prompts_require_a_safe_example_for_invite():
     assert "invite_exampleの文面にも駅前やカフェなど公共の場所だと分かる表現" in repair_text
     assert "会話にない自分の体験・予定・意向を事実として足さない" in repair_text
     assert "inviteを基本方針として選んでください" in repair_text
-    assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' in repair_text
+    assert '"invite_example":null' in repair_text
+    assert "strategyは任意のトップレベル項目" in repair_text
+    assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' not in repair_text
 
 
 def test_ambiguous_interest_alone_does_not_authorize_an_invitation():
@@ -287,7 +291,7 @@ def test_tapple_single_candidate_extracts_reply_from_strategy_json():
         candidates=1,
         strategy_mode="tapple",
     )
-    assert '"replies":["案1"]' in messages[1]["content"]
+    assert '"replies": ["案1"]' in messages[1]["content"]
     assert '"案1","案2","案3"' not in messages[1]["content"]
     assert "3案" not in messages[1]["content"]
 
@@ -312,7 +316,7 @@ def test_tapple_single_candidate_extracts_reply_from_strategy_json():
         candidates=2,
         strategy_mode="tapple",
     )[1]["content"]
-    assert '"replies":["案1","案2"]' in two_candidate_prompt
+    assert '"replies": ["案1", "案2"]' in two_candidate_prompt
     assert "3案" not in two_candidate_prompt
 
 
@@ -326,7 +330,7 @@ def test_tapple_revision_prompt_honors_single_candidate_count():
         strategy_mode="tapple",
         candidates=1,
     )
-    assert '"replies":["案1"]' in messages[-1]["content"]
+    assert '"replies": ["案1"]' in messages[-1]["content"]
     assert "3案" not in messages[-1]["content"]
     assert "安全面への不安" in messages[-1]["content"]
 
@@ -343,7 +347,7 @@ def test_tapple_revision_and_repair_prompts_honor_two_and_three_candidates():
             strategy_mode="tapple",
             candidates=candidate_count,
         )
-        assert f'"replies":[{slots}]' in revision[-1]["content"]
+        assert f'"replies": [{slots.replace(",", ", ")}]' in revision[-1]["content"]
 
         initial = prompt.build_initial_generation_messages(
             system_prompt="system",

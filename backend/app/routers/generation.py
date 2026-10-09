@@ -4112,7 +4112,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
 
     # 5.56 Step 18: 同一相手への返信距離感サマリー（短い抽象ブロック。実績なしなら空）
     relationship_block = learning.style.build_relationship_summary(
-        contact_id, requested_tone=effective_tone
+        contact_id, requested_tone=tone
     )
     if relationship_block:
         same_contact_gold_block = (

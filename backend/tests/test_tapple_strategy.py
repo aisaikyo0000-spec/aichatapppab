@@ -12,6 +12,7 @@ from app.routers.generation import (
     _is_tapple_private_place_proposal,
     _parse_replies_strict,
     _parse_tapple_strategy as _parse_tapple_strategy_messages,
+    _tapple_strategy_output_violations,
     _unqualified_tapple_decline_matches,
     validate_candidate_replies,
 )

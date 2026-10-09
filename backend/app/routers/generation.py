@@ -1295,6 +1295,14 @@ _TAPPLE_RECONSIDERATION_PRESSURE_RE = re.compile(
     r"(?:チャンス|お願い).{0,8}(?:ください|くれ|もらえ|お願いします)?)"
     r"|(?:チャンス|お願い).{0,8}(?:ください|くれませんか|お願いします)"
 )
+_TAPPLE_INVITATION_EXAMPLE_PRESSURE_RE = re.compile(
+    r"(?:断る(?:なんて|わけ(?:が)?)?ない|断れない)"
+    r"|(?:絶対|必ず|当然|もう決まり).{0,12}(?:来て|来る|会おう|行こう|参加)"
+    r"|(?:来る|来て(?:くれる|くださる)?|会う|会って|行く|行って|参加する)"
+    r".{0,8}(?:よね|でしょう|だよね|でしょ)"
+    r"|考え直(?:して|してよ|してください|してくれ)"
+    r"|(?:" + _TAPPLE_RECONSIDERATION_PRESSURE_RE.pattern + r")"
+)
 _TAPPLE_SCHEDULING_PROPOSAL_RE = re.compile(
     r"(?:今度|また|次|来月|再来月|今月|来年|来週|今週(?:末)?|週末|今日|明日|土曜(?:日)?|日曜(?:日)?|"
     r"平日|いつか|改めて|落ち着いたら|都合が合えば).{0,16}"
@@ -1307,6 +1315,19 @@ _TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|�
 _TAPPLE_PRIVATE_PLACE_RE = re.compile(
     r"(?:自宅|お?うち(?:で|に|へ|集合|待ち合わせ|飲み)|お?家(?:で|に|へ|集合|待ち合わせ|飲み)|ホテル|客室|個室|スイートルーム|スイート|ルーム)"
 )
+
+
+def _is_tapple_invitation_example_safe(example: object) -> bool:
+    """Require a public, non-coercive invitation example with no contact exchange."""
+    if not isinstance(example, str) or not example.strip():
+        return False
+    return not (
+        not _TAPPLE_PUBLIC_PLACE_RE.search(example)
+        or _TAPPLE_PRIVATE_PLACE_RE.search(example)
+        or _is_tapple_private_place_proposal(example)
+        or _TAPPLE_CONTACT_EXCHANGE_RE.search(example)
+        or _TAPPLE_INVITATION_EXAMPLE_PRESSURE_RE.search(example)
+    )
 _TAPPLE_NEGATED_PRIVATE_PLACE_RE = re.compile(
     r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|民泊|貸別荘|ゲストハウス|レンタルルーム|旅館|客室|個室|スイートルーム|スイート|ルーム)(?:には|は)行かない(?![？?])|"
     r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|民泊|貸別荘|ゲストハウス|レンタルルーム|旅館|客室|個室|スイートルーム|スイート|ルーム)(?:では|には)会わない(?![？?])|"
@@ -1479,11 +1500,7 @@ def _parse_tapple_strategy(
                 invite_example=None,
             )
         safe_example = proposed.invite_example
-        if safe_example and (
-            not _TAPPLE_PUBLIC_PLACE_RE.search(safe_example)
-            or _is_tapple_private_place_proposal(safe_example)
-            or _TAPPLE_CONTACT_EXCHANGE_RE.search(safe_example)
-        ):
+        if safe_example and not _is_tapple_invitation_example_safe(safe_example):
             safe_example = None
         safety_notice = (
             "AIは相手の信頼性や実際の安全性を判断できません。"

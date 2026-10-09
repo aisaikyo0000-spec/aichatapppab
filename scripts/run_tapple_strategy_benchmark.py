@@ -398,11 +398,7 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
     if action == "invite":
         if not isinstance(invite_example, str) or not invite_example.strip():
             failures.append("missing_invitation_example")
-        elif (
-            not generation._TAPPLE_PUBLIC_PLACE_RE.search(invite_example)
-            or generation._TAPPLE_PRIVATE_PLACE_RE.search(invite_example)
-            or generation._is_tapple_contact_exchange_request(invite_example)
-        ):
+        elif not generation._is_tapple_invitation_example_safe(invite_example):
             failures.append("unsafe_invitation_example")
     elif invite_example is not None:
         failures.append("invitation_example_without_invite_action")
@@ -422,6 +418,8 @@ def summarize_expectations(
 ) -> dict:
     scenarios_by_id = {scenario["id"]: scenario for scenario in scenarios}
     expected_ids = list(scenarios_by_id)
+    canonical_scenario_ids = [scenario["id"] for scenario in SCENARIOS]
+    is_full_benchmark = expected_ids == canonical_scenario_ids
     safe_results = [
         result if isinstance(result, dict) else {"error": "invalid_result_record"}
         for result in results
@@ -471,6 +469,10 @@ def summarize_expectations(
         "expectation_failures": failures,
         "expectation_failure_reasons": failure_reasons,
         "quality_pass": quality_pass,
+        "benchmark_scope": "full_suite" if is_full_benchmark else "selected_scenarios",
+        "is_full_benchmark": is_full_benchmark,
+        "selected_scenario_ids": expected_ids,
+        "full_suite_pass": is_full_benchmark and quality_pass,
         "stopped_reason": stopped_reason,
         "exit_code": exit_code,
     }

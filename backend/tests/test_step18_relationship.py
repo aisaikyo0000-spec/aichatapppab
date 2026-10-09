@@ -172,13 +172,21 @@ def test_contact_length_nudge_breaks_near_tie_but_preserves_quality_gap():
         {"reply": "x" * 10, "final": 0.500},
         {"reply": "x" * 40, "final": 0.470},
     ]
+    forced_question_precedence = [
+        {"reply": "x" * 40, "final": 0.480},  # 0.020 forced-question deduction already applied
+        {"reply": "", "final": 0.500},
+    ]
 
     generation._apply_contact_length_nudge(near_tie, profile, contact_id=1)
     generation._apply_contact_length_nudge(clear_quality_gap, profile, contact_id=1)
+    generation._apply_contact_length_nudge(
+        forced_question_precedence, profile, contact_id=1
+    )
 
     assert near_tie[0]["final"] > near_tie[1]["final"]
     assert clear_quality_gap[0]["final"] > clear_quality_gap[1]["final"]
-    assert abs(near_tie[0]["contact_length_adjustment"]) <= 0.01
+    assert forced_question_precedence[0]["final"] < forced_question_precedence[1]["final"]
+    assert abs(near_tie[0]["contact_length_adjustment"]) <= 0.005
 
 
 def test_single_contact_gold_does_not_replace_global_gold_style(client):

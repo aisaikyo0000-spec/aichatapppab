@@ -268,7 +268,7 @@ export default function GenerationPanel({ contactId, onSend, onMessage, tone }: 
   const showPreview = async () => {
     setPreviewing(true)
     try {
-      setPreview(await api.previewGeneration(contactId, effectiveCondition))
+      setPreview(await api.previewGeneration(contactId, effectiveCondition, tone))
     } catch (e) {
       onMessage(e instanceof Error ? e.message : '送信内容の取得に失敗しました', 'error')
     } finally {

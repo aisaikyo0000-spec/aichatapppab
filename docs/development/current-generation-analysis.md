@@ -1,5 +1,31 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-09 Step 18-R4 Iteration 31: 本人の記号設定・口調切替・API確認
+
+本人の記号の好みを、会話履歴のない場合も生成プロンプトへ伝える。基本は「、」「。」を避け、文意に合えば「！」「？」や絵文字を使い、記号を付けない終わり方も許す。記号を機械的に足さず、読みやすさと自然さを優先する。口調モードを変える指示にはせず、敬語・タメ口の選択を維持する回帰テストを追加した。
+
+敬語・タメ口の切替UIは既存機能だったが、相手を切り替えても選択が残り、生成プレビューに口調が送られなかった。相手変更時は自動へ戻し、プレビューにも生成時と同じ選択値を渡すよう修正した。プレビューには指定口調と適用口調を表示する。frontend production buildはPASS。
+
+少数の実APIテストに向けて、Tappleベンチに`--scenario`と`--tone`を追加した。指定時は選択したケースだけを実行し、全件実行の既定動作と14シナリオの評価条件は維持する。単独シナリオのartifact完了判定をテストした。
+
+Gemini 3.5 Flash Liteへの実API呼び出しは1回で、HTTP 400 `Invalid Auth key`となった。レート制限ではないため、モデルやアカウントは切り替えていない。合成会話を使い、実チャット履歴は送信していない。生成返信が得られず、実際の文面評価は未完了。
+
+`python -m pytest backend/tests -q`: **1,214 passed / 2 warnings**。frontend production build、Tapple benchmark `--help`、`git diff --check`はPASS。Python ReviewerとTypeScript Reviewerはともに**PASS**。APIキー認証、実生成の文面確認、最新70ケース、Contact Benchの全9返信、Tapple全14シナリオの生成と全文レビューが残っているため、Step 18-R4は未完成。
+
+## 2026-10-09 Step 18-R4 オフライン Iteration 30
+
+Contact Adaptationで、最近の相手別Goldに含まれる絵文字の並びが最終profileへ反映されない不具合を修正した。新旧Goldの絵文字順位をrecency weightで段階的に混ぜ、過去の傾向も残す。再現テストは修正前に失敗し、style関連テストは**34 passed**。
+
+Tapple側では、会うことへの明確な拒否を示す口語表現と、ためらいを示す表現を追加した。`会うことは考えられません`、`会う気分ではありません`、`できれば避けたい`は停止にし、`気が進まない`や直接会う話の省略記号は、関心の文と同時に出ても招待を保留する。返信validatorは「絶対安全」「安全を保証する」といった実際には確認できない断定を拒否する一方、「安全を保証できるとは言えない」のように断定を避ける表現は通す。
+
+Tapple評価器はすべてのシナリオで本番の返信validatorを呼ぶ。曖昧な関心を示すシナリオでは、`カフェ`のように話題語だけの返信を合格させない。14シナリオ数や閾値は変更していない。テストでは安全保証のすり抜け、単語だけの文、根拠と矛盾する戦略説明を修正前に再現した。
+
+`python -m pytest backend/tests -q`: **1,205 passed / 2 warnings**。Tapple strategy・benchmark suite **626 passed**、frontend production build、Python `compileall`、Tapple benchmark `--help`、`git diff --check`はPASS。警告は既存のFastAPI `on_event`非推奨通知。現差分に対するfresh Reviewerは確認中。
+
+Gemini APIは呼び出していない。Tappleの実生成ベンチは空の相手プロフィールで走るため、本人Goldを使った文体適合評価ではない。本人Goldを使うContact Bench、正規70ケース、Tapple全14ケースの実生成と人手レビューも未実施である。利用者から疎通再開の指示があるまでは実APIを呼ばない。Step 18-R4は未完成である。
+
+今回のRED/GREEN commitは、絵文字順位`bff74b4`→`f924a90`、安全・拒否境界`ee32921`→`ddb9e48`、曖昧な返信の評価`7ed4470`→`40eef5d`、安全表現の否定確認`b958a32`→`5ac885e`。作業branchは`codex/chat-quality-20261008`、GitHub main基点は`a75ba76`。レビュー後に資料とWIPをforkへpushする。
+
 ## 2026-10-09 Step 18-R4 オフライン Iteration 29
 
 - Contact Adaptationでは、対象相手のGoldが少ないときに別相手のSilverプロフィールでGoldを上書きする経路を塞いだ。対象相手のGold優先を保ち、データ不足時は既存のglobal fallbackを使う回帰テストを追加した。

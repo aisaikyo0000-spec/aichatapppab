@@ -35,6 +35,10 @@ export default function ChatArea({ contact, onContactsChanged, onToast, onBack }
   const contactMsgCount = Math.max(contactMessages.length, contact.contact_message_count ?? 0)
 
   useEffect(() => {
+    setTone('')
+  }, [contact.id])
+
+  useEffect(() => {
     let cancelled = false
     setLoading(true)
     api

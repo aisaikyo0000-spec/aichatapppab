@@ -73,6 +73,29 @@ def _valid_results():
     return results
 
 
+def test_selected_scenario_artifact_can_complete_without_claiming_full_benchmark():
+    scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
+    result = {
+        "id": scenario["id"],
+        "strategy": {
+            "action": "invite",
+            "rationale": "相手が一緒に行きたいと明確に伝えているためです。",
+            "evidence": ["今度一緒に行きたいです！"],
+            "invite_example": "駅前のカフェでお茶しませんか？",
+        },
+        "replies": ["一緒に行けるの嬉しいです！"],
+    }
+
+    summary = summarize_expectations(
+        [result], complete=True, scenarios=(scenario,)
+    )
+
+    assert summary["complete"] is True
+    assert summary["expectation_failure_reasons"] == {}
+    assert summary["quality_pass"] is True
+    assert summary["expectation_total"] == 1
+
+
 def test_tapple_benchmark_passes_only_when_all_scenarios_have_evidence_and_replies():
     results = _valid_results()
 

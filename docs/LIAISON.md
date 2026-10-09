@@ -3,17 +3,20 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 Contact・Tapple境界を更新
+最終更新: 2026-10-09 / Step 18-R4 文体設定・口調切替・実API確認を更新
 
 ## 2026-10-09 最新状況
 
-- GitHub `main`の基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。今回のオフラインコードcommitは`ef12671`、資料commit `2c897c2`までをforkへpushし、remote SHAとの一致を確認した。PR #1はOpenで未マージ。
-- Step 18-R4のオフライン作業として、少数の本人Goldを相手別Silverが上書きしないようにし、既知語彙にない趣味の抽出と最近の明示的な苦手意識を扱う境界を補った。語彙抽出で「美味しい」などの形容語を趣味として拾わない回帰も追加。Tapple実生成ベンチは**14シナリオ**になった。
-- `python -m pytest backend/tests -q`: **1,185 passed / 2 warnings**。Contact/Step 18/Tapple focused suite **669 passed / 2 warnings**。frontend production build、Python `compileall`、`git diff --check`はPASS。警告は既存のFastAPI `on_event`非推奨通知。
-- fresh Reviewerは、同じ自己メッセージ内で肯定の後に苦手意識が続くと順序判定が逆転する不具合を指摘した。旧挙動を再現するテストは修正前にFAILし、イベント位置を会話全体の絶対位置に統一。新しいread-only Reviewerは実装・テスト・14件ベンチを確認して**PASS**。Gemini APIは呼び出していない。
-- Geminiの順序は主アカウント3.5→主3.1→別アカウント3.5→別アカウント3.1。次へ進むのは`rate_limit`時だけ。主3.5と3.1の両方が制限されたら別アカウントへ切り替える。APIキーの値は表示・保存していない。
-- [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)では公式調査を自己申告の傾向として扱い、学術研究・利用者の逸話の一般化を避けている。過去のContact Bench 3/3 artifactはGold重複修正前のため現行受入証拠にしない。
-- 実API疎通、最新70ケース、Contact Benchの全9返信と3/3人手確認、Tapple 14シナリオの実生成・全返信レビューが未実施。Step 18-R4は未完成で、Step 19へ進まない。
+- GitHub `main`の基点SHAは`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`、今回の検証対象HEADは`ec21ed6`。PR #1はOpenで未マージ。コードと資料は独立レビュー後にforkの作業branchへpushする。
+- Step 18-R4では、少数の本人Goldが相手別Silverに上書きされる経路を防ぎ、最近のGoldにある絵文字の順序を相手別styleへ段階的に反映した。Tappleでは、辞書にない活動関心、明示的な苦手意識、安全上の懸念、拒否や迷いの口語表現を扱う回帰を追加した。Tapple実生成ベンチは14シナリオを維持している。
+- 今回は、ユーザー本人の記号の好みとして「、」「。」を基本的に避け、文意に合う「！」「？」や絵文字、記号なしも自然に使う指示を追加した。記号や絵文字を機械的に付けない条件も含めた。敬語・タメ口の選択は相手を切り替えると自動へ戻り、返信生成プレビューにも同じ口調を送る。
+- `python -m pytest backend/tests -q`: **1,214 passed / 2 warnings**。frontend `npm run build`、Tapple benchmark `--help`、`git diff --check`はPASS。警告は既存のFastAPI `on_event`非推奨通知。PythonとTypeScriptの独立Reviewerはともに**PASS**。
+- 実APIを1回呼び出したが、主アカウントのGemini 3.5から`Invalid Auth key`（HTTP 400）が返った。これはレート制限ではないため3.1や別アカウントへは切り替えていない。返信は生成されず、APIの文面評価はできていない。合成会話のみを使い、ローカルの個人チャット履歴は送信していない。APIキーの内容は表示・保存していない。
+- 実APIテストの消費を抑えるため、Tappleベンチに`--scenario`と`--tone`を追加した。指定時は選んだシナリオだけを評価し、オプションなしでは従来どおり14シナリオ全件を実行する。認証エラーを解消した後、敬語・タメ口の少数ケースを再確認する。
+- Tappleベンチは空DBと空の相手プロフィールで動くため、本人Goldの文体を評価しない。過去のContact Bench 3/3 artifactもGold重複修正前の結果で、現行受け入れ証拠には使わない。
+- Step 18-R4は未完成で、Step 19へ進まない。次はAPIキーの認証を確認してもらった後、少数の実APIケースを再実行する。その後、最新70ケース、Contact Benchの9返信、Tapple14シナリオの実生成と全文レビューを行う。
+- Geminiの順序は主アカウント3.5→主3.1→別アカウント3.5→別アカウント3.1。次へ進むのは`rate_limit`時だけ。主3.5と3.1の両方が制限されたら別アカウントへ切り替える。
+- [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)では公式調査を自己申告の傾向として扱い、学術研究や利用者の逸話を一般化しない方針を記録している。
 
 ---
 

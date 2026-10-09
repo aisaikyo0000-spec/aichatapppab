@@ -112,6 +112,8 @@ export interface UserProfile {
 export interface GenerationPreview {
   provider: string
   model: string
+  requested_tone?: string
+  effective_tone?: string
   rules: string[]
   references: string[]
   learning_materials: string[]

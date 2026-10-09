@@ -130,10 +130,15 @@ export const api = {
   ) =>
     request<GenerationResult>('/generate', { method: 'POST', body: JSON.stringify(payload) }, signal),
 
-  previewGeneration: (contactId: number, condition: string, mode?: 'normal' | 'followup') =>
+  previewGeneration: (
+    contactId: number,
+    condition: string,
+    tone?: string,
+    mode?: 'normal' | 'followup',
+  ) =>
     request<GenerationPreview>('/generate/preview', {
       method: 'POST',
-      body: JSON.stringify({ contact_id: contactId, condition, mode: mode ?? 'normal' }),
+      body: JSON.stringify({ contact_id: contactId, condition, tone: tone ?? '', mode: mode ?? 'normal' }),
     }),
 
   updateHistory: (

@@ -194,7 +194,7 @@ def test_tapple_benchmark_rejects_rationales_that_overstate_contact_intent(
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["カフェの話、もう少し聞いてみたいです。"],
+        "replies": ["カフェ気になりますね、どんなお店ですか？"],
     }
 
     assert not expectation_met(scenario, result)
@@ -251,7 +251,7 @@ def test_tapple_benchmark_allows_rationales_that_explicitly_deny_overclaim(
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["カフェの話、もう少し聞いてみたいです。"],
+        "replies": ["カフェ気になりますね、どんなお店ですか？"],
     }
 
     assert expectation_met(scenario, result)

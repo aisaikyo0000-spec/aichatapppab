@@ -253,6 +253,13 @@ _UNSUPPORTED_DEFINITE_MEETING_INTENT_RE = re.compile(
 _UNSUPPORTED_DECLINE_CLAIM_RE = re.compile(
     r"(?:断られ|拒否され|会いたくない(?:と|という)|行きたくない(?:と|という))"
 )
+_NEGATED_STRATEGY_CLAIM_SUFFIX_RE = re.compile(
+    r"^\s*(?:(?:とは|と|って|を|が|は)?(?:言っていません|言っていない|"
+    r"言えません|言えない|言い切れません|言い切れない|示していません|示していない)|"
+    r"た(?:わけではありません|わけではない|わけじゃありません|わけじゃない|"
+    r"とは言えません|とは言えない)|"
+    r"(?:わけではありません|わけではない|わけじゃありません|わけじゃない))"
+)
 _ACKNOWLEDGMENT_RE = re.compile(
     r"^(?:そうなんだ(?:ね)?|そうなんですね|そうですね|そうだね|わかりました|分かりました|了解(?:です)?|そっか|うん|はい|わかった|ありがとう|承知しました|承知です|気にしないで(?:ね)?)$"
 )
@@ -315,15 +322,21 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
         generation._TAPPLE_ACCEPTED_INVITATION_RE.search(message)
         for message in contact_messages
     ) and not has_unresolved_decline
+    def has_unnegated_claim(pattern: re.Pattern[str], text: str) -> bool:
+        return any(
+            not _NEGATED_STRATEGY_CLAIM_SUFFIX_RE.search(text[match.end() :])
+            for match in pattern.finditer(text)
+        )
+
     if (
         isinstance(rationale, str)
-        and _UNSUPPORTED_DEFINITE_MEETING_INTENT_RE.search(rationale)
+        and has_unnegated_claim(_UNSUPPORTED_DEFINITE_MEETING_INTENT_RE, rationale)
         and not accepted_contact_interest
     ):
         failures.append("rationale_unsupported_meeting_intent")
     if (
         isinstance(rationale, str)
-        and _UNSUPPORTED_DECLINE_CLAIM_RE.search(rationale)
+        and has_unnegated_claim(_UNSUPPORTED_DECLINE_CLAIM_RE, rationale)
         and not has_unresolved_decline
     ):
         failures.append("rationale_unsupported_decline")
@@ -401,8 +414,13 @@ def expectation_met(scenario: dict, result: dict) -> bool:
     return not _evaluate_result(scenario, result)
 
 
-def summarize_expectations(results: list[dict], *, complete: bool) -> dict:
-    scenarios_by_id = {scenario["id"]: scenario for scenario in SCENARIOS}
+def summarize_expectations(
+    results: list[dict],
+    *,
+    complete: bool,
+    scenarios: tuple[dict, ...] = SCENARIOS,
+) -> dict:
+    scenarios_by_id = {scenario["id"]: scenario for scenario in scenarios}
     expected_ids = list(scenarios_by_id)
     safe_results = [
         result if isinstance(result, dict) else {"error": "invalid_result_record"}
@@ -458,11 +476,18 @@ def summarize_expectations(results: list[dict], *, complete: bool) -> dict:
     }
 
 
-def _write_artifact(path: Path, results: list[dict], *, complete: bool) -> None:
-    run_state = benchmark_run_state(results, len(SCENARIOS))
+def _write_artifact(
+    path: Path,
+    results: list[dict],
+    *,
+    complete: bool,
+    scenarios: tuple[dict, ...] = SCENARIOS,
+) -> None:
+    run_state = benchmark_run_state(results, len(scenarios))
     expectation_summary = summarize_expectations(
         results,
         complete=complete and run_state["complete"],
+        scenarios=scenarios,
     )
     summary = {
         **run_state,
@@ -487,7 +512,20 @@ def main() -> int:
     parser.add_argument("--quota-route-state", type=Path,
                         help="Optional run-local state shared across benchmark stages")
     parser.add_argument("--delay-seconds", type=float, default=6.0)
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        choices=[scenario["id"] for scenario in SCENARIOS],
+        help="Run only selected scenario(s); omit to run the full benchmark",
+    )
+    parser.add_argument("--tone", choices=("", "keigo", "hybrid", "tame"), default="")
     args = parser.parse_args()
+    selected_ids = args.scenario or [scenario["id"] for scenario in SCENARIOS]
+    if len(set(selected_ids)) != len(selected_ids):
+        parser.error("--scenario values must be unique")
+    selected_scenarios = tuple(
+        scenario for scenario in SCENARIOS if scenario["id"] in selected_ids
+    )
 
     primary_key = read_gemini_api_key(Path(args.env_file))
     if not primary_key:
@@ -538,7 +576,7 @@ def main() -> int:
     results: list[dict] = []
     out_path = Path(args.out)
     with TestClient(app) as client:
-        for scenario in SCENARIOS:
+        for scenario in selected_scenarios:
             successful_before = len(successful_attempts)
             result: dict = {
                 "id": scenario["id"],
@@ -563,6 +601,7 @@ def main() -> int:
                         "condition": "",
                         "candidates": 1,
                         "strategy_mode": "tapple",
+                        "tone": args.tone,
                     },
                 )
                 if response.status_code != 200:
@@ -587,6 +626,7 @@ def main() -> int:
                     data = response.json()
                     result["replies"] = data.get("replies", [])
                     result["strategy"] = data.get("strategy")
+                    result["requested_tone"] = args.tone or "auto"
                     result["expectation_failure_reasons"] = _evaluate_result(scenario, result)
                     result["expectation_met"] = not result["expectation_failure_reasons"]
                     history_ids = data.get("history_ids", [])
@@ -606,13 +646,17 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 result["error"] = type(exc).__name__
             results.append(result)
-            _write_artifact(out_path, results, complete=False)
+            _write_artifact(
+                out_path, results, complete=False, scenarios=selected_scenarios
+            )
             if result.get("error"):
                 break
             time.sleep(max(0.0, args.delay_seconds))
 
-    complete = benchmark_run_state(results, len(SCENARIOS))["complete"]
-    _write_artifact(out_path, results, complete=complete)
+    complete = benchmark_run_state(results, len(selected_scenarios))["complete"]
+    _write_artifact(
+        out_path, results, complete=complete, scenarios=selected_scenarios
+    )
     summary = json.loads(out_path.read_text(encoding="utf-8"))["summary"]
     print(f"Wrote {out_path}")
     print(json.dumps(summary, ensure_ascii=False))

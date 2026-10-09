@@ -149,7 +149,7 @@ def get_ai_config() -> dict[str, Any]:
         fallback_api_key_from_env = True
     elif same_provider:
         fallback_api_key = api_key
-        fallback_api_key_from_env = not db_key
+        fallback_api_key_from_env = api_key_from_env
     else:
         fallback_api_key = _env_api_key(fallback_provider)
         fallback_api_key_from_env = bool(fallback_api_key)

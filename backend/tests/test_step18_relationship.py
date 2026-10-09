@@ -173,8 +173,8 @@ def test_contact_length_nudge_breaks_near_tie_but_preserves_quality_gap():
         {"reply": "x" * 40, "final": 0.470},
     ]
 
-    generation._apply_contact_length_nudge(near_tie, profile)
-    generation._apply_contact_length_nudge(clear_quality_gap, profile)
+    generation._apply_contact_length_nudge(near_tie, profile, contact_id=1)
+    generation._apply_contact_length_nudge(clear_quality_gap, profile, contact_id=1)
 
     assert near_tie[0]["final"] > near_tie[1]["final"]
     assert clear_quality_gap[0]["final"] > clear_quality_gap[1]["final"]

@@ -3214,6 +3214,22 @@ def _rank_followup_candidates(
     )
 
 
+def _apply_contact_length_nudge(
+    scored_items: list[dict], profile, contact_id: int | None
+) -> None:
+    """Apply a bounded same-contact Gold length tie-break without extra corpus reads."""
+    if not contact_id or profile is None or getattr(profile, "sample_count", 0) < 5:
+        return
+    for item in scored_items:
+        fit = learning.contrast.contact_length_fit(
+            item["reply"], contact_id, profile=profile
+        )
+        adjustment = round(0.02 * (fit - 0.5), 3)
+        item["contact_length_fit"] = fit
+        item["contact_length_adjustment"] = adjustment
+        item["final"] = round(item["final"] + adjustment, 3)
+
+
 def build_user_reply_pairs() -> list[dict]:
     """全会話メッセージから (contact turn -> self turn) の教師ペアを構築する。
 
@@ -5008,12 +5024,12 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
         final = round(final + 0.06 * (sent_sim - 0.5), 3)
         # Step 18 §18-19: 同一相手Goldのトーン適合を最下位項として加算（±0.02）。
         # Gold 3件未満は中立。Context/Human/Personal Gold より下位。
-        tone_fit = learning.contrast.contact_tone_fit(r, body.contact_id)
+        tone_fit = learning.contrast.contact_tone_fit(
+            r,
+            body.contact_id,
+            profile=ctx["pieces"]["style_profile"].get("same_contact_blended_gold_profile"),
+        )
         final = round(final + 0.04 * (tone_fit - 0.5), 3)
-        # Step 18-R4: 同一相手Goldの文量は、質が近い候補の選択にだけ使う最弱の補助項（±0.01）。
-        # 少数Goldでは中立。文脈・自然さ・本人の基本文体を上書きしない。
-        contact_length_fit = learning.contrast.contact_length_fit(r, body.contact_id)
-        final = round(final + 0.02 * (contact_length_fit - 0.5), 3)
         # Step 17-R6 §3: FORCED（不要な文脈での質問）は軽く順位を下げる。質問そのものは禁止しない。
         _r6_q = naturalness.count_meaningful_questions(r)
         _r6_forced = _r6_necessity == "unnecessary" and _r6_q["informative"] >= 1
@@ -5025,6 +5041,13 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             "human_fit": human_fit, "sent_sim": sent_sim, "final": final,
             "question_forced": _r6_forced,
         })
+
+    # Length evidence is computed once per context and remains the weakest, bounded tie-break.
+    _apply_contact_length_nudge(
+        scored_items,
+        ctx["pieces"]["style_profile"].get("same_contact_all_gold_profile"),
+        body.contact_id,
+    )
 
     # 通常モードと追いメッセージの両方で品質スコアを優先する。
     if body.mode == "followup":

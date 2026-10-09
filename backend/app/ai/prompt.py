@@ -476,6 +476,8 @@ def build_system_prompt(
     same_contact_gold_length_median: int | None = None,
     counterpart_length_tier: str = "",
     counterpart_length_chars: int = 0,
+    strategy_mode: str = "none",
+    candidates: int = 3,
 ) -> str:
     """8ブロック構成のシステムプロンプトを組み立てる（Conversation-Learned Reply System v3.8）。"""
     raw_contact_name = (contact.get("name") or "").strip()
@@ -825,7 +827,12 @@ def build_system_prompt(
             "3. 不自然なカタカナ語の禁止: 『リフレッシュ』等のカタカナ語は使用せず、『気分転換』『息抜き』『癒やされる』等の自然な日本語を使うこと。\n"
             "4. 短文・低負担: 長さは会話に合わせて自由に選び、短い一文だけで自然に成立するならそのまま返す。\n"
             "5. 改行: 複数文の場合は読みやすい改行を使ってよいが、一文の短い反応を分割したり、改行を必須にしたりしない。\n"
-            '6. 出力は必ず JSON形式の {"replies": ["返信案1", "返信案2", "返信案3"]} のみとし、説明や前置きは一切出力しないこと。'
+            + (
+                f'6. 出力は必ず JSON形式の {format_tapple_output_contract(candidates)} とし、説明や前置きは出力しないこと。'
+                f'{tapple_strategy_contract_guidance()}'
+                if strategy_mode == "tapple"
+                else '6. 出力は必ず JSON形式の {"replies": ["返信案1", "返信案2", "返信案3"]} のみとし、説明や前置きは一切出力しないこと。'
+            )
         )
     else:
         b8_contract = (
@@ -841,7 +848,12 @@ def build_system_prompt(
             "4. 質問は任意: 質問を含めるかは会話状況次第とし、質問なしの案も正式な正常系として扱うこと。質問は会話上必要な場合だけ生成すること。会話を続ける目的だけで質問を追加しないこと（質問すること自体を禁じるものではない）。『ほかにも』『ほかに』『他に』『〜以外』『〇〇もいいですけど』の話題逃げ・並列質問は完全禁止とし、質問する場合も相手が出した話題そのものを深掘りして広げること。相手が明確な質問をしている場合は回答を含めること。\n"
             "5. 『〜とのこと』『〜と拝見』等の機械的AI表現の完全禁止: 『〇〇とのことですが』『〇〇とのこと』『〇〇と拝見しました』等の他人行儀なAI表現は完全禁止し、自然なチャット口語（『〇〇なんですね！』『〇〇いいですね！』）にすること。相手の発言をほぼ同じ意味で言い直しただけの返信（相手「最近映画見てる」→「最近映画見てるんだね」等）は情報量が増えないため避け、自分の言葉での反応（「それ面白そう」等）にすること。\n"
             "6. 自然な平仮名表記: 『何か』は漢字を使わず平仮名で『なにか』と表記すること。\n"
-            '7. 出力は必ず JSON形式の {"replies": ["案1の独立返信文章", "案2の独立返信文章", "案3の独立返信文章"]} のみとし、説明や前置きは一切出力しないこと。'
+            + (
+                f'7. 出力は必ず JSON形式の {format_tapple_output_contract(candidates)} とし、説明や前置きは出力しないこと。'
+                f'{tapple_strategy_contract_guidance()}'
+                if strategy_mode == "tapple"
+                else '7. 出力は必ず JSON形式の {"replies": ["案1の独立返信文章", "案2の独立返信文章", "案3の独立返信文章"]} のみとし、説明や前置きは一切出力しないこと。'
+            )
         )
 
     blocks = [b1_role, b2_hard, b3_history, b4_policy, b5_pairs]
@@ -861,6 +873,25 @@ _SILENT_SELF_CHECK = (
     "5. 説明文ではなく実際のメッセージらしく聞こえるか？\n"
     "6. ユーザーの Gold 実例と一致しているか？"
 )
+
+
+def format_tapple_output_contract(candidates: int = 3) -> str:
+    reply_slots = ", ".join(f'"案{i + 1}"' for i in range(candidates))
+    return (
+        f'{{"replies": [{reply_slots}], "strategy": '
+        '{"action":"continue|clarify|invite|wait|stop",'
+        '"rationale":"根拠に基づく短い説明",'
+        '"evidence":["会話からの完全一致抜粋"],'
+        '"invite_example":null}}'
+    )
+
+
+def tapple_strategy_contract_guidance() -> str:
+    return (
+        " repliesは必須です。strategyは任意のトップレベル項目で、会話上の根拠がある場合のみ含め、"
+        "根拠不足ならstrategyキーを省略してください。"
+        "invite_exampleはinvite時のみ文字列にし、それ以外のactionではnullにしてください。"
+    )
 
 
 def build_initial_generation_messages(
@@ -903,6 +934,11 @@ def build_initial_generation_messages(
             f"{_SILENT_SELF_CHECK}"
             f'出力は必ず JSON形式の {{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}} （または逆質問時の [AI_QUESTION]...[/AI_QUESTION]）のみとし、説明・前置き・解説は一切出力しないでください。各返信は必ずダブルクォートで囲み、クォートの欠落・日本語括弧「」・＝の混用をしないこと（Step 17-R2）。'
         )
+    if strategy_mode == "tapple":
+        user_instruction = user_instruction.replace(
+            '{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}',
+            format_tapple_output_contract(candidates),
+        )
     if contact_style_instruction.strip():
         if "かなり長め" in contact_style_instruction and candidates >= 3:
             contact_length_guidance = (
@@ -929,16 +965,18 @@ def build_initial_generation_messages(
             "固定文字数には合わせず、現在の話題に合う範囲で反映してください。\n"
             f"{contact_style_instruction.strip()}"
         )
-    if strategy_mode == "tapple" and candidates != 3:
-        user_instruction = user_instruction.replace("3案", f"{candidates}案")
+    if strategy_mode == "tapple":
+        if candidates != 3:
+            user_instruction = user_instruction.replace("3案", f"{candidates}案")
         user_instruction = user_instruction.replace(
             '{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}',
-            '{"replies": [' + ", ".join(
-                f'"案{i + 1}の返信文章"' for i in range(candidates)
-            ) + ']}'
+            format_tapple_output_contract(candidates),
+        )
+        user_instruction = user_instruction.replace(
+            "のみとし、説明・前置き・解説は一切出力しないでください。",
+            "とし、説明・前置き・解説は出力しないでください。",
         )
     if strategy_mode == "tapple":
-        reply_slots = ",".join(f'"案{i + 1}"' for i in range(candidates))
         user_instruction += (
             "\n\n【タップル会話戦略】返信候補とは別に、会話の次の方針を構造化して付けてください。"
             "strategy.action は continue / clarify / invite / wait / stop のいずれかです。"
@@ -957,8 +995,8 @@ def build_initial_generation_messages(
             "invite以外のactionではinvite_exampleを必ずnullにしてください。"
             "会話上の根拠が足りない場合はstrategyを省略してください。"
             f"返信候補は必ず{candidates}件だけ作ってください。\n"
-            f'出力形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop","rationale":"根拠に基づく短い説明","evidence":["会話からの完全一致抜粋"],"invite_example":"安全な公共の場所を使った低圧な誘い方の例"}}}}'
-            "。戦略カードの内容は会話方針の参考情報であり、そのまま送信する返信候補ではありません。"
+            f'出力形式: {format_tapple_output_contract(candidates)}'
+            f"。{tapple_strategy_contract_guidance()}戦略カードの内容は会話方針の参考情報であり、そのまま送信する返信候補ではありません。"
         )
     return [
         {"role": "system", "content": system_prompt},
@@ -1006,11 +1044,8 @@ def build_revision_messages(
         user_content = user_content.replace("3案", f"{candidates}案")
         user_content = user_content.replace(
             '{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}',
-            '{"replies": [' + ", ".join(
-                f'"案{i + 1}の返信文章"' for i in range(candidates)
-            ) + ']}'
+            format_tapple_output_contract(candidates),
         )
-        reply_slots = ",".join(f'"案{i + 1}"' for i in range(candidates))
         user_content += (
             "\n\n【タップル会話戦略】返信候補とは別に、CHAT HISTORYの相手発言だけを根拠に"
             "continue / clarify / invite / wait / stop の方針をstrategyとして追加してください。"
@@ -1023,7 +1058,8 @@ def build_revision_messages(
             "人目のある公共の場所を使い、連絡先交換を提案しないでください。具体的な店名や日時を会話にないのに作らないでください。"
             "共通の活動に合う公共の場所を一般的に示せない場合はinviteを選ばないでください。invite以外のactionではinvite_exampleを必ずnullにしてください。"
             f"返信候補は必ず{candidates}件だけ作ってください。"
-            f'形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop","rationale":"説明","evidence":["完全一致抜粋"],"invite_example":"安全な公共の場所を使った低圧な誘い方の例"}}}}'
+            f'形式: {format_tapple_output_contract(candidates)}'
+            f"。{tapple_strategy_contract_guidance()}"
         )
 
     return [

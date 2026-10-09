@@ -3732,12 +3732,10 @@ def _repair_output_instruction(
 
 
 def _repair_tapple_output_instruction(candidates: int) -> str:
-    reply_slots = ", ".join(f'"案{i + 1}"' for i in range(candidates))
     return (
         f"不備を修正して返信候補を必ず{candidates}件作成してください。"
-        f'JSON形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop",'
-        '"rationale":"根拠に基づく短い説明","evidence":["相手発言からの完全一致抜粋"],'
-        '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"}}。'
+        f"repliesは必ず含め、strategyは根拠がある場合だけ追加してください。JSON形式の例: {prompt.format_tapple_output_contract(candidates)}。"
+        f"{prompt.tapple_strategy_contract_guidance()}"
         "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め、返信候補とは別に短く低圧で断りやすい誘い方の例を1つ示してください。"
         "人目のある公共の場所を使い、連絡先交換を提案しないでください。"
         "invite_exampleの文面にも駅前やカフェなど公共の場所だと分かる表現を含めてください。"
@@ -5083,7 +5081,14 @@ def _load_training_examples() -> list[str]:
     return examples
 
 
-def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = "normal") -> dict:
+def _build_context(
+    contact_id: int,
+    condition: str,
+    tone: str = "",
+    mode: str = "normal",
+    strategy_mode: str = "none",
+    candidates: int = 3,
+) -> dict:
     """AI生成に必要なコンテキストを組み立てる（AIは呼び出さない）。
 
     generate と preview の両方から利用する。
@@ -5259,6 +5264,8 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         conversation_ledger=conversation_ledger,
         counterpart_length_tier=counterpart_length_tier,
         counterpart_length_chars=counterpart_length_chars,
+        strategy_mode=strategy_mode,
+        candidates=candidates,
         my_info=self_profile.get("my_info", ""),
         user_knowledge=user_knowledge_text,
     )
@@ -5526,7 +5533,14 @@ def _record_history(
 @router.post("/generate/preview")
 def preview_generation(body: GenerateRequest):
     """AIを呼び出さずに、今回AIへ渡される内容を確認する（API Key等は含めない）。"""
-    ctx = _build_context(body.contact_id, body.condition, body.tone, body.mode)
+    ctx = _build_context(
+        body.contact_id,
+        body.condition,
+        body.tone,
+        body.mode,
+        body.strategy_mode,
+        body.candidates,
+    )
     rules = prompt.load_knowledge_texts("rules", ctx["custom_knowledge"] or None)
     references = prompt.load_knowledge_texts("references", ctx["custom_knowledge"] or None)
     learning_materials = prompt.cap_learning(
@@ -5622,7 +5636,14 @@ def generate(body: GenerateRequest):
 
 
 def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, int]):
-    ctx = _build_context(body.contact_id, body.condition, body.tone, body.mode)
+    ctx = _build_context(
+        body.contact_id,
+        body.condition,
+        body.tone,
+        body.mode,
+        body.strategy_mode,
+        body.candidates,
+    )
     cfg = ctx["cfg"]
     provider = factory.get_provider(cfg["provider"], cfg["api_key"])
     active_provider = provider

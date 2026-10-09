@@ -308,7 +308,7 @@ def test_tapple_single_candidate_extracts_reply_from_strategy_json():
     assert _parse_replies_strict(raw, 1) == [raw]
 
     repair = _build_repair_messages(messages, "bad", ["JSON不正"], 1, strategy_mode="tapple")
-    assert '"replies":["案1"]' in repair[-1]["content"]
+    assert '"replies": ["案1"]' in repair[-1]["content"]
 
     two_candidate_prompt = prompt.build_initial_generation_messages(
         system_prompt="system",
@@ -358,7 +358,7 @@ def test_tapple_revision_and_repair_prompts_honor_two_and_three_candidates():
         repair = _build_repair_messages(
             initial, "bad", ["JSON不正"], candidate_count, strategy_mode="tapple"
         )
-        assert f'"replies":[{slots}]' in repair[-1]["content"].replace(", ", ",")
+        assert f'"replies": [{slots.replace(",", ", ")}]' in repair[-1]["content"]
 
 
 def test_tapple_single_candidate_rejects_malformed_json_instead_of_sending_it():

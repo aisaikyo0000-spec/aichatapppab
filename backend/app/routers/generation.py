@@ -4199,6 +4199,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
             "conversation_ledger": conversation_ledger,
             "counterpart_length_tier": counterpart_length_tier,
             "counterpart_length_chars": counterpart_length_chars,
+            "relationship_guidance": relationship_block,
             "accepted_block": accepted_block,
             "self_profile": self_profile,
             "contact": contact_info,
@@ -4635,6 +4636,11 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             candidates=body.candidates,
             mode=body.mode,
             strategy_mode=body.strategy_mode,
+            contact_style_instruction=(
+                ctx["pieces"].get("relationship_guidance", "")
+                if ctx["pieces"]["style_profile"].get("same_contact_gold_samples", 0) >= 5
+                else ""
+            ),
         )
 
     def _call_ai(messages: list[dict[str, str]]) -> str:

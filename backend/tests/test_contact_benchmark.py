@@ -98,6 +98,12 @@ def test_contact_benchmark_generates_same_probe_with_contact_specific_gold_conte
         )
         assert "【SAME-CONTACT RECENT GOLD REPLIES】" in prompt_text
         assert expected_style_examples[name] in prompt_text
+        assert any(
+            "【相手別Gold傾向の優先】" in message[1]["content"]
+            and "Globalの一般傾向より" in message[1]["content"]
+            for message in captured_messages
+            if message[0]["content"] == prompt_text
+        )
         assert all(
             example not in prompt_text
             for other_name, example in expected_style_examples.items()

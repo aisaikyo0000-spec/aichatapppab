@@ -246,7 +246,7 @@ def test_initial_generation_repeats_same_contact_guidance_after_generic_short_re
     )
 
     user_instruction = messages[1]["content"]
-    assert "同一相手のGold傾向を優先" in user_instruction
+    assert "この相手に対する本人Goldの口調・文量を優先" in user_instruction
     assert user_instruction.index(relationship_summary) > user_instruction.index(
         "相手の発言が短い場合は短い返信"
     )

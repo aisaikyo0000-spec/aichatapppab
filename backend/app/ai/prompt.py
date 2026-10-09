@@ -869,6 +869,7 @@ def build_initial_generation_messages(
     candidates: int = 3,
     mode: str = "normal",
     strategy_mode: str = "none",
+    contact_style_instruction: str = "",
 ) -> list[dict[str, str]]:
     """初回返信生成用のメッセージリストを組み立てる（全履歴の二重投入を廃止）。"""
     if mode == "followup":
@@ -899,6 +900,14 @@ def build_initial_generation_messages(
             "架空の自己開示・事実捏造の禁止を厳守し、1つの返信を分割せず各案が単独で送信できる独立した完成品として3案作成してください。\n"
             f"{_SILENT_SELF_CHECK}"
             f'出力は必ず JSON形式の {{"replies": ["案1の返信文章", "案2の返信文章", "案3の返信文章"]}} （または逆質問時の [AI_QUESTION]...[/AI_QUESTION]）のみとし、説明・前置き・解説は一切出力しないでください。各返信は必ずダブルクォートで囲み、クォートの欠落・日本語括弧「」・＝の混用をしないこと（Step 17-R2）。'
+        )
+    if contact_style_instruction.strip():
+        user_instruction += (
+            "\n\n【相手別Gold傾向の優先】\n"
+            "十分な手入力Goldがある相手では、相手の直近文の短さやGlobalの一般傾向より、"
+            "この相手に対する本人Goldの口調・文量を優先してください。"
+            "文量を固定したり、水増しや不要な質問を足したりせず、現在の話題に合う範囲で反映してください。\n"
+            f"{contact_style_instruction.strip()}"
         )
     if strategy_mode == "tapple" and candidates != 3:
         user_instruction = user_instruction.replace("3案", f"{candidates}案")

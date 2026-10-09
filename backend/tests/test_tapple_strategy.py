@@ -84,7 +84,7 @@ def test_tapple_prompts_require_a_safe_example_for_invite():
     )
     initial_text = initial[1]["content"]
 
-    assert "inviteを選ぶ場合はinvite_exampleを必ず埋める" in initial_text
+    assert "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め" in initial_text
     assert "具体的な店名や日時を会話にないのに作らない" in initial_text
     assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' in initial_text
 
@@ -104,7 +104,7 @@ def test_tapple_prompts_require_a_safe_example_for_invite():
         strategy_mode="tapple",
     )
     repair_text = repair[-1]["content"]
-    assert "inviteを選ぶ場合はinvite_exampleを必ず埋める" in repair_text
+    assert "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め" in repair_text
     assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' in repair_text
 
 

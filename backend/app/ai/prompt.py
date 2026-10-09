@@ -897,10 +897,12 @@ def build_initial_generation_messages(
             "安全面への不安や相手を信頼できるか分からないという懸念が示されている場合は、別の箇所に参加意思があってもinviteにせず、相手が安心できるまで会話を続けるか待ってください。"
             "直近の相手発言が続けて短い相づちになり、相手から質問や話題を広げる動きも弱まっている場合は、会話への参加が下がった可能性を考えてください。返信速度だけで判断せず、追撃や説得、追加の誘いをせずに待つか、自然に会話を閉じてください。"
             "断り・拒否があれば stop とし、押し直す提案をしないでください。迷い・曖昧さ・返答待ちは wait または continue にしてください。"
-            "invite_exampleは方針を説明するための例に限り、repliesの返信候補に誘い文を混ぜないでください。例を出す場合は人目のある公共の場所を選び、連絡先交換を提案しないでください。"
+            "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め、返信候補とは別に短く低圧で断りやすい誘い方の例を1つ示してください。人目のある公共の場所を使い、連絡先交換を提案しないでください。"
+            "具体的な店名や日時を会話にないのに作らないでください。共通の活動に合う公共の場所を一般的に示せない場合はinviteを選ばないでください。"
+            "invite以外のactionではinvite_exampleを必ずnullにしてください。"
             "会話上の根拠が足りない場合はstrategyを省略してください。"
             f"返信候補は必ず{candidates}件だけ作ってください。\n"
-            f'出力形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop","rationale":"根拠に基づく短い説明","evidence":["会話からの完全一致抜粋"],"invite_example":null}}}}'
+            f'出力形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop","rationale":"根拠に基づく短い説明","evidence":["会話からの完全一致抜粋"],"invite_example":"安全な公共の場所を使った低圧な誘い方の例"}}}}'
             "。戦略カードの内容は会話方針の参考情報であり、そのまま送信する返信候補ではありません。"
         )
     return [
@@ -962,9 +964,11 @@ def build_revision_messages(
             "evidenceは会話からの完全一致抜粋のみ。返信速度、短い相づち、「いいですね」だけの反応、曖昧な好意は誘う根拠にしないでください。"
             "安全面への不安や相手を信頼できるか分からないという懸念が示されている場合は、参加意思があってもinviteではなくwaitまたはclarifyを選んでください。"
             "直近の相手発言が続けて短い相づちになり、相手から質問や話題を広げる動きも弱まっている場合は、会話への参加が下がった可能性を考えてください。返信速度だけで判断せず、追撃や説得、追加の誘いを避けてwaitまたは自然な会話終了を選んでください。"
-            "断りがあればstop。invite_exampleは方針説明用で、repliesに誘い文を混ぜず、人目のある公共の場所だけを例にし、連絡先交換を勧めないでください。"
+            "断りがあればstop。actionでinviteを選ぶ場合はinvite_exampleを必ず埋め、返信候補とは別に短く低圧で断りやすい誘い方の例を1つ示してください。"
+            "人目のある公共の場所を使い、連絡先交換を提案しないでください。具体的な店名や日時を会話にないのに作らないでください。"
+            "共通の活動に合う公共の場所を一般的に示せない場合はinviteを選ばないでください。invite以外のactionではinvite_exampleを必ずnullにしてください。"
             f"返信候補は必ず{candidates}件だけ作ってください。"
-            f'形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop","rationale":"説明","evidence":["完全一致抜粋"],"invite_example":null}}}}'
+            f'形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop","rationale":"説明","evidence":["完全一致抜粋"],"invite_example":"安全な公共の場所を使った低圧な誘い方の例"}}}}'
         )
 
     return [

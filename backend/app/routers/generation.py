@@ -1500,6 +1500,22 @@ def _parse_tapple_strategy(
     return proposed.model_copy(update={"invite_example": None})
 
 
+def _tapple_strategy_output_violations(
+    strategy: TappleStrategy | None,
+) -> list[str]:
+    """Require actionable guidance when the validated strategy recommends inviting."""
+    if (
+        strategy is not None
+        and strategy.action == "invite"
+        and not (strategy.invite_example or "").strip()
+    ):
+        return [
+            "inviteを選ぶ場合は、返信候補とは別に安全な公共の場所を使った低圧な誘い方の例をinvite_exampleへ入れてください。"
+            "会話にない店名や日時を作らず、例を出せない場合はinvite以外のactionを選んでください。"
+        ]
+    return []
+
+
 _EXPERIENCE_ACTIONS: dict[str, tuple[str, ...]] = {
     "visit": ("行ってきました", "行ってきた", "訪れてきました", "訪れてきた", "行けた", "行けて", "行った", "行きました", "行って", "行く", "行きます", "訪れた", "訪れました", "訪れる"),
     "eat": ("食べてきました", "食べてきた", "食べた", "食べました", "食べて", "食べる", "食べます"),
@@ -3139,7 +3155,12 @@ def _build_repair_messages(
         output_instruction = (
             f"不備を修正して返信候補を必ず{candidates}件作成してください。"
             f'JSON形式: {{"replies":[{reply_slots}],"strategy":{{"action":"continue|clarify|invite|wait|stop",'
-            '"rationale":"根拠に基づく短い説明","evidence":["相手発言からの完全一致抜粋"],"invite_example":null}}。'
+            '"rationale":"根拠に基づく短い説明","evidence":["相手発言からの完全一致抜粋"],'
+            '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"}}。'
+            "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め、返信候補とは別に短く低圧で断りやすい誘い方の例を1つ示してください。"
+            "人目のある公共の場所を使い、連絡先交換を提案しないでください。"
+            "会話にない具体的な店名や日時を作らず、共通の活動に合う公共の場所を一般的に示せない場合はinvite以外のactionを選んでください。"
+            "invite以外のactionではinvite_exampleを必ずnullにしてください。"
             "戦略の根拠がない場合はstrategyを省略してかまいません。"
         )
     else:
@@ -4770,6 +4791,8 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             tapple_action=tapple_strategy.action if tapple_strategy else None,
             conversation_messages=ctx.get("chat_messages", []),
         )
+        if body.strategy_mode == "tapple":
+            violations.extend(_tapple_strategy_output_violations(tapple_strategy))
 
         # Step 16 §22: 初回のみ、質問不要なのに全案質問つきなら soft repair を促す。
         # repair 後の再検証は Hard のみ（質問なし化はベストエフォート）。
@@ -4854,6 +4877,10 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                 tapple_action=repair_strategy.action if repair_strategy else None,
                 conversation_messages=ctx.get("chat_messages", []),
             )
+            if body.strategy_mode == "tapple":
+                repair_violations.extend(
+                    _tapple_strategy_output_violations(repair_strategy)
+                )
             if (
                 repair_violations
                 and _is_reference_clarification_only_failure(repair_violations)

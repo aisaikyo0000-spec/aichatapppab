@@ -3224,7 +3224,7 @@ def _apply_contact_length_nudge(
         fit = learning.contrast.contact_length_fit(
             item["reply"], contact_id, profile=profile
         )
-        adjustment = round(0.02 * (fit - 0.5), 3)
+        adjustment = round(0.01 * (fit - 0.5), 3)
         item["contact_length_fit"] = fit
         item["contact_length_adjustment"] = adjustment
         item["final"] = round(item["final"] + adjustment, 3)

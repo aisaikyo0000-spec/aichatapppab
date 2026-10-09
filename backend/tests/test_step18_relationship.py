@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.ai import prompt
 from app import database
 from app.learning import contrast, corpus, style
 from app.routers import generation
@@ -232,6 +233,23 @@ def test_contact_length_nudge_breaks_near_tie_but_preserves_quality_gap():
     assert clear_quality_gap[0]["final"] > clear_quality_gap[1]["final"]
     assert forced_question_precedence[0]["final"] < forced_question_precedence[1]["final"]
     assert abs(near_tie[0]["contact_length_adjustment"]) <= 0.005
+
+
+def test_initial_generation_repeats_same_contact_guidance_after_generic_short_reply_rule():
+    relationship_summary = (
+        "この相手のGoldはGlobalより長め。3案のうち1案は共感に具体的な反応を添える。"
+    )
+
+    messages = prompt.build_initial_generation_messages(
+        system_prompt="contact style is available in system prompt",
+        contact_style_instruction=relationship_summary,
+    )
+
+    user_instruction = messages[1]["content"]
+    assert "同一相手のGold傾向を優先" in user_instruction
+    assert user_instruction.index(relationship_summary) > user_instruction.index(
+        "相手の発言が短い場合は短い返信"
+    )
 
 
 def test_single_contact_gold_does_not_replace_global_gold_style(client):

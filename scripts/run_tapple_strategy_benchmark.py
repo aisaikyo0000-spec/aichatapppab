@@ -305,16 +305,16 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
         ),
         -1,
     )
-    accepted_contact_interest = any(
-        generation._TAPPLE_ACCEPTED_INVITATION_RE.search(message)
-        for message in contact_messages
-    )
     has_unresolved_decline = bool(
         last_contact_index >= 0
         and generation._unresolved_tapple_decline_match(
             conversation_messages, last_contact_index
         )
     )
+    accepted_contact_interest = any(
+        generation._TAPPLE_ACCEPTED_INVITATION_RE.search(message)
+        for message in contact_messages
+    ) and not has_unresolved_decline
     if (
         isinstance(rationale, str)
         and _UNSUPPORTED_DEFINITE_MEETING_INTENT_RE.search(rationale)

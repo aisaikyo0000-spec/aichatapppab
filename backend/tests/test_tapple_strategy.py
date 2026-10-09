@@ -4118,6 +4118,7 @@ def test_tapple_reply_rejects_unverifiable_absolute_safety_assurances(reply):
     [
         "不安ですよね。駅前のカフェなど、人目のある場所で会う方法もあります。",
         "安全を保証できるとは言えないので、無理せずメッセージで話しましょう。",
+        "絶対安全とは言えません。不安ならメッセージで話しましょう。",
     ],
 )
 def test_tapple_reply_allows_empathy_and_qualified_safety_information(reply):

@@ -104,6 +104,8 @@ def test_relationship_summary_keeps_mixed_contact_tone_mixed(client):
     assert "丁寧さと砕け具合が混在" in summary
     assert "3案中少なくとも2案" in summary
     assert "3案中少なくとも2案を敬語だけで終わらせず" in summary
+    assert "敬語語尾を使わない案を少なくとも1つ" in summary
+    assert "笑や絵文字だけでは口調適応と見なさない" in summary
 
 
 def test_relationship_summary_uses_global_fallback_for_fewer_than_three_gold(client):

@@ -252,6 +252,40 @@ def test_initial_generation_repeats_same_contact_guidance_after_generic_short_re
     )
 
 
+def test_contact_style_soft_repair_detects_large_gold_mismatch_but_honors_explicit_tone():
+    mixed_contact = style.StyleProfile(
+        sample_count=8,
+        char_median=70,
+        keigo_ratio=0.2,
+        hybrid_ratio=0.4,
+        tame_ratio=0.4,
+    )
+    overly_similar_polite_replies = [
+        "今週ずっとお仕事だったんですね！本当にお疲れ様です！",
+        "今週はお仕事お疲れ様です！ゆっくり休んでくださいね！",
+        "お仕事大変でしたね！週末はゆっくり過ごしてくださいね！",
+    ]
+
+    issues = generation._contact_style_soft_repair_issues(
+        overly_similar_polite_replies,
+        mixed_contact,
+        same_contact_gold_median=70,
+        global_gold_median=45,
+        explicit_tone="",
+    )
+    explicit_tone_issues = generation._contact_style_soft_repair_issues(
+        overly_similar_polite_replies,
+        mixed_contact,
+        same_contact_gold_median=70,
+        global_gold_median=45,
+        explicit_tone="keigo",
+    )
+
+    assert any("Goldにある会話調" in issue for issue in issues)
+    assert any("少し厚み" in issue for issue in issues)
+    assert explicit_tone_issues == []
+
+
 def test_single_contact_gold_does_not_replace_global_gold_style(client):
     _seed_gold(client, "全体の丁寧な相手", KEIGO_PAIRS)
     cid = _seed_gold(client, "Goldが1件の相手", TAME_PAIRS[:1])

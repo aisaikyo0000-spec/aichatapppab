@@ -15,6 +15,7 @@ from app.routers import generation
 from run_contact_benchmark import (
     CONTACTS,
     PROBE,
+    contact_quality_status,
     load_contact_fixture,
     seed_and_generate,
     style_sig,
@@ -175,6 +176,78 @@ def test_contact_gold_fixture_rejects_named_groups_and_insufficient_gold(tmp_pat
         load_contact_fixture(named_path)
     with pytest.raises(ValueError, match="six"):
         load_contact_fixture(small_path)
+
+
+@pytest.mark.parametrize(
+    ("path_kind", "payload", "message"),
+    [
+        ("missing", None, "could not be read"),
+        ("invalid_json", "{", "could not be read"),
+        (
+            "malformed_pair",
+            {"contacts": {label: ["not an object"] * 6 for label in ("A", "B", "C")}},
+            "pairs must be objects",
+        ),
+        (
+            "empty_message",
+            {
+                "contacts": {
+                    label: [{"incoming": " ", "gold": "返信"}] * 6
+                    for label in ("A", "B", "C")
+                }
+            },
+            "empty incoming",
+        ),
+        (
+            "overlong_message",
+            {
+                "contacts": {
+                    label: [{"incoming": "相手", "gold": "返" * 2001}] * 6
+                    for label in ("A", "B", "C")
+                }
+            },
+            "over 2000",
+        ),
+        (
+            "too_many_pairs",
+            {
+                "contacts": {
+                    label: [{"incoming": "相手", "gold": "返信"}] * 13
+                    for label in ("A", "B", "C")
+                }
+            },
+            "at most 12",
+        ),
+    ],
+)
+def test_contact_gold_fixture_rejects_invalid_or_unbounded_input(
+    tmp_path, path_kind, payload, message
+):
+    path = tmp_path / f"{path_kind}.json"
+    if path_kind != "missing":
+        path.write_text(
+            payload if isinstance(payload, str) else json.dumps(payload),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(ValueError, match=message):
+        load_contact_fixture(path)
+
+
+def test_contact_benchmark_marks_generated_outputs_for_manual_quality_review():
+    complete = contact_quality_status(generation_complete=True, expected_replies=9)
+    incomplete = contact_quality_status(generation_complete=False, expected_replies=9)
+
+    assert complete == {
+        "status": "manual_review_required",
+        "adaptation_pass": False,
+        "expected_replies": 9,
+    }
+    assert incomplete == {
+        "status": "generation_incomplete",
+        "adaptation_pass": False,
+        "expected_replies": 9,
+    }
 
 
 def test_contact_benchmark_keeps_supplied_fixture_gold_isolated_by_contact(

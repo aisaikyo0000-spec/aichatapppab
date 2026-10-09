@@ -59,3 +59,13 @@ def test_non_fallback_model_keeps_existing_transient_rate_limit_retries(monkeypa
         provider.RETRY_BASE_DELAY,
         provider.RETRY_BASE_DELAY * 2,
     ]
+
+
+def test_gemini_invalid_auth_key_response_is_classified_as_invalid_api_key():
+    provider = GeminiProvider("test-key")
+    response = Mock(status_code=400, text='{"error":{"message":"Invalid Auth key"}}')
+
+    with pytest.raises(AIError) as exc_info:
+        provider._parse_response(response, response.text)
+
+    assert exc_info.value.code == "invalid_api_key"

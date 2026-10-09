@@ -140,6 +140,25 @@ def test_tapple_benchmark_rejects_pressuring_invitation_examples(invite_example)
     ]
 
 
+@pytest.mark.parametrize(
+    "public_hotel_example",
+    [
+        "ホテルのカフェでお茶しませんか？",
+        "ホテルのロビーでお話ししませんか？",
+    ],
+)
+def test_tapple_benchmark_accepts_public_hotel_venues(public_hotel_example):
+    results = _valid_results()
+    explicit_interest = next(
+        result for result in results if result["id"] == "explicit_interest"
+    )
+    explicit_interest["strategy"]["invite_example"] = public_hotel_example
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is True
+
+
 def test_tapple_benchmark_rejects_complete_run_with_wrong_strategy():
     results = _valid_results()
     results[1]["strategy"]["action"] = "stop"

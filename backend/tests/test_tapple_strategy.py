@@ -4180,6 +4180,34 @@ def test_invitation_example_must_be_public_and_must_not_suggest_contact_exchange
 
 
 @pytest.mark.parametrize(
+    "public_hotel_example",
+    [
+        "ホテルのカフェでお茶しませんか？",
+        "ホテルのロビーでお話ししませんか？",
+    ],
+)
+def test_tapple_invitation_example_allows_public_hotel_venues(
+    public_hotel_example,
+):
+    conversation = "相手: 今度一緒に行きたいです"
+    result = _parse_tapple_strategy(
+        _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "相手に明確な参加意思があります。",
+                "evidence": ["今度一緒に行きたいです"],
+                "invite_example": public_hotel_example,
+            }
+        ),
+        conversation,
+    )
+
+    assert result is not None
+    assert result.action == "invite"
+    assert result.invite_example == public_hotel_example
+
+
+@pytest.mark.parametrize(
     "coercive_example",
     [
         "駅前のカフェで絶対来てね！",

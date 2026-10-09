@@ -1,5 +1,15 @@
 # 現行返信生成アーキテクチャ分析
 
+## 2026-10-09 Step 18-R4 Iteration 34: Tapple出力契約の統一
+
+Tappleモードでは、システムプロンプトが返信だけのJSONを指定する一方、初回・再生成プロンプトが会話戦略も要求していた。さらに修復指示には戦略を必須とする例と、非invite時も文字列になっている`invite_example`が残り、「根拠がなければ戦略を省略」「invite以外は`null`」という条件と矛盾していた。
+
+返信配列を必須にし、`strategy`を根拠がある場合だけ同じJSONへ加える任意項目に統一した。`invite_example`はinvite時のみ文字列、それ以外は`null`と明記した。共通契約を初回・再生成・修復で使い、生成とプレビューのコンテキストに戦略モードと候補数を渡す。通常モードの返信だけの契約は維持した。
+
+修正前のテストで、システム側に`strategy_mode`を渡せずTapple用契約を切り替えられないことと、プロンプト間のスキーマ不一致を再現した。Tapple専用テストは**628 passed / 2 warnings**、backend全体は**1,346 passed / 2 warnings**。frontend `npm run build`、Python `compileall`、`git diff --check`もPASSし、独立Python Reviewer v4もPASSした。既存のFastAPI `on_event`非推奨通知以外の失敗はない。ruffは環境にないため実行できなかった。Gemini APIは使用していない。
+
+コードcommitは`8e21876`。実API生成、本人Goldを使った評価、70ケースとContact Benchの再評価は未実施である。したがってStep 18-R4は未完了。
+
 ## 2026-10-09 Step 18-R4 Iteration 33: 新APIアカウントの切替と実返信確認
 
 `.env`で主`API/chat1.md`、予備`API/chat1 - コピー.md`を指定した。キー本文はログ・資料へ記録していない。主3.5 → 主3.1 → 予備3.5 → 予備3.1の順で、quotaに該当するrate limit時だけ切り替える。既存の切替テスト3件で順序を確認した。

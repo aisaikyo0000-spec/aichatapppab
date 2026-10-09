@@ -7,6 +7,13 @@
 
 ## 2026-10-09 最新状況
 
+### Step 18-R4 Tapple出力契約の修正
+
+- `build_system_prompt()`が返信候補だけのJSONを指定する一方、初回・再生成側は`strategy`も要求していた。修復指示にも必須の戦略オブジェクトと文字列の`invite_example`が残り、戦略を省略する条件や非invite時の`null`指定と食い違っていた。
+- 返信配列を必須、戦略を根拠がある場合だけ付ける任意のトップレベル項目として整理した。`invite_example`はinvite時だけ文字列にし、それ以外では`null`にする。初回・再生成・修復で共有する出力契約を設け、生成とプレビューの両経路へ戦略モードと候補数を渡す。
+- 修正前の再現テストで不整合を確認。Tapple専用テストは**628 passed / 2 warnings**、backend全体は**1,346 passed / 2 warnings**。frontend `npm run build`、Python `compileall`、`git diff --check`もPASS。独立Python Reviewer v4はPASS。警告は既存のFastAPI `on_event`非推奨通知。ruffは環境にないため実行できなかった。
+- コードcommitは`8e21876`。資料更新後にfork作業branchへpushする。GitHub `main`は更新していない。Gemini APIは使っていない。実API生成、本人Goldを使った評価、70ケースとContact Benchの再評価は未実施のため、Step 18-R4は未完了。
+
 - 作業基点はGitHub `main`の`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branch `codex/chat-quality-20261008`には評価基盤コード`87c0049`・資料`e3e4ab1`をpush済み。今回のEmbedding比較コードは`c1d3a6c`でcommit済み。資料更新後にfork作業branchへpushする。`main`は変更していない。
 - ローカル限定の合成10ケースで、現行lexical検索・`intfloat/multilingual-e5-small`（revision `5697a65b0a002a92fe8c4fc9d495303ffff9c7d2`）・現行lexical順位とdense順位を融合するRRFを比較した。正解あり9件のRecall@4は全方式**0.889**、完全順位のMRRはlexical **0.889**、dense/RRF **0.911**。ただしMRR差は疲労の言い換えが5位に現れた分で、アプリが取る上位4件には入らない。
 - EmbeddingとRRFは正解のない陶芸ケースにも候補を返した（1/1）。さらに「今日はくたくた」から「仕事で疲れちゃった」への合成言い換えをdense/hybridとも上位1位で拾えず、語彙検索と同じく関連例なしになった。小規模・人手判断未校正の合成評価なので本番品質の結論には使わないが、今の結果ではEmbeddingを本番採用しない。

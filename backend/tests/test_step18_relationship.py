@@ -437,7 +437,7 @@ def test_learned_policy_does_not_override_contact_length_with_short_reply_bias()
     })
 
     assert "中央値109文字" in profile
-    assert "短さを一律に優先しない" in profile
+    assert "短さを一律に優先せず" in profile
     assert "短い相槌・一言反応を優先すること" not in profile
 
 

@@ -8,7 +8,11 @@
 
 少数の実APIテストに向けて、Tappleベンチに`--scenario`と`--tone`を追加した。指定時は選択したケースだけを実行し、全件実行の既定動作と14シナリオの評価条件は維持する。単独シナリオのartifact完了判定をテストした。
 
-Gemini 3.5 Flash Liteへの実API呼び出しは、主・別アカウントで各1回、どちらもHTTP 400 `Invalid Auth key`となった。別アカウントの鍵をGemini標準APIの`x-goog-api-key`でも1回確認したがHTTP 401だった。いずれもレート制限ではないため3.1へ切り替えていない。合成会話だけを使い、実チャット履歴は送信していない。生成返信が得られず、実際の文面評価は未完了。
+認証エラーの原因は、疎通ベンチへ渡したgemini2.md・gemini3.mdの鍵と、通常アプリが使う`.env`の鍵が別だったこと。2ファイルはそれぞれアプリ経由でHTTP 400 `Invalid Auth key`、別アカウントの鍵は標準APIでHTTP 401だった。一方、実際の起動設定から`.env`の`GEMINI_API_KEY`を読み込むとGemini 3.5 Flash LiteがHTTP 200で返信を生成した。
+
+通常アプリの設定優先順位はDB設定が`.env`より上。調査したローカルDBはprovider=Gemini、model=3.5で、DB内にGemini APIキーはなかった。`.env`の`AI_PROVIDER`はCerebrasだがDB設定が優先される。`GEMINI_API_KEY_FILE`は未設定で、主キーは`.env`内の`GEMINI_API_KEY`から読まれる。`.env`の値はgemini2.md・gemini3.mdおよび現在のシェル環境変数とは別だった。疎通ベンチは`--env-file`で指定したファイルを直接読むため、当初はアプリ本体と異なる鍵を試していた。
+
+合成会話への生成文は「カフェめっちゃ気になる！\n一緒に行きたい！笑」。初回に3案が返ったため修復リクエストを1回行い、最終返信を得た。ただしTapple評価は戦略の`invite_example`が`null`で不合格。API文体は確認できたが、戦略出力の修正と再評価が残る。個人の会話履歴は送信していない。認証失敗はいずれもレート制限ではないため、3.1へ切り替えていない。
 
 Googleの公式資料にはGemini 3.5 Flash-Liteと3.1 Flash-Liteが現行モデルとして掲載されている。またOpenAI互換APIの認証例は、アプリが設定している`Authorization: Bearer`方式と一致する。現状の認証エラーだけでは原因を鍵の無効と断定せず、鍵の種類・内容やGoogle側の利用権限を次に確認する。
 

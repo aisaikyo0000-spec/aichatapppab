@@ -11,11 +11,14 @@
 - Step 18-R4では、少数の本人Goldが相手別Silverに上書きされる経路を防ぎ、最近のGoldにある絵文字の順序を相手別styleへ段階的に反映した。Tappleでは、辞書にない活動関心、明示的な苦手意識、安全上の懸念、拒否や迷いの口語表現を扱う回帰を追加した。Tapple実生成ベンチは14シナリオを維持している。
 - 今回は、ユーザー本人の記号の好みとして「、」「。」を基本的に避け、文意に合う「！」「？」や絵文字、記号なしも自然に使う指示を追加した。記号や絵文字を機械的に付けない条件も含めた。敬語・タメ口の選択は相手を切り替えると自動へ戻り、返信生成プレビューにも同じ口調を送る。
 - `python -m pytest backend/tests -q`: **1,214 passed / 2 warnings**。frontend `npm run build`、Tapple benchmark `--help`、`git diff --check`はPASS。警告は既存のFastAPI `on_event`非推奨通知。PythonとTypeScriptの独立Reviewerはともに**PASS**。
-- 実APIは主アカウントと別アカウントのGemini 3.5で各1回、合計2回試した。どちらも`Invalid Auth key`（HTTP 400）で返信が生成されなかった。さらに別アカウントの鍵をGemini標準APIでも1回確認したが、HTTP 401で認証されなかった。いずれもレート制限ではないため3.1へは切り替えていない。合成会話以外の履歴は送信しておらず、APIキーの内容も表示・保存していない。
+- 実API認証エラーの原因は、疎通ベンチへ渡した鍵ファイルと、通常アプリが使う`.env`の鍵が別だったこと。gemini2.md・gemini3.mdは各1回試して`Invalid Auth key`（HTTP 400）となり、別アカウント鍵を標準APIへ送った確認もHTTP 401だった。一方、実際の設定から`.env`の`GEMINI_API_KEY`を使うと、Gemini 3.5 Flash LiteがHTTP 200で返信を生成した。鍵の内容は表示・保存していない。
+- GitHub版の設定解決はDB設定を`.env`より優先する。ローカルDBではprovider=Gemini、model=3.5、DB内のGeminiキーなし。`.env`の`AI_PROVIDER`はCerebrasだが、DBのGemini設定が優先される。`GEMINI_API_KEY_FILE`は未設定なので、キーは`.env`内の`GEMINI_API_KEY`から読み込まれる。`.env`の値はgemini2.md・gemini3.mdおよび現在のシェル環境変数とは一致しない。ベンチは`--env-file`で渡したファイルを直接読むため、当初は通常起動時と異なるキーを使っていた。
+- `.env`のキーによる合成1ケースでは、返信「カフェめっちゃ気になる！\n一緒に行きたい！笑」が生成された。APIは初回出力を3案で返したため修復を1回行い、最終返信を得た。ただしTapple評価は`invite_example`が`null`だったため不合格。生成文の文体確認はできたが、戦略出力の修正が残る。合成会話のみを使い、個人のチャット履歴は送信していない。
+- 認証失敗はいずれもレート制限ではないため、Gemini 3.1へは切り替えていない。
 - 実APIテストの消費を抑えるため、Tappleベンチに`--scenario`と`--tone`を追加した。指定時は選んだシナリオだけを評価し、オプションなしでは従来どおり14シナリオ全件を実行する。認証エラーを解消した後、敬語・タメ口の少数ケースを再確認する。
 - Tappleベンチは空DBと空の相手プロフィールで動くため、本人Goldの文体を評価しない。過去のContact Bench 3/3 artifactもGold重複修正前の結果で、現行受け入れ証拠には使わない。
-- Gemini公式資料では、3.5 Flash-Liteと3.1 Flash-Liteは現行モデルとして掲載され、OpenAI互換APIでは`Authorization: Bearer`を使う例が案内されている。このためモデル名やアプリの認証ヘッダーより、読み込んだ鍵の種類・内容・Google側の利用権限を次に切り分ける。鍵をチャットへ貼らず、ファイルの形式とAI Studioでの利用設定を確認してもらった後、少数の実APIケースを再実行する。
-- Step 18-R4は未完成で、Step 19へ進まない。API認証が通った後、最新70ケース、Contact Benchの9返信、Tapple14シナリオの実生成と全文レビューを行う。
+- Gemini公式資料では3.5 Flash-Liteと3.1 Flash-Liteが現行モデルとして掲載され、OpenAI互換APIのBearer認証例はアプリの送信方式と一致する。次は`invite_example`欠落をAPI出力と本番戦略処理に照らして直し、少数の実APIケースで再確認する。
+- Step 18-R4は未完成で、Step 19へ進まない。続けて最新70ケース、Contact Benchの9返信、Tapple14シナリオの実生成と全文レビューを行う。
 - Geminiの順序は主アカウント3.5→主3.1→別アカウント3.5→別アカウント3.1。次へ進むのは`rate_limit`時だけ。主3.5と3.1の両方が制限されたら別アカウントへ切り替える。
 - [Tapple戦略調査メモ](development/tapple-dating-strategy-research.md)では公式調査を自己申告の傾向として扱い、学術研究や利用者の逸話を一般化しない方針を記録している。
 

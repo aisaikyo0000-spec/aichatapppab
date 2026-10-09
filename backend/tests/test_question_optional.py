@@ -102,7 +102,7 @@ def test_short_input_does_not_override_well_sampled_contact_gold_length():
     )
 
     assert "相手別Goldの文量傾向を主な参考にする" in sysp
-    assert "短文という理由だけで一言返信に縮めない" in sysp
+    assert "短文という理由だけで一言返信に縮めず" in sysp
     assert "長い文章や無理な話題拡張は避けること" not in sysp
 
 

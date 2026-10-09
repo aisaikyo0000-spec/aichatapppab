@@ -728,7 +728,18 @@ def build_system_prompt(
             f"【COUNTERPART MESSAGE LENGTH】相手の直近メッセージ: 約{counterpart_length_chars}文字（区分: {counterpart_length_tier}・{tier_label}）"
         )
         if counterpart_length_tier == "short":
-            length_lines.append("- 相手が短文のため、短いリアクション・共感・一言回答を優先し、長い文章や無理な話題拡張は避けること。")
+            if same_contact_gold_samples >= 5:
+                length_lines.append(
+                    "- 相手が短文でも、相手別Goldの文量傾向を主な参考にすること。短文という理由だけで一言返信に縮めず、"
+                    "話題が許す範囲で本人のGoldに近い文量を使う。ただし無理な話題拡張や余分な説明は避けること。"
+                )
+            elif same_contact_gold_samples >= 3:
+                length_lines.append(
+                    "- 短いリアクションは自然な選択肢だが、相手別Goldの文量と現在の話題も見て返信量を決めること。"
+                    "相手が短文という理由だけで一言返信に縮めないこと。"
+                )
+            else:
+                length_lines.append("- 相手が短文のため、短いリアクション・共感・一言回答を優先し、長い文章や無理な話題拡張は避けること。")
             if counterpart_length_chars <= 3:
                 length_lines.append("- 相手の発言がごく短い相づち・挨拶のため、1行の短い返信を優先し、2行以上の返信は避けること（Step 17-R6 loop）。")
         elif counterpart_length_tier == "medium":

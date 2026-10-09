@@ -472,8 +472,9 @@ def build_relationship_summary(contact_id: int | None) -> str:
     length_guidance = ""
     if n >= 6 and global_gold.sample_count >= 5 and length_delta >= 10:
         length_guidance = (
-            "この相手にはGlobal Goldより長めに返す傾向がある。話題が許す場合は一言で切り上げず、"
-            "共感や具体的な反応を足して本人の実績に近づける。ただし毎回この文量にする必要はない。"
+            "この相手にはGlobal Goldより長めに返す傾向がある。感情の共有や体験談など話題が許す場合、"
+            "3案のうち1案は共感に加えて具体的な反応を添え、短い相づちだけより少し厚みを持たせる。"
+            "質問を足して長くしたり、相手の発言を言い換えて水増ししたりしない。毎回長くする必要もない。"
         )
     # 質問率（観測のみ。高いから毎回質問するわけではない）
     if prof.question_ratio >= 0.5:
@@ -483,12 +484,25 @@ def build_relationship_summary(contact_id: int | None) -> str:
     else:
         q_desc = "質問普通"
     confidence = f"（この相手の手入力Gold {n}件をGlobal Goldに段階的に反映）"
-    tone_guidance = (
-        f"丁寧・混合・砕けた文体の実績比率は{int(prof.keigo_ratio * 100)}%・{int(prof.hybrid_ratio * 100)}%・{int(prof.tame_ratio * 100)}%。"
-        "混在も本人らしさとして保ち、相手への共感や労いなど文脈に自然に合う場面では、3案の少なくとも1案は敬語だけで終始させず、Goldにある会話調の距離感（例:『大変だったね』『ゆっくり休んでね』）を反映する。"
-        "事務連絡や深刻な話題など砕けると不自然な場面では無理に崩さず、同じ丁寧さの言い換えだけで3案を埋めない。"
-        if formality == "丁寧さと砕け具合が混在" else ""
-    )
+    tone_guidance = ""
+    if formality == "丁寧さと砕け具合が混在":
+        tone_guidance = (
+            f"丁寧・混合・砕けた文体の実績比率は{int(prof.keigo_ratio * 100)}%・{int(prof.hybrid_ratio * 100)}%・{int(prof.tame_ratio * 100)}%。"
+            "混在も本人らしさとして保つこと。"
+        )
+        if prof.hybrid_ratio + prof.tame_ratio >= 0.6:
+            tone_guidance += (
+                "自然な話題では3案中少なくとも2案を敬語だけで終わらせず、"
+                "Goldにある会話調や丁寧さと砕け具合の混ざり方を反映する。"
+            )
+        else:
+            tone_guidance += (
+                "自然な話題では3案の少なくとも1案に、Goldにある会話調の距離感を反映する。"
+            )
+        tone_guidance += (
+            "事務連絡や深刻な話題など砕けると不自然な場面では無理に崩さず、"
+            "同じ丁寧さの言い換えだけで3案を埋めない。"
+        )
     return (
         f"＜この相手への返信距離感＞{confidence}\n"
         f"- 距離感: {formality}・{warmth}（笑い{'多め' if prof.laugh_ratio >= 0.3 else '少なめ'}・{brevity}・{q_desc}）。"

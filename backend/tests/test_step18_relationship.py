@@ -103,7 +103,7 @@ def test_relationship_summary_keeps_mixed_contact_tone_mixed(client):
 
     assert "丁寧さと砕け具合が混在" in summary
     assert "3案中少なくとも2案" in summary
-    assert "3案の少なくとも1案は敬語だけで終始させず" in summary
+    assert "3案中少なくとも2案を敬語だけで終わらせず" in summary
 
 
 def test_relationship_summary_uses_global_fallback_for_fewer_than_three_gold(client):
@@ -124,7 +124,7 @@ def test_relationship_summary_describes_contact_relative_message_length(client):
     assert "Global Goldより相対的に長め" in summary
     assert "同一相手Goldの文量中央値" in summary
     assert "3案のうち1案" in summary
-    assert "言い換えで水増ししない" in summary
+    assert "相手の発言を言い換えて水増ししたりしない" in summary
 
 
 def test_contact_tone_fit_neutral_without_data(client):
@@ -514,7 +514,8 @@ def test_relationship_summary_preserves_reliably_longer_contact_style(client):
 
     assert "Global Goldより長めに返す傾向がある" in summary
     assert "話題が許す場合" in summary
-    assert "毎回この文量にする必要はない" in summary
+    assert "共感に加えて具体的な反応を添え" in summary
+    assert "毎回長くする必要もない" in summary
 
 
 def test_automatic_contact_tone_uses_confident_manual_gold_only(client):

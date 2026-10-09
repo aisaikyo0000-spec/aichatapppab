@@ -2659,6 +2659,67 @@ def test_hard_meeting_refusal_is_not_reopened_by_later_availability(statement):
 @pytest.mark.parametrize(
     "statement",
     [
+        "会うことは考えられません。",
+        "会う気分ではありません。",
+        "会うのはできれば避けたいです。",
+    ],
+)
+def test_colloquial_firm_meeting_refusals_stop_invitation_strategy(statement):
+    result = _parse_tapple_strategy(
+        _raw_strategy(
+            {
+                "action": "continue",
+                "rationale": "会話を続けます。",
+                "evidence": [statement],
+                "invite_example": None,
+            }
+        ),
+        f"相手: {statement}",
+    )
+
+    assert result is not None
+    assert result.action == "stop"
+
+
+def test_colloquial_meeting_reluctance_waits_without_being_promoted_to_refusal():
+    statement = "会うのは気が進みません。"
+    result = _parse_tapple_strategy(
+        _raw_strategy(
+            {
+                "action": "continue",
+                "rationale": "会話を続けます。",
+                "evidence": [statement],
+                "invite_example": None,
+            }
+        ),
+        f"相手: {statement}",
+    )
+
+    assert result is not None
+    assert result.action == "wait"
+
+
+def test_ellipsis_after_direct_meeting_mention_is_treated_as_hesitation():
+    statement = "直接会うのはちょっと…"
+    result = _parse_tapple_strategy(
+        _raw_strategy(
+            {
+                "action": "continue",
+                "rationale": "会話を続けます。",
+                "evidence": [statement],
+                "invite_example": None,
+            }
+        ),
+        f"相手: {statement}",
+    )
+
+    assert result is not None
+    assert result.action == "wait"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
         "今は会いたいです。前は会うのは無理だと思っていました。でも今も会うのは無理です。",
         "今は会いたいです。前は会うのは無理だと思っていましたが、今は会いたくありません。",
     ],
@@ -4031,6 +4092,44 @@ def test_tapple_reply_candidates_reject_contact_exchange_requests_only_in_tapple
 
     harmless_mention = "インスタのアカウントかわいいね"
     assert validate_candidate_replies([harmless_mention], 1, strategy_mode="tapple") == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "そうですね。僕は絶対安全なので安心してください。",
+        "そうですね。安心して会えるように、必ず安全を保証します。",
+    ],
+)
+def test_tapple_reply_rejects_unverifiable_absolute_safety_assurances(reply):
+    violations = validate_candidate_replies(
+        [reply],
+        1,
+        counterpart_message="会うのは少し不安です。",
+        strategy_mode="tapple",
+        tapple_action="wait",
+    )
+
+    assert any("安全" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "不安ですよね。駅前のカフェなど、人目のある場所で会う方法もあります。",
+        "安全を保証できるとは言えないので、無理せずメッセージで話しましょう。",
+    ],
+)
+def test_tapple_reply_allows_empathy_and_qualified_safety_information(reply):
+    violations = validate_candidate_replies(
+        [reply],
+        1,
+        counterpart_message="会うのは少し不安です。",
+        strategy_mode="tapple",
+        tapple_action="wait",
+    )
+
+    assert not any("安全" in violation for violation in violations)
 
 
 def test_strategy_comes_from_the_repaired_output_when_repair_is_accepted(client, monkeypatch):

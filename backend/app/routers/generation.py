@@ -3230,6 +3230,50 @@ def _apply_contact_length_nudge(
         item["final"] = round(item["final"] + adjustment, 3)
 
 
+def _contact_style_soft_repair_issues(
+    replies: list[str],
+    profile,
+    *,
+    same_contact_gold_median: int | None,
+    global_gold_median: int | None,
+    explicit_tone: str = "",
+) -> list[str]:
+    """Return one-pass soft repair guidance for a clear, well-sampled style mismatch.
+
+    These are not hard validation rules: the caller uses them only to request one
+    optional repair after an otherwise valid first response.
+    """
+    if explicit_tone or len(replies) < 2 or profile is None or profile.sample_count < 5:
+        return []
+
+    issues: list[str] = []
+    if profile.hybrid_ratio + profile.tame_ratio >= 0.6:
+        polite_ending = re.compile(
+            r"(?:です|ます|でした|ました|ください|でしょう|ません)"
+        )
+        if all(polite_ending.search((reply or "").strip()) for reply in replies):
+            issues.append(
+                "同一相手Goldでは会話調の返信も十分に使われています。候補の口調がすべて敬語だけなので、"
+                "内容は変えず、自然な範囲で少なくとも1案は文全体をGoldにある会話調へ直してください。"
+                "語尾に笑や絵文字を足すだけではなく、敬語語尾を避けてください。"
+            )
+
+    if (
+        same_contact_gold_median is not None
+        and global_gold_median is not None
+        and same_contact_gold_median >= global_gold_median + 10
+    ):
+        lengths = sorted(len((reply or "").strip()) for reply in replies)
+        median_reply_length = lengths[len(lengths) // 2]
+        if median_reply_length < same_contact_gold_median * 0.5:
+            issues.append(
+                "同一相手GoldはGlobal Goldより長めですが、今回の返信候補は全体にかなり簡潔です。"
+                "話題に自然に合う範囲で、1案だけ共感に具体的な反応を加えて少し厚みを持たせてください。"
+                "文字数を合わせたり、相手の発言を言い換えて水増ししたり、質問を追加したりしないでください。"
+            )
+    return issues
+
+
 def build_user_reply_pairs() -> list[dict]:
     """全会話メッセージから (contact turn -> self turn) の教師ペアを構築する。
 
@@ -4861,6 +4905,31 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                     "少なくとも1案は質問なしの自然な返信（相槌・共感・一言・労い）にしてください。"
                     "（質問すること自体は禁止しません）"
                 ]
+
+        if (
+            attempt == 1
+            and not violations
+            and parsed_replies
+            and body.strategy_mode != "tapple"
+        ):
+            style_profiles = ctx["pieces"].get("style_profile", {})
+            contact_profile = style_profiles.get("same_contact_all_gold_profile")
+            global_profile = style_profiles.get("other_contact_gold_profile")
+            violations = _contact_style_soft_repair_issues(
+                parsed_replies,
+                contact_profile,
+                same_contact_gold_median=(
+                    getattr(contact_profile, "char_median", None)
+                    if contact_profile and contact_profile.sample_count >= 5
+                    else None
+                ),
+                global_gold_median=(
+                    getattr(global_profile, "char_median", None)
+                    if global_profile and global_profile.sample_count >= 5
+                    else None
+                ),
+                explicit_tone=body.tone,
+            )
 
         # 違反がなければ即合格
         if not violations and parsed_replies and len(parsed_replies) == body.candidates:

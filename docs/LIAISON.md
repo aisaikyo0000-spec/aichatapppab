@@ -3,9 +3,20 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-09 / Step 18-R4 新API主・予備切替と実返信確認を更新
+最終更新: 2026-10-09 / Step 18-R4 Contact Adaptationの実API再評価と回帰修正を記録
 
-## 2026-10-09 最新状況
+## 2026-10-09 作業中の進捗
+
+- GitHub `main`の作業基点は`a75ba76998a377e527f1ea3bedaa655a6b89569c`。作業branchは`codex/chat-quality-20261008`。この更新時点ではコード・資料はローカル作業branchにあり、push前の確認中。GitHub `main`には反映していない。
+- 実API Contact Bench r41（Gemini 3.5 Flash Lite、同一入力「仕事で疲れた」、相手A/B/C）は品質レビュー**FAIL**。返信はGoldより短く、BのGoldにある混合口調・笑いが反映されにくい。9件中多くが「おつかれさま→休んで」の同じ展開で、「今日も」「毎日」「たくさん頑張った」など入力から確認できない反復・努力の追加もあった。生成完了を合格とは扱わない。
+- r41を踏まえて、相手に関する未確認の継続状況・努力量を検出する通常生成validatorと、共感だけで自然に成立する返信も許容するpromptを調整した。独立レビューv42で、読点で質問と断定を続ける文の質問節まで未確認事実として誤検出する問題を発見。回帰テストを追加し、質問節を除外する処理を修正した。
+- 独立レビューv43の指摘に従い、嗜好質問の終端判定・トピック抽出、相手への嗜好帰属の除外・本人Gold照合を小さな関数へ分割した。v44は否定Gold、v45は別文の別topic好みを根拠にする誤帰属を指摘。Gold照合をtopic・主張種別（嗜好／興味・行きたい）・肯否で判定し、topic不一致時の極性fallbackを削除した。v46は省略回答の「大丈夫」の極性取りこぼしと、直接の複数嗜好質問への回答を一般希望validatorが誤検知する回帰を指摘。単一topic質問に限り返信側だけtopic省略極性を許し、direct preference answerは専用validatorに委ねるよう修正した。
+- v46指摘の再現テスト3件はfocused runでPASS。その後の全backend suiteは**1,323 passed / 2 failed / 2 warnings**。失敗2件は省略回答の極性と直接嗜好回答の誤検知で、後からfocused testではPASSを確認したため全suite再実行が必要。fresh reviewer v47は別のHIGHを指摘してFAIL: 単一質問の回答「好きです。でも嫌いです」が最初の「好き」だけで肯定と判定され、矛盾回答を通す。回帰テストも未追加。修正・再検証が必要。frontend `npm run build`は前回PASS。警告は既存のFastAPI `on_event`非推奨通知。
+- `git diff --check`は最新の関数分割時点でPASSしているが、最終差分で再確認する。コード・資料は未commit・未pushで、GitHub作業branchへの反映は最新テスト・review後に行う。
+- 未完了: 最新コードでの実API Contact Bench再実行と返信全文レビュー、正規70ケース回帰、Tapple実生成シナリオの必要範囲の再確認、資料の最終review、GitHub作業branchへのpush。Contact Bench r41のFAILが解消するまでStep 18-R4を完了扱いせず、Step 19へ進まない。
+- APIキーの値・本人Goldの原文は資料や評価artifactに記録しない。前回までの実API Contact Benchは3回実施済み。次はコードレビューと自動テスト後に必要最小限の呼び出しで再確認する。
+
+## Iteration 33時点の記録
 
 - 最新作業Iteration 33で、`.env`の`GEMINI_API_KEY_FILE`を`API/chat1.md`、`GEMINI_SECONDARY_API_KEY_FILE`を`API/chat1 - コピー.md`に設定した。ファイル名と読み込み経路だけを記録し、キー本文は表示・記録していない。現行branchの設定解決と経路切替テスト3件はPASS。優先順は主3.5→主3.1→予備3.5→予備3.1で、rate limit時だけ次の経路へ進む。
 - 実API確認では`chat1.md`が3.5 Flash Liteで応答した一方、`chat1 - コピー.md`はHTTP認証エラー`invalid_api_key`となった。これはquota超過を示す429ではない。したがって主キーは利用可能、予備キーは設定上登録済みだが、キーを直すまで実際の予備利用はできない。認証エラー時に別キーへ自動切替して隠さない挙動は意図どおり。

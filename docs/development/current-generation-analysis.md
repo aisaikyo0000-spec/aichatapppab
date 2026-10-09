@@ -2197,3 +2197,15 @@ Gemini APIは呼び出していない。最新70ケース、Contact Bench全9返
 最終コードcommit `3f80fee`。`python -m pytest backend/tests -q`: **1,174 passed / 2 warnings**。Tapple strategy suite **593 passed**、strategy・artifact・benchmarkのfocused suite **631 passed**。Gemini model fallback suite **17 passed**、benchmark route-state suite **18 passed**。frontend production build、Python `compileall`、`git diff --check`もPASS。警告はFastAPI `on_event`の既存非推奨通知。`ruff`は環境にないため未実行。最新差分・資料へのfresh Python Reviewerは**PASS**。
 
 Gemini APIは呼び出していない。利用経路はprimary 3.5 → primary 3.1 → secondary 3.5 → secondary 3.1で、`rate_limit`時のみ次へ進む。primaryの3.5と3.1が両方制限された場合はsecondaryへ切り替える。API実測、70ケース、Contact Bench 9返信の3/3目視、Tapple 13シナリオと全返信の目視評価は残るため、Step 18-R4は未完成。GitHub mainの基点`a75ba76`は変更していない。コードcommit `3f80fee`と資料commit `4a7f6a0`をfork作業branchへpushし、remote SHA一致を確認した。
+
+## 2026-10-09 Contact Adaptation: r41レビュー後の回帰修正
+
+Gemini 3.5 Flash Liteで同一入力「仕事で疲れた」を相手A/B/Cに生成したContact Bench r41は、生成自体は完了したが、独立受け入れレビューはFAILだった。返信平均はA 24.3字（Gold 45.3字）、B 35.3字（Gold 103.8字）、C 46字（Gold 70.3字）。BはGoldの混合口調・笑い表現を十分反映せず、9返信の多くが「おつかれさま→休んで」の助言に偏った。「今日も」「毎日」「たくさん頑張った」のように入力で確認できない反復・努力量の表現も問題になった。数値だけでなく、実返信の文量、距離感、内容の多様性を見てFAILとした。
+
+この結果を受け、相手の未確認の継続状況・努力量を通常生成validatorで検査する回帰を追加し、共感だけで自然に成立する返信を一律に助言へ変えない指示をpromptに加えた。独立Python review v42は、読点でつながった疑問節（例: `毎日仕事してるんですかね、頑張ってますね`）も事実主張として拾う誤検知を発見した。混在文のテストを追加し、質問節を読点で分割して通常validatorの判定から除外するよう修正。関連validator suiteは169件通過した。
+
+独立Python review v43は嗜好質問・本人の嗜好表明判定で責務が集中している2関数を指摘した。質問終端判定、嗜好トピック抽出、相手への帰属除去、本人Gold照合を小さなhelperへ分割。v44は否定的Gold、v45は別文・別topicの好みを誤って根拠にするfallbackを発見した。Gold照合をtopic・主張種別（嗜好／興味・行きたい）・肯否で一致させ、topic不一致時の極性fallbackを削除した。v46では単一topicの直接質問に対する「大丈夫」のような省略回答を誤って極性不明にする問題と、直接の複数嗜好質問への回答を一般希望validatorが二重に誤検知する回帰を発見した。省略極性は単一topic質問の返信側だけで許可し、直接の嗜好回答は専用validatorに委ねるよう修正した。v46指摘の再現テスト3件は最新コードでPASS。
+
+v46の再現ケースを直した後の全backend suiteは1,323 passed / 2 failed / 2 warnings。省略回答の極性と直接嗜好回答に関する2件は、その後のfocused testでPASSを確認したが、全suiteは再実行していない。fresh reviewer v47は、「好きです。でも嫌いです」のように矛盾する嗜好回答を、最初に現れた「好き」の極性だけでGold一致として通すHIGHを報告し、FAILとした。再現テストと修正は未実施。frontend production buildは前回PASS、最新差分のbuildと`git diff --check`は未確認。警告は既存のFastAPI `on_event` deprecationのみ。
+
+最新差分での実API Contact Bench再実行、返信全文の3相手比較、正規70ケース回帰、Tapple実生成評価、資料を含む最終reviewは未完了。r41の品質FAILは未解消であり、Step 18-R4は未完成。モデル変更・評価器変更・ケース除外で合格に見せず、GitHub `main`にも反映しない。次は自動テストと独立コードレビューが通った後、利用API枠を考慮した必要最小限のContact Benchを実行し、品質判定を更新する。

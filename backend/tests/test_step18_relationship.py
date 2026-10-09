@@ -423,6 +423,24 @@ def test_learned_policy_describes_mixed_tone_without_forcing_casual(client):
     assert "相手の呼称は『〇〇さん』" not in profile
 
 
+def test_learned_policy_does_not_override_contact_length_with_short_reply_bias():
+    profile = style.to_learned_policy_prompt({
+        "active_profile": style.StyleProfile(
+            sample_count=6,
+            char_median=109,
+            char_p25=72,
+            char_p75=151,
+        ),
+        "hierarchy_tier": "same_contact_recent_manual_gold",
+        "same_contact_gold_samples": 6,
+        "contact_adaptation_weight": 0.55,
+    })
+
+    assert "中央値109文字" in profile
+    assert "短さを一律に優先しない" in profile
+    assert "短い相槌・一言反応を優先すること" not in profile
+
+
 def test_automatic_contact_tone_uses_confident_manual_gold_only(client):
     casual_id = _seed_gold(client, "砕けた相手", TAME_PAIRS)
     polite_id = _seed_gold(client, "丁寧な相手", KEIGO_PAIRS)

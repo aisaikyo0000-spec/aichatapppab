@@ -75,6 +75,39 @@ def test_tapple_prompt_requests_evidence_grounded_separate_strategy():
     assert "具体的な共通の活動や場所への関心" in messages[1]["content"]
 
 
+def test_tapple_prompts_require_a_safe_example_for_invite():
+    initial = prompt.build_initial_generation_messages(
+        system_prompt="system",
+        chat_history_text="相手: 今度一緒に行きたいです！",
+        candidates=1,
+        strategy_mode="tapple",
+    )
+    initial_text = initial[1]["content"]
+
+    assert "inviteを選ぶ場合はinvite_exampleを必ず埋める" in initial_text
+    assert "具体的な店名や日時を会話にないのに作らない" in initial_text
+    assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' in initial_text
+
+    repair = _build_repair_messages(
+        initial,
+        _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "相手から一緒に行きたいと言われています。",
+                "evidence": ["今度一緒に行きたいです！"],
+                "invite_example": None,
+            },
+            replies=["一緒に行けるの嬉しい！"],
+        ),
+        ["invite戦略には安全な誘い方の例が必要です"],
+        1,
+        strategy_mode="tapple",
+    )
+    repair_text = repair[-1]["content"]
+    assert "inviteを選ぶ場合はinvite_exampleを必ず埋める" in repair_text
+    assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' in repair_text
+
+
 def test_ambiguous_interest_alone_does_not_authorize_an_invitation():
     statement = "カフェいいですね！行ってみたいな。"
     raw = _raw_strategy(
@@ -2016,6 +2049,79 @@ def test_private_place_invitation_is_repaired_before_reply_is_returned(client, m
     assert response.status_code == 200, response.text
     assert response.json()["replies"] == ["わかりました。\n教えてくれてありがとう。"]
     assert response.json()["strategy"]["action"] == "stop"
+
+
+def test_invitation_strategy_without_example_is_repaired(client, monkeypatch):
+    from app import database
+
+    interest = "今度一緒に行きたいです！"
+    first = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手から一緒に行きたいと言われています。",
+            "evidence": [interest],
+            "invite_example": None,
+        },
+        replies=["一緒に行けるの嬉しい！"],
+    )
+    repaired = _raw_strategy(
+        {
+            "action": "invite",
+            "rationale": "相手から一緒に行きたいと言われています。",
+            "evidence": [interest],
+            "invite_example": "人目のあるカフェでお茶しませんか？",
+        },
+        replies=["一緒に行けるの嬉しい！"],
+    )
+
+    class QueuedProvider:
+        name = "gemini"
+
+        def __init__(self):
+            self.responses = [first, repaired]
+
+        def generate(self, **_kwargs):
+            return self.responses.pop(0)
+
+        def available_models(self):
+            return ["gemini-3.5-flash-lite"]
+
+    provider = QueuedProvider()
+    monkeypatch.setattr("app.routers.generation.factory.get_provider", lambda *_args: provider)
+    monkeypatch.setattr(
+        "app.routers.generation.get_ai_config",
+        lambda: {
+            "provider": "gemini",
+            "model": "gemini-3.5-flash-lite",
+            "api_key": "test-key",
+            "temperature": 0.2,
+            "max_tokens": 512,
+            "history_limit": 50,
+            "fallback_provider": "gemini",
+            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_api_key": "test-key",
+            "secondary_api_key": "",
+        },
+    )
+    monkeypatch.setattr("app.routers.generation.time.sleep", lambda *_args: None)
+    database.set_setting("ai_provider", "gemini")
+    database.set_setting("ai_model", "gemini-3.5-flash-lite")
+    database.set_setting("api_key_gemini", "test-key")
+
+    contact_id = client.post("/api/contacts", json={"name": "テストさん"}).json()["id"]
+    client.post(
+        f"/api/contacts/{contact_id}/messages",
+        json={"sender": "contact", "content": interest},
+    )
+    response = client.post(
+        "/api/generate",
+        json={"contact_id": contact_id, "candidates": 1, "strategy_mode": "tapple"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["strategy"]["action"] == "invite"
+    assert response.json()["strategy"]["invite_example"] == "人目のあるカフェでお茶しませんか？"
+    assert provider.responses == []
 
 
 @pytest.mark.parametrize(

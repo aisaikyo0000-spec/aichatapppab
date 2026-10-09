@@ -86,6 +86,8 @@ def test_d_no_forced_three_step_structure_for_short_message():
     assert "【COUNTERPART MESSAGE LENGTH】" in sysp
     assert "短いリアクション" in sysp
     assert "Hard Limit ではない" in sysp
+    assert "本人Goldや相手別の返信傾向も考慮" in sysp
+    assert "長めの傾向が明確なら" in sysp
 
 
 def test_e_all_three_without_questions_pass():

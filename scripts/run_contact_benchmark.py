@@ -253,6 +253,12 @@ def main():
             print(f"Invalid --gold-fixture: {exc}")
             return 2
         fixture_source = "user_gold_fixture"
+    if not args.probe.strip():
+        print("Invalid --probe: message must not be empty")
+        return 2
+    if len(args.probe) > MAX_GOLD_MESSAGE_CHARS:
+        print("Invalid --probe: message exceeds 2000 characters")
+        return 2
     key = read_gemini_api_key(Path(args.env_file))
     if not key:
         print("GEMINI_API_KEY missing")

@@ -2544,14 +2544,23 @@ def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_inv
 
 
 def test_tapple_repair_guidance_turns_unverified_desire_into_an_invitation_question():
-    categories = _repair_violation_categories(
-        ["案2に本人の未確認の希望を追加しています。本人の好みや希望を作らないでください。"]
+    violation = "案2に本人の未確認の希望を追加しています。本人の好みや希望を作らないでください。"
+    categories = _repair_violation_categories([violation])
+    repair = _build_repair_messages(
+        [],
+        "{\"replies\":[\"僕も行きたいです\"]}",
+        [violation],
+        1,
+        strategy_mode="tapple",
+        tapple_action="invite",
     )
-    guidance = _repair_grounding_guidance(categories)
+    repair_text = repair[-1]["content"]
 
     assert "unsupported_personal_desire" in categories
-    assert "希望を断定しない" in guidance
-    assert "相手の意向を尋ねる質問形の誘い" in guidance
+    assert "希望を断定しない" in repair_text
+    assert "相手の意向を尋ねる質問形の誘い" in repair_text
+    assert "action=inviteを維持" in repair_text
+    assert "同行を前提にした表現や新しい誘いに変えない" not in repair_text
 
 
 def test_tapple_positive_interest_does_not_clear_unresolved_safety_concern_for_scheduling():

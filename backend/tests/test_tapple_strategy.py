@@ -9,7 +9,6 @@ import pytest
 from app.ai import prompt
 from app.routers.generation import (
     _build_repair_messages,
-    _repair_grounding_guidance,
     _repair_violation_categories,
     _is_tapple_private_place_proposal,
     _parse_replies_strict,

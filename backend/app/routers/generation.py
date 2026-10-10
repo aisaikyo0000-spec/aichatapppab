@@ -4253,7 +4253,10 @@ def _repair_grounding_guidance(categories: frozenset[str]) -> str:
 
 
 def _repair_output_instruction(
-    categories: frozenset[str], candidates: int, strategy_mode: str
+    categories: frozenset[str],
+    candidates: int,
+    strategy_mode: str,
+    tapple_action: str | None = None,
 ) -> str:
     if "private_experience_confirmation" in categories:
         return (
@@ -4268,7 +4271,7 @@ def _repair_output_instruction(
             "アプリ利用者向けの質問タグは使わないこと。"
         )
     if strategy_mode == "tapple":
-        return _repair_tapple_output_instruction(candidates)
+        return _repair_tapple_output_instruction(candidates, tapple_action)
     reply_template = ", ".join(f'"案{index}"' for index in range(1, candidates + 1))
     return (
         f"すべての不備を修正し、独立した完成品として{candidates}案を作成し、"
@@ -4276,7 +4279,16 @@ def _repair_output_instruction(
     )
 
 
-def _repair_tapple_output_instruction(candidates: int) -> str:
+def _repair_tapple_output_instruction(
+    candidates: int, tapple_action: str | None = None
+) -> str:
+    invite_action_guidance = (
+        "action=inviteを維持し、各候補に相手の意向を尋ねる低圧な誘いを含めてください。"
+        "本人が明示していない希望や予定は断定しないでください。"
+        if tapple_action == "invite"
+        else "相手が活動に興味を示したものの一緒に行く意思は不明なら、その興味に自然に反応してください。"
+        "単なる言い換えで終えず、活動への感想や自分の関心を短く示してよいですが、同行を前提にした表現や新しい誘いに変えないでください。質問は必要な場合だけにします。"
+    )
     return (
         f"不備を修正して返信候補を必ず{candidates}件作成してください。"
         f"repliesとstrategyは両方必須です。判断根拠が弱い場合はaction=waitとし、evidenceには会話中の相手発言を指定してください。JSON形式の例: {prompt.format_tapple_output_contract(candidates)}。"
@@ -4291,7 +4303,7 @@ def _repair_tapple_output_instruction(candidates: int) -> str:
         "相手が直前の誘いを受け入れた場合や具体的な代替日を提案した場合は、再度誘うinviteではなくcontinueを選び、日程調整を進めてください。"
         "直前の誘いを受け入れた場合は、各返信候補で自然に日程調整へ進んでください。都合のよい時期を尋ねるか、『日程はまた相談しよう』のように伝えます。全案を質問にせず、自分の空き日や日時も会話にない限り作らないでください。"
         "waitまたはstopの返信候補に会う提案を含めず、stopでは将来の誘いや再連絡も提案しないでください。"
-        "相手が活動に興味を示したものの一緒に行く意思は不明なら、その興味に自然に反応してください。単なる言い換えで終えず、活動への感想や自分の関心を短く示してよいですが、同行を前提にした表現や新しい誘いに変えないでください。質問は必要な場合だけにします。"
+        f"{invite_action_guidance}"
         "相手が挙げた活動や話題に直接つながる返信にし、無難な一般論へずらさないでください。会話にない店の特徴・周辺の変化や自分の習慣を付け足さず、自然な短い反応を不必要にEcho扱いしないでください。"
         "相手が場所や活動に関心を示したときは、直前の自分の発言にある関心や具体的な話題と結びつけてください。訪問した事実がないのに店の雰囲気を知っているように述べず、相手の希望を一緒に行く約束へ読み替えないでください。"
         "相手が『行ってみたい』と話したときは、その希望を受け止め、対象への自然な反応か関連する短い問いで返してください。履歴上の本人の関心は共有してよいですが、一人で行くよう勧めたり店の特徴を想像したりしないでください。"
@@ -4371,11 +4383,14 @@ def _build_repair_messages(
     violations: list[str],
     candidates: int,
     strategy_mode: str = "none",
+    tapple_action: str | None = None,
 ) -> list[dict[str, str]]:
     """修復用のメッセージリストを構築する。"""
     v_text = "\n".join(f"- {v}" for v in violations)
     categories = _repair_violation_categories(violations)
-    output_instruction = _repair_output_instruction(categories, candidates, strategy_mode)
+    output_instruction = _repair_output_instruction(
+        categories, candidates, strategy_mode, tapple_action
+    )
     repair_guidance = (
         _repair_contact_style_guidance(
             categories, candidates
@@ -6766,6 +6781,7 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             violations,
             body.candidates,
             strategy_mode=body.strategy_mode,
+            tapple_action=tapple_strategy.action if tapple_strategy else None,
         )
         try:
             repair_raw = _call_ai(repair_msgs)
@@ -6901,6 +6917,9 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                                 remaining_style_issues,
                                 body.candidates,
                                 strategy_mode=body.strategy_mode,
+                                tapple_action=(
+                                    repair_strategy.action if repair_strategy else None
+                                ),
                             )
                             try:
                                 followup_raw = _call_ai(next_msgs)

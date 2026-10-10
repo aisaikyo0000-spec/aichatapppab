@@ -199,6 +199,27 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
     )
 
 
+def test_explicit_interest_accepts_a_grounded_low_pressure_invitation_without_celebration_marker():
+    scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
+    contact_text = scenario["messages"][-1]["content"]
+
+    result = {
+        "strategy": {
+            "action": "invite",
+            "rationale": "相手がカフェに行きたいと話しているため、意向を尋ねます。",
+            "evidence": [contact_text],
+            "invite_example": "駅前のカフェに一緒に行きませんか？",
+        },
+        "replies": [
+            "今度そのカフェに一緒に行ってみませんか？",
+            "よかったら、そのカフェに一緒に行きませんか？",
+            "都合が合えば駅前のカフェに行ってみませんか？",
+        ],
+    }
+
+    assert _evaluate_result(scenario, result) == []
+
+
 def test_explicit_interest_fixture_is_not_already_an_accepted_invitation():
     scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
     last_contact_index = max(

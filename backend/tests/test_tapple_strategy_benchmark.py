@@ -185,6 +185,18 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
             ],
         },
     )
+
+
+def test_explicit_interest_fixture_is_not_already_an_accepted_invitation():
+    scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
+    latest_contact = next(
+        turn["content"]
+        for turn in reversed(scenario["messages"])
+        if turn["sender"] == "contact"
+    )
+
+    assert scenario["expected_action"] == "invite"
+    assert not generation._TAPPLE_ACCEPTED_INVITATION_RE.search(latest_contact)
     assert not expectation_met(
         scenarios["counterproposal"],
         result_for("counterproposal", "continue", "最近は映画を見ました。"),

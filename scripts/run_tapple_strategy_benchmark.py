@@ -42,7 +42,7 @@ SCENARIOS = (
         "expected_action": "invite",
         "allowed_actions": ["invite"],
         "reply_must_contain_any": [
-            "嬉しい", "うれしい", "楽しみ", "行きたい", "いいですね",
+            "嬉しい", "うれしい", "楽しみ", "行きたい", "いいですね", "カフェ",
         ],
     },
     {

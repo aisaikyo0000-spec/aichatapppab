@@ -1,3 +1,5 @@
+import pytest
+
 from app.routers import generation
 
 
@@ -66,6 +68,69 @@ def test_tapple_grounding_still_rejects_unverified_first_person_desire():
         strategy_mode="tapple",
         tapple_action="continue",
         conversation_messages=[{"sender": "contact", "content": counterpart}],
+        known_self_facts=[],
+    )
+
+    assert any("本人の未確認の希望を追加しています" in item for item in violations)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "僕としてもそのカフェに行ってみたいですよね！",
+        "自分としてもそのカフェに行ってみたいですよね！",
+        "個人的にはそのカフェに行ってみたいですよね！",
+    ],
+)
+def test_tapple_grounding_does_not_misattribute_explicit_self_perspective(reply):
+    counterpart = "今度そのカフェに行ってみたいです！"
+    violations = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        counterpart_message=counterpart,
+        strategy_mode="tapple",
+        tapple_action="continue",
+        conversation_messages=[{"sender": "contact", "content": counterpart}],
+        known_self_facts=[],
+    )
+
+    assert any("本人の未確認の希望を追加しています" in item for item in violations)
+
+
+def test_grounding_requires_explicit_counterpart_desire_for_same_topic_attribution():
+    counterpart = "キャンプ行ってきた"
+    reply = "キャンプ行きたいですねー！"
+    violations = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        counterpart_message=counterpart,
+        known_self_facts=[],
+    )
+
+    assert any("本人の未確認の希望を追加しています" in item for item in violations)
+
+
+def test_grounding_does_not_remove_desire_attributed_to_different_topic():
+    counterpart = "今度そのカフェに行ってみたいです！"
+    reply = "今度は映画に行ってみたいですよね！"
+
+    assert "行ってみたいですよね" in generation._without_counterpart_preference_attribution(
+        reply, counterpart
+    )
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "個人的には今度は映画に行ってみたいですよね！",
+        "僕としても今度は映画に行ってみたいですよね！",
+    ],
+)
+def test_grounding_rejects_unverified_self_desire_with_explicit_perspective(reply):
+    violations = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        counterpart_message="今度そのカフェに行ってみたいです！",
         known_self_facts=[],
     )
 

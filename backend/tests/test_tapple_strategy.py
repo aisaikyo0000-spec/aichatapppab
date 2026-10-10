@@ -2583,6 +2583,25 @@ def test_tapple_invitation_must_target_the_discussed_activity(reply):
     assert any("誘い先" in violation for violation in violations)
 
 
+def test_tapple_anaphoric_invitation_must_follow_the_discussed_activity_not_a_distractor():
+    history = [
+        {"sender": "contact", "content": "駅前に気になるカフェがあるんです"},
+        {"sender": "self", "content": "僕もそのカフェが気になってます"},
+        {"sender": "contact", "content": "今度そのカフェに行ってみたいです！"},
+    ]
+
+    violations = validate_candidate_replies(
+        ["カフェいいですね、映画も見たいですね！今度一緒に行きませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert any("誘い先" in violation for violation in violations)
+
+
 def test_tapple_repair_guidance_turns_unverified_desire_into_an_invitation_question():
     violation = "案2に本人の未確認の希望を追加しています。本人の好みや希望を作らないでください。"
     categories = _repair_violation_categories([violation])

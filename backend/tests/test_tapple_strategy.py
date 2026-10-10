@@ -2506,6 +2506,37 @@ def test_tapple_invite_action_cannot_override_unresolved_historical_boundary(
     assert any("誘い" in violation or "断り" in violation for violation in violations)
 
 
+@pytest.mark.parametrize(
+    "reply, expects_action_mismatch",
+    [
+        ("駅前のカフェ気になりますよね笑", True),
+        ("今度一緒に行ってみますか！", False),
+    ],
+)
+def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_invite(
+    reply, expects_action_mismatch
+):
+    history = [
+        {"sender": "contact", "content": "駅前に気になるカフェがあるんです"},
+        {"sender": "self", "content": "僕もそのカフェが気になってます"},
+        {"sender": "contact", "content": "今度そのカフェに行ってみたいです！"},
+    ]
+
+    violations = validate_candidate_replies(
+        [reply],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    action_violations = [
+        violation for violation in violations if "strategy.action=invite" in violation
+    ]
+    assert bool(action_violations) is expects_action_mismatch
+
+
 def test_tapple_positive_interest_does_not_clear_unresolved_safety_concern_for_scheduling():
     history = [
         {"sender": "contact", "content": "直接会うのは安全面が不安です。"},

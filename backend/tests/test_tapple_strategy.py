@@ -147,6 +147,7 @@ def test_tapple_prompt_keeps_reply_grounded_when_invite_is_recommended():
     assert "会話にない自分の体験・予定・意向を事実として足さない" in instruction
     assert "自分が見ていない写真を見た前提にしない" in instruction
     assert "action=inviteの場合、各返信候補にも会話で根拠づけられる低圧な誘いを含め" in instruction
+    assert "相手が関心を示した同じ活動へ誘ってください" in instruction
     assert "action=continueやwaitなどinvite以外の場合に" in instruction
     assert "invite_exampleは誘いの方向性を示す別例" in instruction
     assert "その文面を候補へそのままコピーしない" in instruction
@@ -1375,7 +1376,7 @@ def test_tapple_benchmark_covers_an_unlisted_shared_hobby():
         },
         "replies": [
             "ボルダリング体験楽しそうですね！よかったら今度一緒に行きませんか？",
-            "いいですね！今度一緒にやってみませんか？",
+            "いいですね！今度ボルダリングを一緒にやってみませんか？",
             "ボルダリング気になります！よかったら一緒に体験してみませんか？",
         ],
     }
@@ -2293,24 +2294,29 @@ def test_private_place_invitation_is_repaired_before_reply_is_returned(client, m
 def test_invitation_strategy_without_example_is_repaired(client, monkeypatch):
     from app import database
 
-    interest = "今度一緒に行きたいです！"
+    interest = "今度そのカフェに行ってみたいです！"
+    replies = [
+        "よかったら今度、そのカフェに一緒に行ってみませんか？",
+        "駅前のカフェ、今度一緒に行きませんか？",
+        "都合が合えば、そのカフェに一緒に行ってみませんか？",
+    ]
     first = _raw_strategy(
         {
             "action": "invite",
-            "rationale": "相手から一緒に行きたいと言われています。",
+            "rationale": "相手がカフェに行ってみたいと話しているため、低圧に意向を尋ねます。",
             "evidence": [interest],
             "invite_example": None,
         },
-        replies=["一緒に行けるの嬉しい！"],
+        replies=replies,
     )
     repaired = _raw_strategy(
         {
             "action": "invite",
-            "rationale": "相手から一緒に行きたいと言われています。",
+            "rationale": "相手がカフェに行ってみたいと話しているため、低圧に意向を尋ねます。",
             "evidence": [interest],
             "invite_example": "人目のあるカフェでお茶しませんか？",
         },
-        replies=["一緒に行けるの嬉しい！"],
+        replies=replies,
     )
 
     class QueuedProvider:
@@ -2350,11 +2356,19 @@ def test_invitation_strategy_without_example_is_repaired(client, monkeypatch):
     contact_id = client.post("/api/contacts", json={"name": "テストさん"}).json()["id"]
     client.post(
         f"/api/contacts/{contact_id}/messages",
+        json={"sender": "contact", "content": "駅前に気になるカフェがあるんです"},
+    )
+    client.post(
+        f"/api/contacts/{contact_id}/messages",
+        json={"sender": "self", "content": "僕もそのカフェが気になっています"},
+    )
+    client.post(
+        f"/api/contacts/{contact_id}/messages",
         json={"sender": "contact", "content": interest},
     )
     response = client.post(
         "/api/generate",
-        json={"contact_id": contact_id, "candidates": 1, "strategy_mode": "tapple"},
+        json={"contact_id": contact_id, "candidates": 3, "strategy_mode": "tapple"},
     )
 
     assert response.status_code == 200, response.text
@@ -2578,6 +2592,7 @@ def test_tapple_repair_guidance_turns_unverified_desire_into_an_invitation_quest
     assert "希望を断定しない" in repair_text
     assert "相手の意向を尋ねる質問形の誘い" in repair_text
     assert "action=inviteを維持" in repair_text
+    assert "誘い先は相手が関心を示した活動そのもの" in repair_text
     assert "同行を前提にした表現や新しい誘いに変えない" not in repair_text
     assert "自然な反応か関連する短い問いで返してください" not in repair_text
 

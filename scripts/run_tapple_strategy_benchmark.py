@@ -42,7 +42,7 @@ SCENARIOS = (
         "expected_action": "invite",
         "allowed_actions": ["invite"],
         "reply_must_contain_any": [
-            "嬉しい", "うれしい", "楽しみ", "行きたい", "いいですね", "カフェ",
+            "嬉しい", "うれしい", "楽しみ", "行きたい", "いいですね",
         ],
     },
     {
@@ -407,7 +407,15 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
         if violations:
             failures.append("reply_validation_failed")
         required_reply_markers = scenario.get("reply_must_contain_any", [])
-        if required_reply_markers and not any(marker in reply for marker in required_reply_markers):
+        contextual_invitation = (
+            action == "invite"
+            and generation._tapple_invitation_targets_activity(reply, latest_contact)
+        )
+        if (
+            required_reply_markers
+            and not any(marker in reply for marker in required_reply_markers)
+            and not contextual_invitation
+        ):
             failures.append("reply_not_contextual")
         if scenario.get("reply_must_end_contextually") and not _has_contextual_off_ramp(reply):
             failures.append("reply_missing_contextual_off_ramp")

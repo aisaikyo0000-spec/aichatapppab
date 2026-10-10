@@ -1297,6 +1297,45 @@ _TAPPLE_REINVITATION_RE = re.compile(
     r"行きましょう|行きませんか|行ってみましょう|行ってみませんか|行ってみますか|行こう(?:よ)?)"
     r"(?:[。！!？?]|$)"
 )
+
+
+def _tapple_invitation_targets_activity(reply: str, counterpart_message: str) -> bool:
+    """Require a concrete invitation to stay attached to the current activity."""
+    normalized_counterpart = unicodedata.normalize("NFKC", counterpart_message or "")
+    interest_matches = list(_TAPPLE_ACTIVITY_INTEREST_RE.finditer(normalized_counterpart))
+    if not interest_matches:
+        return True
+    interest = interest_matches[-1]
+    clause_start = max(
+        normalized_counterpart.rfind(mark, 0, interest.start())
+        for mark in "。.!！?？\n"
+    ) + 1
+    activity_terms = _extract_tapple_interest_terms(
+        normalized_counterpart[clause_start : interest.end()]
+    )
+    if not activity_terms:
+        return True
+    clauses = re.split(r"(?<=[。.!！?？])", unicodedata.normalize("NFKC", reply or ""))
+    for index, clause in enumerate(clauses):
+        if not _TAPPLE_REINVITATION_RE.search(clause):
+            continue
+        if any(term in clause for term in activity_terms):
+            return True
+        if index == 0 or "一緒に" not in clause:
+            continue
+        prior_clause = clauses[index - 1]
+        candidate_activity_terms = _extract_tapple_interest_terms(clause)
+        candidate_activity_terms.update(
+            term for term in _TAPPLE_SHARED_ACTIVITY_TERMS if term in clause
+        )
+        if (
+            any(term in prior_clause for term in activity_terms)
+            and not (candidate_activity_terms - activity_terms)
+        ):
+            return True
+    return False
+
+
 _TAPPLE_SOLO_ACTIVITY_ADVICE_RE = re.compile(
     r"(?:ぜひ|よかったら|もし機会があれば)?\s*(?:一度|今度)?\s*"
     r"(?:行ってみてください|行ってみるといい(?:ですよ)?|行ってみるのもいい(?:ですよ)?|"
@@ -3595,6 +3634,16 @@ def validate_candidate_replies(
                     "連絡先交換を提案せず、タップル上で会話を続ける文面にしてください。"
             )
             has_reinvitation = bool(_TAPPLE_REINVITATION_RE.search(rep))
+            if (
+                tapple_action == "invite"
+                and has_reinvitation
+                and counterpart_message
+                and not _tapple_invitation_targets_activity(rep, counterpart_message)
+            ):
+                violations.append(
+                    f"案{i}の誘い先が相手の現在の話題と結びついていません。"
+                    "相手が関心を示した活動そのものに誘い、別の活動へ話題を移さないでください。"
+                )
             has_scheduling_proposal = bool(_TAPPLE_SCHEDULING_PROPOSAL_RE.search(rep))
             has_scheduling_next_step = bool(
                 _TAPPLE_SCHEDULING_NEXT_STEP_RE.search(rep)
@@ -4284,6 +4333,7 @@ def _repair_tapple_output_instruction(
 ) -> str:
     invite_action_guidance = (
         "action=inviteを維持し、各候補に相手の意向を尋ねる低圧な誘いを含めてください。"
+        "誘い先は相手が関心を示した活動そのものにしてください。"
         "本人が明示していない希望や予定は断定しないでください。"
         if tapple_action == "invite"
         else "相手が活動に興味を示したものの一緒に行く意思は不明なら、その興味に自然に反応してください。"
@@ -6787,7 +6837,11 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             violations,
             body.candidates,
             strategy_mode=body.strategy_mode,
-            tapple_action=tapple_strategy.action if tapple_strategy else None,
+            **(
+                {"tapple_action": tapple_strategy.action}
+                if tapple_strategy
+                else {}
+            ),
         )
         try:
             repair_raw = _call_ai(repair_msgs)
@@ -6923,8 +6977,10 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                                 remaining_style_issues,
                                 body.candidates,
                                 strategy_mode=body.strategy_mode,
-                                tapple_action=(
-                                    repair_strategy.action if repair_strategy else None
+                                **(
+                                    {"tapple_action": repair_strategy.action}
+                                    if repair_strategy
+                                    else {}
                                 ),
                             )
                             try:

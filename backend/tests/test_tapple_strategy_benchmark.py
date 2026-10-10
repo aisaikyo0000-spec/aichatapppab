@@ -148,6 +148,10 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
 
     assert expectation_met(
         scenarios["explicit_interest"],
+        result_for("explicit_interest", "invite", "よかったら今度そのカフェに行きませんか？"),
+    )
+    assert not expectation_met(
+        scenarios["explicit_interest"],
         result_for("explicit_interest", "invite", "いいですね、カフェ楽しみです！"),
     )
     assert not expectation_met(

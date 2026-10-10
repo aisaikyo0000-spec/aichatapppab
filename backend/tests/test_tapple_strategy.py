@@ -2528,7 +2528,32 @@ def test_tapple_invite_action_cannot_override_unresolved_historical_boundary(
     "reply, expects_action_mismatch",
     [
         ("駅前のカフェ気になりますよね笑", True),
+        ("カフェいいね！", True),
+        ("カフェ楽しみですね！", True),
+        ("今度そのカフェに一緒に行かない方がいいですね！", True),
+        ("そのカフェに行きませんかと言われたんですね！", True),
+        ("そのカフェはどうですか？", True),
+        ("そのカフェに行きませんか？って友達に言われたんですね！", True),
+        ("今度そのカフェに行きませんか？という話だったんですね！", True),
+        ("今度そのカフェに行きましょう、とは言えないですね", True),
+        ("カフェいいですね！ここで話しましょう！", True),
+        ("カフェいいですね、ここで話しましょう！", True),
+        ("今度そのカフェに行きませんか？とは思わないです", True),
+        ("今度そのカフェに行きましょう！とは考えてないです", True),
+        ("カフェに行かないようにしませんか？", True),
+        ("カフェで会わないようにしませんか？", True),
+        ("カフェは行かなくていいことにしませんか？", True),
+        ("カフェに行かないで済むようにしませんか？", True),
+        ("今度カフェに行かない方がいいけど一緒に行こう！", True),
+        ("映画には行かない方がいいけど、今度そのカフェに行きませんか？", False),
+        ("今度そのカフェに行きませんか、と提案されたんです", True),
+        ("今度そのカフェに行きませんか、と勧められたんです", True),
+        ("そのカフェに行きませんか、という案が出ました", True),
+        ("今度そのカフェのことを話しませんか？", True),
+        ("そのカフェについて話しませんか？", True),
         ("今度一緒に行ってみますか！", False),
+        ("今度一緒にカフェ行こっか？", False),
+        ("今度カフェで話しませんか？", False),
         ("今度一緒にボルダリングを体験してみませんか？", False),
     ],
 )
@@ -2556,6 +2581,19 @@ def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_inv
     assert bool(action_violations) is expects_action_mismatch
 
 
+def test_tapple_direct_anaphoric_invitation_uses_the_counterparts_current_activity():
+    counterpart = "今度そのカフェに行ってみたいです！"
+    violations = validate_candidate_replies(
+        ["よかったら今度一緒に行ってみませんか！"],
+        1,
+        counterpart_message=counterpart,
+        conversation_messages=[{"sender": "contact", "content": counterpart}],
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+    assert not any("誘い先" in violation for violation in violations)
+
+
 @pytest.mark.parametrize(
     "reply",
     [
@@ -2566,6 +2604,7 @@ def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_inv
         "カフェいいですね、映画はどうですか？",
         "カフェいいですね、今度一緒に映画でもどう？",
         "カフェでお茶しませんか？それから映画を見ませんか？",
+        "今度陶芸を体験してみませんか？",
     ],
 )
 def test_tapple_invitation_must_target_the_discussed_activity(reply):
@@ -2603,6 +2642,38 @@ def test_tapple_anaphoric_invitation_must_follow_the_discussed_activity_not_a_di
         tapple_action="invite",
     )
 
+    assert any("誘い先" in violation for violation in violations)
+
+
+@pytest.mark.parametrize("activity", ["ボルダリング", "陶芸"])
+def test_tapple_elliptical_interest_keeps_the_previous_sentences_activity(activity):
+    counterpart = f"{activity}に興味があります。体験してみたいです！"
+    history = [{"sender": "contact", "content": counterpart}]
+    violations = validate_candidate_replies(
+        ["今度一緒に映画を見に行きませんか？"],
+        1,
+        counterpart_message=counterpart,
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+    assert any("誘い先" in violation for violation in violations)
+
+
+def test_tapple_elliptical_interest_keeps_the_adjacent_contacts_activity():
+    history = [
+        {"sender": "contact", "content": "陶芸に興味があります"},
+        {"sender": "self", "content": "陶芸楽しそうですよね！"},
+        {"sender": "contact", "content": "体験してみたいです！"},
+    ]
+    violations = validate_candidate_replies(
+        ["今度一緒に映画を見に行きませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
     assert any("誘い先" in violation for violation in violations)
 
 

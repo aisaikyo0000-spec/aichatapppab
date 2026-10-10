@@ -2480,3 +2480,22 @@ artifactは`aichat-contact-ABC-history-grounding-v22-20261010.json`。primary Ge
 Bは丁寧語・絵文字なしで自然に読めるが、10・10・27字のうち2案はほぼ同義の単独挨拶にとどまり、3案目だけが労いと休息への気遣いを含む。Gold6例の中央値23字に対し、2案ではBの丁寧な文量と反応の広がりを十分に再現していない。短文を禁止する判定ではなく、3候補をまとめて見たBへの適合と選択肢の不足を理由にFAILとした。同じ話題や質問がないこと自体はFAIL理由にしない。v20とv21のB限定PASSは各runの判定として維持するが、v22では再現したとは扱わない。
 
 Aはstyle repairを採用し、Cは通常hard repairを返した。A/Cのstyle診断は`no_mismatch`。Bは候補poolから返却され、style checkerは`not_run`である。診断の通過・未実行状態と本文レビューを区別する。Contact全体の受け入れは未達で、最新70ケースとTapple全ケースも未完了。見出し修正の改善効果はこの結果から確定できず、Step 18-R4は未完成。
+
+## 2026-10-10 候補poolの全組合せ診断とWIP公開
+
+v19で保持した全5候補から3件を選ぶ10組合せを、既存の診断条件で確認した。休息の助言を1件以下にすると、候補文字数の中央値は11字になり、`length`の不一致が新たに出た。残る3組合せでは`recommendation_overlap`が残った。全組合せで`echo=0`、`_contact_style_repair_improves=false`だった。自然な意味差の改善は確認できず、今回の結果は候補poolの選択変更を採用する根拠にならない。診断artifactは`aichat-contact-B-pool-combinations-v19-20261010.json`。返信本文は転載せず、コード・評価器・閾値も変更していない。
+
+WIP commit `6d4b373`はforkの`codex/chat-quality-20261008`へ公開済みで、`ls-remote`のSHA一致を確認した。GitHub `main`は`a75ba76`のまま更新していない。全backendは1,679件成功、既存警告2件。Contact v22の独立本文レビューはA/CがPASS、BがFAILの2/3を維持する。最新70ケースv23は実行中で、Tapple全ケースの受け入れも未完了。Step 18-R4は未完成。
+## 2026-10-10 最新70ケースv23の受け入れ結果
+
+実APIの70ケースは全件完了した。coverage確認では70件のIDがすべて一致し、重複・欠落・余分なIDはなかった。既存の評価器と閾値による検証はFAIL、終了コード2。`human_chat_fit=0.866`が最低値0.900を下回った。
+
+残る5指標はPASS。`ai_like_rate=0.058 <= 0.098`、`context_fit=0.609 >= 0.605`、`conversation_fit=0.978 >= 0.963`、`too_many_questions_rate=0.011 <= 0.059`、`echo_rate=0.122 <= 0.132`だった。生成完了や5指標の通過を全体合格とは扱わず、評価器・閾値・対象ケースは変更していない。
+
+結果は`aichat-pipeline-70-v23-20261010.json`、検証は`aichat-pipeline-70-v23-verification-20261010.json`に保存した。低評価の本文について独立レビューを進めており、原因はまだ確定していない。Tapple全14ケースv24も実行中。Contact v22は2/3のままで、Step 18-R4の受け入れは未達。WIPはforkの`6d4b373`、GitHub mainは`a75ba76`を維持する。
+
+## 2026-10-10 Tapple全ケースv24の実行結果
+
+全14ケースの実API確認は11ケースを実行して停止した。10ケースは生成成功し、`tentative_interest`で候補検証による502が発生した。provider応答はすべてHTTP 200で、quota制限やprovider 503はなかった。`declining_engagement`、`counterproposal`、`decline`の3ケースは未実施。
+
+artifactは`aichat-tapple-full-v24-20261010.json`。summaryの`quality_pass`と`full_suite_pass`はfalse、評価器の期待条件を満たした集計は0/14だった。10ケースの生成成功、本文の独立レビューが未完了であること、期待条件の合格数0件をそれぞれ区別する。停止した候補検証と期待条件の不一致は別担当が分析中で、原因はまだ確定していない。再実行は行っておらず、評価器と閾値も維持した。Contact全体、最新70ケース、Tapple全体の受け入れは引き続き未達で、Step 18-R4は未完成。

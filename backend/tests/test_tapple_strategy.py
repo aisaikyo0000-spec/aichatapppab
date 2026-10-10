@@ -2542,6 +2542,25 @@ def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_inv
     assert bool(action_violations) is expects_action_mismatch
 
 
+def test_tapple_invitation_must_target_the_discussed_activity():
+    history = [
+        {"sender": "contact", "content": "駅前に気になるカフェがあるんです"},
+        {"sender": "self", "content": "僕もそのカフェが気になってます"},
+        {"sender": "contact", "content": "今度そのカフェに行ってみたいです！"},
+    ]
+
+    violations = validate_candidate_replies(
+        ["カフェいいですね。今度一緒に映画を見に行きませんか？"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="invite",
+    )
+
+    assert any("誘い先" in violation for violation in violations)
+
+
 def test_tapple_repair_guidance_turns_unverified_desire_into_an_invitation_question():
     violation = "案2に本人の未確認の希望を追加しています。本人の好みや希望を作らないでください。"
     categories = _repair_violation_categories([violation])

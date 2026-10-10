@@ -220,6 +220,26 @@ def test_explicit_interest_accepts_a_grounded_low_pressure_invitation_without_ce
     assert _evaluate_result(scenario, result) == []
 
 
+def test_explicit_interest_rejects_inviting_to_an_unrelated_activity():
+    scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
+    contact_text = scenario["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": "invite",
+            "rationale": "相手がカフェに行きたいと話しているため、意向を尋ねます。",
+            "evidence": [contact_text],
+            "invite_example": "駅前のカフェに一緒に行きませんか？",
+        },
+        "replies": [
+            "カフェいいですね。今度一緒に映画を見に行きませんか？",
+            "カフェ気になりますね。今度よかったら映画に行きませんか？",
+            "駅前のカフェなんですね。よかったら映画に行きませんか？",
+        ],
+    }
+
+    assert "reply_validation_failed" in _evaluate_result(scenario, result)
+
+
 def test_explicit_interest_fixture_is_not_already_an_accepted_invitation():
     scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
     last_contact_index = max(

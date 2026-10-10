@@ -37,6 +37,18 @@ def test_benchmark_config_keeps_secondary_key_optional():
     assert "fallback_model" not in config
 
 
+def test_benchmark_logging_uses_isolated_temp_directory(tmp_path):
+    class Settings:
+        LOG_DIR = Path("project-logs")
+        LOG_FILE = Path("project-logs/app.log")
+
+    log_dir = benchmark_config.isolate_benchmark_logging(Settings, tmp_path)
+
+    assert log_dir == tmp_path / "logs"
+    assert Settings.LOG_DIR == log_dir
+    assert Settings.LOG_FILE == log_dir / "app.log"
+
+
 def test_runner_can_preserve_secondary_account_label_when_it_is_the_active_key():
     config = build_gemini_benchmark_config(
         primary_key="active-secondary-key",

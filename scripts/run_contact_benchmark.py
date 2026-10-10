@@ -160,6 +160,9 @@ def _new_contact_style_diagnostics() -> dict:
             }
             for stage in _HARD_VALIDATION_STAGES
         },
+        "validation_attempts": [],
+        "last_hard_validation_attempt": {"stage": None, "outcome": "not_run"},
+        "returned_candidates": None,
         "quality_gate_rejections": {
             stage: {"count": 0, "categories": set()} for stage in _QUALITY_GATE_STAGES
         },
@@ -193,6 +196,56 @@ def _record_hard_validation_rejection(diagnostics: dict, stage: str, violations)
             )
             candidate_counts[label] = candidate_counts.get(label, 0) + 1
     entry["categories"].update(categories)
+
+
+def _record_validation_attempt(
+    diagnostics: dict, stage: str, replies: list[str], violations
+) -> None:
+    """Record aggregate-only evidence for each hard-validation stage."""
+    outcome = "rejected" if violations else "passed"
+    if violations:
+        _record_hard_validation_rejection(diagnostics, stage, violations)
+    categories = set()
+    for violation in violations or ():
+        categories.add(next(
+            (category for category, marker in _HARD_VALIDATION_MARKERS if marker in violation),
+            "other_validation_violation",
+        ))
+    diagnostics["validation_attempts"].append({
+        "stage": stage if stage in _HARD_VALIDATION_STAGES else "unknown",
+        "candidate_aggregates": _safe_stage_candidate_aggregates(replies),
+        "outcome": outcome,
+        "categories": sorted(categories),
+    })
+    if stage in _HARD_VALIDATION_STAGES:
+        diagnostics["hard_validation_rejections"][stage]["last_outcome"] = outcome
+    diagnostics["last_hard_validation_attempt"] = {
+        "stage": stage if stage in _HARD_VALIDATION_STAGES else None,
+        "outcome": outcome,
+    }
+
+
+def _candidate_set_key(replies) -> tuple[str, ...]:
+    """Build a transient, order-independent comparison key; never serialize it."""
+    return tuple(sorted(reply or "" for reply in replies))
+
+
+def _record_returned_candidates(diagnostics: dict, replies: list[str], validation_candidates) -> None:
+    """Summarize returned replies and link only an exact in-memory validation match."""
+    returned_key = _candidate_set_key(replies)
+    match = next((
+        (stage, "passed")
+        for stage, candidate_key, passed in reversed(validation_candidates)
+        if passed and candidate_key == returned_key
+    ), (None, "not_linked"))
+    validation = {"stage": match[0], "outcome": match[1]}
+    diagnostics["returned_candidates"] = {
+        "candidate_aggregates": _safe_stage_candidate_aggregates(replies),
+        "validation": validation,
+    }
+    # Keep the legacy field, but make it refer to returned candidates rather than
+    # whichever optional repair happened to be validated last.
+    diagnostics["final_hard_validation"] = validation
 
 
 def _record_quality_gate_rejection(diagnostics: dict, stage: str, category: str) -> None:
@@ -266,6 +319,7 @@ def _reset_contact_repair_trace(state: dict) -> None:
     state["pending_style_repair_parse"] = False
     state["pending_validation_stage"] = None
     state["awaiting_repair_parse"] = False
+    state["validation_candidates"] = []
 
 
 def _finalize_contact_style_diagnostics(diagnostics: dict) -> dict:
@@ -290,6 +344,9 @@ def _finalize_contact_style_diagnostics(diagnostics: dict) -> dict:
         "checker_profile": diagnostics["checker_profile"],
         "same_contact_gold_profile": diagnostics["same_contact_gold_profile"],
         "observed_candidate_aggregates": diagnostics["observed_candidate_aggregates"],
+        "validation_attempts": list(diagnostics["validation_attempts"]),
+        "last_hard_validation_attempt": diagnostics["last_hard_validation_attempt"],
+        "returned_candidates": diagnostics["returned_candidates"],
         "sensitive_context_skip": bool(diagnostics["sensitive_context_skip"]),
         "skip_reason_categories": sorted(diagnostics["skip_reason_categories"]),
         "repair_stages": {
@@ -368,6 +425,26 @@ def _safe_candidate_aggregates(replies: list[str]) -> dict:
             "median_chars": float(median(lengths)) if count else 0.0,
         },
     }
+
+
+def _safe_stage_candidate_aggregates(replies: list[str]) -> dict:
+    """Add text-free length distribution and quartiles to the legacy summary."""
+    summary = _safe_candidate_aggregates(replies)
+    lengths = sorted(len(reply or "") for reply in replies)
+
+    def percentile(fraction: float) -> int:
+        if not lengths:
+            return 0
+        position = (len(lengths) - 1) * fraction
+        lower = int(position)
+        upper = min(lower + 1, len(lengths) - 1)
+        value = lengths[lower] * (upper - position) + lengths[upper] * (position - lower)
+        return int(round(value))
+
+    summary["length_distribution_chars"] = lengths
+    summary["length"]["p25_chars"] = percentile(0.25)
+    summary["length"]["p75_chars"] = percentile(0.75)
+    return summary
 
 
 def contact_quality_status(*, generation_complete: bool, expected_replies: int) -> dict:
@@ -475,6 +552,9 @@ def seed_and_generate(
         "pending_quality_gate_stage": None,
         "style_repair_calls": 0,
         "awaiting_repair_parse": False,
+        # Exact candidates stay in memory only long enough to associate the returned
+        # candidate set with a validation attempt. This field is never serialized.
+        "validation_candidates": [],
     }
 
     sensitive_context_pattern = re.compile(
@@ -560,15 +640,12 @@ def seed_and_generate(
                 active_diagnostics["rejection_reasons"].add("repair_hard_validation_failed")
             _reset_contact_repair_trace(repair_trace)
             raise
-        if active_diagnostics is not None and violations:
-            _record_hard_validation_rejection(active_diagnostics, stage, violations)
         if active_diagnostics is not None:
             outcome = "rejected" if violations else "passed"
-            active_diagnostics["hard_validation_rejections"][stage]["last_outcome"] = outcome
-            active_diagnostics["final_hard_validation"] = {
-                "stage": stage,
-                "outcome": outcome,
-            }
+            _record_validation_attempt(active_diagnostics, stage, replies, violations)
+            repair_trace["validation_candidates"].append(
+                (stage, _candidate_set_key(replies), not bool(violations))
+            )
         if active_diagnostics is not None and active_diagnostics["initial_hard_violations_existed"] is None:
             active_diagnostics["initial_hard_violations_existed"] = bool(violations)
         if active_diagnostics is not None and repair_trace["pending_style_repair_parse"]:
@@ -656,6 +733,13 @@ def seed_and_generate(
             successful_before = len(successful_attempts)
             try:
                 r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
+                route_data = r.json() if r.status_code == 200 else None
+                if route_data is not None:
+                    _record_returned_candidates(
+                        active_diagnostics,
+                        route_data.get("replies", []),
+                        repair_trace["validation_candidates"],
+                    )
             finally:
                 # A response may exit through HTTP errors, parse failures, or repair fallback.
                 # No pending repair state may leak into the next anonymous contact.
@@ -680,7 +764,7 @@ def seed_and_generate(
                     model=successful_model,
                     route_state_path=route_state_path,
                 )
-            data = r.json()
+            data = route_data
             history_ids = data.get("history_ids", [])
             conn = database.get_conn()
             try:

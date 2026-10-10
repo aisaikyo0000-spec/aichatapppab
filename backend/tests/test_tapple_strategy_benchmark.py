@@ -201,6 +201,11 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
 
 def test_explicit_interest_fixture_is_not_already_an_accepted_invitation():
     scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
+    last_contact_index = max(
+        index
+        for index, turn in enumerate(scenario["messages"])
+        if turn["sender"] == "contact"
+    )
     latest_contact = next(
         turn["content"]
         for turn in reversed(scenario["messages"])
@@ -209,6 +214,15 @@ def test_explicit_interest_fixture_is_not_already_an_accepted_invitation():
 
     assert scenario["expected_action"] == "invite"
     assert not generation._TAPPLE_ACCEPTED_INVITATION_RE.search(latest_contact)
+    assert generation._TAPPLE_ACTIVITY_INTEREST_RE.search(latest_contact)
+    assert not generation._has_prior_self_tapple_invitation(
+        scenario["messages"], last_contact_index
+    )
+    assert any(
+        turn["sender"] == "self"
+        and generation._TAPPLE_ACTIVITY_INTEREST_RE.search(turn["content"])
+        for turn in scenario["messages"]
+    )
 
 
 @pytest.mark.parametrize(

@@ -36,7 +36,7 @@ SCENARIOS = (
         "id": "explicit_interest",
         "messages": [
             {"sender": "contact", "content": "コーヒー好きです。駅前に気になるカフェがあるんです"},
-            {"sender": "self", "content": "どんなお店か気になります"},
+            {"sender": "self", "content": "僕もそのカフェ気になってます"},
             {"sender": "contact", "content": "今度そのカフェに行ってみたいです！"},
         ],
         "expected_action": "invite",

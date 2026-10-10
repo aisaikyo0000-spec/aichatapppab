@@ -20,6 +20,8 @@ def test_followup_system_prompt_structure():
 
     # 1. 追いメッセージディレクティブ
     assert "【追いメッセージ（再活性化・会話復活モード）】" in sysp
+    assert "会話履歴から再開が自然と判断できる場合だけ話題をつなぎ" in sysp
+    assert "明確な拒否や自然な終了がある場合は、新しい話題・質問で再開を迫らず" in sysp
     assert "催促の完全禁止" in sysp
     assert "返信まだ" in sysp or "催促・問い詰め表現は全案で完全禁止" in sysp
 
@@ -162,6 +164,9 @@ def test_followup_does_not_force_three_distinct_conversation_directions():
     assert "異なる3つの会話展開で3案作成します" not in followup_text
     assert "候補の違いを作るために話題や反応を無理に変えず" in followup_text
     assert "同じ話題から自然に成立する複数案を作ってよい" in followup_text
+    assert "長さは内容と本人Goldから決め、短い一文で十分なら短くする" in followup_text
+    assert "候補間の違いは自然に作れる範囲でよく" in followup_text
+    assert "一般的な敬語を足して本人らしさや相手との距離感を損なわない" in followup_text
 
     normal_prompt = prompt.build_system_prompt(
         contact={"name": "みお", "profile": "映画と猫が好きです"},
@@ -169,6 +174,8 @@ def test_followup_does_not_force_three_distinct_conversation_directions():
     )
     assert "文脈に合う3案を作成します" in normal_prompt
     assert "異なる3つの会話展開で3案作成します" not in normal_prompt
+    assert "長さは内容と本人Goldから決め、短い一文で十分なら短くする" in normal_prompt
+    assert "2〜3行程度の自然な返信が基本" not in normal_prompt
 
 
 def test_followup_does_not_echo_latest_self_message_or_invent_time_context():
@@ -395,7 +402,9 @@ def test_normal_prompt_does_not_turn_old_questions_into_a_new_question_mandate()
         conversation_ledger={"already_asked_questions": ["どこのカフェが好きですか？"]},
     )
 
-    assert "質問や話題の深掘りは必須ではなく" in system_prompt
+    assert "【REPLY CONTENT CHOICE】" in system_prompt
+    assert "会話を続けるためだけの質問は加えない" in system_prompt
+    assert "質問なしで自然に終えるならそこで終え" in system_prompt
     assert "相手の発言を踏まえた新しい自然な質問を用意すること" not in system_prompt
     assert "この一覧は質問を増やす指示ではない" in system_prompt
     assert "原則1案までを目安" not in system_prompt
@@ -413,7 +422,8 @@ def test_candidate_count_does_not_force_short_reply_mix_or_reaction_diversity():
 
     assert "短い候補を必ず1案以上含める" not in system_prompt
     assert "候補群の反応の焦点を変えること" not in system_prompt
-    assert "内容のある状態共有は、入力の短さだけを理由に同じ一言の労いへまとめない" in system_prompt
+    assert "短い入力というだけで内容のある状態共有を一言に縮めず" in system_prompt
+    assert "自然に完結するなら短く返す" in system_prompt
 
 
 def test_followup_candidates_are_ordered_by_quality_not_experience_keywords():

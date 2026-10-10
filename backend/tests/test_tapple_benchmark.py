@@ -25,20 +25,76 @@ def test_qualified_non_refusal_is_not_an_unsupported_intent_marker(statement):
 
 def _valid_results():
     replies = {
-        "explicit_interest": "いいですね、カフェ楽しみです！",
-        "mutual_activity_interest": "そのカフェよさそうですね。よかったら今度一緒に行きませんか？",
-        "unlisted_shared_hobby": "ボルダリング楽しそうですね。ぜひ一度やってみたいです！",
-        "shared_activity_low_reciprocity": "パンケーキのお店、気になりますね。",
-        "accepted_invitation": "ありがとう、楽しみです！日程はいつがいいですか？",
-        "ambiguous_interest": "カフェ気になりますね、どんなお店ですか？",
-        "tentative_interest": "タイミングが合ったらぜひ、また話しましょう。",
-        "counterproposal": "日曜なら大丈夫です、ありがとう！",
-        "decline": "わかりました、無理しないでください。",
-        "meeting_hesitation": "無理せず、もう少しメッセージで話しましょう。",
-        "meeting_safety_concern": "不安な気持ちは大切にしたいです。無理せず話しましょう。",
-        "declining_engagement": "そうなんですね。また話したくなったら話しましょう。",
-        "recent_activity_disinterest": "誘ってくれてありがとう。今はプリンの話をするのも楽しそうですね。",
-        "different_activity_does_not_clear_disinterest": "映画が好きなんですね。最近観て印象に残った作品はありますか？",
+        "explicit_interest": [
+            "うれしいです！どのお店がいいか考えるのも楽しみです",
+            "一緒に行けたら楽しみです！駅前のカフェも気になりますね",
+            "いいですね！都合のいい日を相談できたらうれしいです",
+        ],
+        "mutual_activity_interest": [
+            "パンケーキの写真、おいしそうですね！",
+            "駅前のカフェなんですね。写真の雰囲気が素敵ですね",
+            "カフェ巡りいいですね。パンケーキもおいしそうです",
+        ],
+        "unlisted_shared_hobby": [
+            "ボルダリング楽しそうですね！僕も一度体験してみたいです",
+            "いいですね！初めてでも登れるコースってあるんですか？",
+            "自分も気になります。近くで体験できるところを探してみたいです",
+        ],
+        "shared_activity_low_reciprocity": [
+            "パンケーキのお店、気になりますね！",
+            "パンケーキのお店、おいしそうですね。まずは写真を見てみたいです",
+            "駅前のカフェも気になってたんですね！",
+        ],
+        "accepted_invitation": [
+            "楽しみです！日程はいつ頃が都合よさそうですか？",
+            "ありがとう！予定を合わせるの楽しみにしてます",
+            "嬉しいです！いつ頃が都合よさそうですか？",
+        ],
+        "ambiguous_interest": [
+            "カフェ気になりますね！どんな雰囲気のお店が好きですか？",
+            "いいですね！よく行くエリアとかありますか？",
+            "カフェいいですね、最近お気に入りのお店ありますか？",
+        ],
+        "tentative_interest": [
+            "そうですね、また話しながらタイミング合えばぜひ！",
+            "ありがとう！無理ないタイミングで話せたら嬉しいです",
+            "そうしましょう！またゆっくり話しましょう",
+        ],
+        "counterproposal": [
+            "日曜なら大丈夫です、ありがとう！何時ごろがよさそうですか？",
+            "ありがとう、日曜なら行けます！何時ごろがよさそうですか？",
+            "日曜なら都合つきます！待ち合わせの時間はどうしましょう",
+        ],
+        "decline": [
+            "わかりました、気持ちを伝えてくれてありがとう！",
+            "大丈夫です。無理しないでくださいね",
+            "気にしないでくださいね。気持ちを伝えてくれてありがとう",
+        ],
+        "meeting_hesitation": [
+            "そうですね、急がずメッセージで話せたらうれしいです",
+            "迷う気持ちを話してくれてありがとう。焦らずゆっくり話しましょう",
+            "無理せず、自分のペースで大丈夫ですよ",
+        ],
+        "meeting_safety_concern": [
+            "安全面が不安なのは自然だと思います。無理せずここで話しましょう",
+            "不安な気持ちを伝えてくれてありがとう。安心できるペースで大丈夫です",
+            "焦らずメッセージでやりとりしましょう。少しずつ安心できたらいいですね",
+        ],
+        "declining_engagement": [
+            "そうなんですね。また話せるときに話しましょう。",
+            "また話したくなったら話そう",
+            "了解です。無理せず過ごしてくださいね",
+        ],
+        "recent_activity_disinterest": [
+            "プリンの話も出てましたね。どんな種類が好きですか？",
+            "駅前のお店のメニューってどんな感じですか？プリンもあるのかな？",
+            "カフェのお店なんですね。前に話していたプリンも置いてあるんでしょうか？",
+        ],
+        "different_activity_does_not_clear_disinterest": [
+            "映画が好きなんですね！最近観て印象に残った作品ありますか？",
+            "映画いいですね、最近なにか観ましたか？",
+            "どんなジャンルの映画をよく観ますか？",
+        ],
     }
     results = []
     for scenario in SCENARIOS:
@@ -53,7 +109,7 @@ def _valid_results():
                 "id": scenario["id"],
                 "expectation_met": True,
                 "messages": scenario["messages"],
-                "replies": [replies[scenario["id"]]],
+                "replies": replies[scenario["id"]],
                 "strategy": {
                     "action": action,
                     "rationale": "相手の発言に合わせた次の進め方です。",
@@ -85,7 +141,11 @@ def test_selected_scenario_artifact_can_complete_without_claiming_full_benchmark
             "evidence": ["今度一緒に行きたいです！"],
             "invite_example": "駅前のカフェでお茶しませんか？",
         },
-        "replies": ["一緒に行けるの嬉しいです！"],
+        "replies": [
+            "一緒に行けるの嬉しいです！",
+            "ありがとう、楽しみにしています",
+            "楽しみです！行きやすい日を相談したいです",
+        ],
     }
 
     artifact_path = tmp_path / "selected-scenario.json"
@@ -239,7 +299,11 @@ def test_interim_artifact_with_all_cases_has_incomplete_reason(tmp_path):
 def test_tapple_benchmark_rejects_a_reinvitation_after_decline_even_when_action_is_stop():
     results = _valid_results()
     declined = next(result for result in results if result["id"] == "decline")
-    declined["replies"] = ["わかった！でも来週カフェに行こうよ！"]
+    declined["replies"] = [
+        "わかった、教えてくれてありがとう",
+        "無理しないでね！",
+        "わかった！でも来週カフェに行こうよ！",
+    ]
     declined["expectation_met"] = True
 
     summary = summarize_expectations(results, complete=True)
@@ -263,7 +327,11 @@ def test_tapple_benchmark_rejects_direct_reinvite_and_generic_reply_for_concern(
     results = _valid_results()
     scenario = next(result for result in results if result["id"] == scenario_id)
     benchmark_scenario = next(item for item in SCENARIOS if item["id"] == scenario_id)
-    scenario["replies"] = [reinvite]
+    scenario["replies"] = [
+        "わかりました、無理せずもう少し話しましょう",
+        "教えてくれてありがとう！焦らなくて大丈夫です",
+        reinvite,
+    ]
     scenario["expectation_met"] = True
 
     assert "reinvitation_not_allowed" in _evaluate_result(benchmark_scenario, scenario)
@@ -275,7 +343,11 @@ def test_tapple_benchmark_rejects_direct_reinvite_and_generic_reply_for_concern(
 
     results = _valid_results()
     scenario = next(result for result in results if result["id"] == scenario_id)
-    scenario["replies"] = ["その話は面白いですね。"]
+    scenario["replies"] = [
+        "不安な気持ちは大切にしたいです。無理せず話しましょう",
+        "教えてくれてありがとう！安心できるペースで大丈夫です",
+        "その話は面白いですね。",
+    ]
     scenario["expectation_met"] = True
 
     summary = summarize_expectations(results, complete=True)

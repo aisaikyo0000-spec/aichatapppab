@@ -135,11 +135,15 @@ def test_contact_benchmark_generates_same_probe_with_contact_specific_gold_conte
         )
         assert "【SAME-CONTACT RECENT GOLD REPLIES】" in prompt_text
         assert expected_style_examples[name] in prompt_text
-        assert any(
-            "【相手別Gold傾向の優先】" in message[1]["content"]
-            and "本人Goldの口調・文量を優先" in message[1]["content"]
-            for message in captured_messages
-            if message[0]["content"] == prompt_text
+        matching_messages = [
+            messages
+            for messages in captured_messages
+            if messages[0]["content"] == prompt_text
+        ]
+        assert matching_messages
+        assert all(
+            "【相手別Gold傾向の優先】" not in messages[1]["content"]
+            for messages in matching_messages
         )
         assert all(
             example not in prompt_text
@@ -442,6 +446,28 @@ def test_contact_benchmark_report_records_successful_route_without_credentials()
     }
     assert result["models_used"] == ["gemini-3.5-flash-lite"]
     assert "api_key" not in result
+
+
+def test_contact_benchmark_reports_aggregates_for_final_replies_not_rejected_draft():
+    stale_aggregates = contact_benchmark._safe_candidate_aggregates(
+        ["古い案その1です", "古い案その2です", "古い案その3です"]
+    )
+    final_replies = ["短い！", "少しだけ丁寧に返す案です！", "中間の長さの返答です！"]
+    result = build_contact_report_entry(
+        {
+            "replies": final_replies,
+            "style_profile": {},
+            "contact_style_diagnostics": {
+                "observed_candidate_aggregates": stale_aggregates,
+            },
+        },
+        gold_pairs=[("相手", "Gold")],
+    )
+
+    assert result["contact_style_diagnostics"]["observed_candidate_aggregates"] == (
+        contact_benchmark._safe_candidate_aggregates(final_replies)
+    )
+    assert result["contact_style_diagnostics"]["observed_candidate_aggregates"] != stale_aggregates
 
 
 def test_contact_benchmark_restores_provider_and_config_hooks_when_setup_fails():

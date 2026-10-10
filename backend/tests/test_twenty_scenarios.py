@@ -21,7 +21,8 @@ def test_01_single_topic_with_question():
     )
     assert "【CORE RULES】" in p
     assert "架空の自己開示・事実捏造の禁止" in p
-    assert "候補の多様性と独立性" in p
+    assert "【OUTPUT CONTRACT】" in p
+    assert "完全独立の3案" in p
 
 
 def test_02_single_topic_no_question():
@@ -101,14 +102,15 @@ def test_08_tame_tone():
 
 
 def test_09_hybrid_tone():
-    """TEST 9: ハイブリッド（です・ます調ベース＋自然にくだけたリアクション）"""
+    """TEST 9: ハイブリッドは本人Goldに沿って丁寧さと親しみを混ぜる。"""
     p = prompt.build_system_prompt(
         rules=[], references=[], learning_materials=[], condition="", contact={"name": "相手"},
         chat_history_text="相手: 映画好きなんですね！", training_examples=[], self_profile={}, role="self",
         tone="hybrid"
     )
-    assert "【ハイブリッド】完全敬語でも完全タメ口でもない" in p
-    assert "基本は「です・ます調」を維持しながら、リアクション部分" in p
+    assert "【ハイブリッド】完全敬語にも完全タメ口にも寄せず" in p
+    assert "本人Goldと同一相手への実績を基準に、丁寧さと親しみを自然に混ぜる" in p
+    assert "語尾を一律にです・ます調へ揃えず" in p
 
 
 def test_10_condition_no_question():

@@ -1,6 +1,16 @@
 # 現行返信生成アーキテクチャ分析
 
-## 2026-10-10 Contact Bench R21〜R26と返信品質診断
+## 2026-10-10 Contact Bench R29と並列レビュー
+
+R29では生成指示の重複を減らし、同一相手Goldの文体サマリーをsystem promptだけに集約した。一般的な返信内容・文量・質問方針も正規ブロックへ統合した。明示tone、事実安全性、Gold優先、自然に会話を終える判断は維持している。
+
+Gemini 3.5 Flash Liteを使った前回Contact BenchはA/B/Cの3相手すべてで生成を完了したが、独立出力評価は**FAIL**。Aは短い労いと「笑」に寄り、Bは似た休息助言を繰り返し、Cは相手別の距離感が安定しなかった。API呼び出し完了は品質合格を意味しない。最新の修正後runはAで生成未完了になり、返信9件を得られなかった。HTTP 502は外部APIの疎通不良ではなく、unsupported_recurring_contextとunsupported_effort_contextに対する初回生成・hard repairが不合格となったアプリ側の応答。検証基準は変えず、hard-repair指示を修正中。返信本文とGold本文はこの資料に転載しない。
+
+fixtureを現行の文脈マーカー、本人事実、候補独立性、自然な締め方に合わせて修正した後、Tapple/Step 18のfocused suiteは**797 passed / 2 warnings**、backend全体suiteは**1,553 passed / 2 warnings**。frontend production buildも**PASS**。初回レビューで指摘された候補セットの重複検査漏れと週単位の再発話判定は修正済みで、freshなコードレビューとテスト差分レビューも**PASS**。70ケース回帰も未実施。
+
+70ケース回帰とStep 18-R4の完了判定は未実施。評価基準、evaluator、thresholdは変更していない。作業branchは`codex/chat-quality-20261008`で、forkの最新commitは未コミット作業前の`68f7d2b`、GitHub `main`は`a75ba76`。まだpushしていない。
+
+## 2026-10-10 Contact Bench R21〜R28と返信品質診断
 
 Contact Bench R21は計測コードの`candidate_issues`不整合による`generation_error`で終了した無効・未完了runである。生成出力を品質評価に使わない。
 
@@ -2304,3 +2314,73 @@ R27の変更コードに対する独立レビューは**PASS**。全backend suit
 既存条件の監査では、短文・質問なしを許容する指示が複数ブロックに重なり、同一相手の文体は主に助言として渡され、相手別トーンのランキング加点も小さいことを確認した。候補間重複の検出は文字列類似度中心で、意味が近い質問を十分に拾わない。これらはR27の出力を説明し得る構造上の要因だが、特定の指示が失敗を引き起こしたとはまだ断定できない。
 
 次の実験では事実安全性とGold優先を保ち、短文と質問に関する重複指示だけを一か所へまとめる。相手別Goldと入力は変えず、現行promptと比較してA/B/Cの文量・口調・返信の印象、質問意図の重複を確認する。改善しない場合は、候補群の意味重複を別実験として切り分ける。Contact Benchは不合格のままで、最新70ケース、frontend build、テスト更新への独立レビュー、全suite結果が残るためStep 18-R4は未完成。GitHub mainへの反映も行っていない。
+
+## 2026-10-10 Contact Adaptation R28: 一般prompt指示の集約
+
+R28では、通常返信の内容選択・文量・質問方針・候補差に関する重複指示を一つのsystem promptブロックへ集約した。追撃文専用ルールは分離したままにし、感情共有時の応答方針、測定された相手別Goldの文量情報、事実安全性、ユーザー指定toneを保持した。相手別Goldのstyleは明示toneがない場合に限って適用する。変更コードの独立レビューは**PASS**。frontend production buildも**PASS**。
+
+Gemini 3.5 Flash LiteによるContact Benchは3相手すべて生成できたが、独立GAN評価は**FAIL**。A/B/Cの出力は依然として丁寧な労い表現に似ていた。Aの口調差は弱く、Bは学習された文量傾向より短く、Cには入力から根拠を得られない「温まって」という提案があった。質問の重複は改善傾向だが、相手別の距離感・文量を自然に出す目標は達成していない。返信の全文やGold本文はここに記録しない。
+
+全backend suiteは、旧prompt文言に依存した9件のassertionを更新した後、**1,539 passed / 2 warnings**。失敗はない。一方、テスト差分の独立レビューは**FAIL**で、直接質問への回答と候補の独立性を実際の出力で確認できていないとの指摘があった。現在、その不足を補うテストを追加している。70ケース回帰は未実施。
+
+次のR29では、同じ相手のstyle要約がsystem指示とuserメッセージ双方に重複して渡る経路を切り分ける。styleの重複を減らす実験でも、明示toneを優先し、Gold > same-contact > globalの階層と、少数Goldを全体傾向へ縮退させる制御を守る。実際のGold数や内容を開示せず、少数データで過剰適応しないことも確認する。
+
+コード作業branchは`codex/chat-quality-20261008`。今回変更前に確認したfork SHAは`68f7d2b`、GitHub `main`は`a75ba76`。R28の変更と本記録は未コミットのため、まだforkに反映されていない。Step 18-R4は未完了であり、実API Contact Bench、70ケース回帰、全backend suiteの確定結果と独立レビューが残る。
+
+## 2026-10-10 Contact Adaptation R29: 重複promptの整理と修復回帰
+
+R29では、通常返信の内容選択・質問・文量に関する重複指示をsystem prompt内で整理し、同一相手の文体ブロックの重複投入を減らした。根拠のない継続性・負荷の表現を、修復時に別の推測へ置き換えず削る指示を追加した。独立レビューで感情共有時に理由や状況を尋ねる余地が見つかったため、助言・意見を求められていない場合は理由を尋ねない方針も復元し、Goldに同じ距離感の実績がある場合だけ質問を許容する。再現テストは修正前に失敗し、修正後はPASS。
+
+Gemini 3.5 Flash Liteの合成Contact BenchはA/B/Cすべて生成し、計9返信が揃った。生成完了と品質合格を分離するためartifactは`adaptation_pass: false`のままとし、独立受け入れReviewerも**FAIL**と判定した。Aは短く砕けていた一方、BはGoldの文量傾向より短く、CはB寄りで中間の距離感が弱かった。候補の反応も労い・休息提案に偏った。質問がないこと自体はこのprobeでは問題ではなかった。実返信群の内容評価を数値の成功で置き換えない。
+
+修正後の`python -m pytest backend/tests -q`は**1,555 passed / 2 warnings**。frontend production build、`python -m compileall -q backend/app`、`git diff --check`も**PASS**。警告はFastAPI `on_event`の既存非推奨通知。感情共有ルールを含むR29差分へのfresh独立code reviewは未完了。最新70ケース、Tapple実生成、Contact Bench改善後の実測も未実施であり、Step 18-R4は未完成・未push。
+
+診断上、連絡先Aでは相手別文体修正が不要判定、Bでは長さの修正を1回試みたが品質ゲートが実質的な改善なしとして棄却した。Cでは会話調候補が1/3あり、現行checkerの差分条件をわずかに満たさず文体修正を始めなかった。これは固定の候補数・文量へ寄せる根拠ではなく、Gold傾向が強い相手でも短いprobeに応じた自然な返信群が得られるよう、Style診断と修復の挙動を切り分けて再検討する課題である。
+
+作業branch `codex/chat-quality-20261008`、main基点 `a75ba76`。変更と本記録は未commit・未push。backend/frontend/static検証は並行実行し、実APIは共有quotaとログの競合を避けて直列実行した。
+
+## 2026-10-10 作業順の更新：返信本文の人手確認を最終段階へ
+
+ユーザー希望に合わせ、生成返信の読み込み・人手による自然さ/送信可能性判定を最後に行う。以前のR29 Contact Bench 9返信の独立判定はFAILであり、これを合格扱いにはしない。最新の機械再実行はA/B/C全3件・9返信まで完了し、manual review requiredのため返信品質の判定は保留している。返信本文・生成artifactは開かない。
+
+最新コードのオフライン検証結果：`python -m pytest backend/tests -q` **1,555 passed / 2 warnings**（FastAPI `on_event`非推奨）、`frontend`の`npm run build`、`python -m compileall -q backend/app`、pipeline/annotation/embedding/Tapple各CLIの`--help`、`git diff --check`は**PASS**。benchmark evaluatorとcanonical 70-case inputに差分がないことを確認した。
+
+`benchmark_retrieval_quality.py`の手書き合成セットはRecall@4 **1.0**、MRR **1.0**（正解あり5 query）、Negative/excluded混入 **0**、該当候補なし1 queryへの誤返却 **0**。これは局所の回帰確認であって、実Gold検索の品質評価ではない。過去の10件Embedding探索ではdense/RRFがno-hitへ返却したため本番採用を見送り済み。実Goldのleave-one-contact-out、人手関連性ラベル、no-hit閾値の校正は未完了であり、検索方式は変更しない。
+
+canonical 70ケースは**70/70完了、エラー0、92 LLM calls、17修復**。全ケースのaccountはprimaryで、69件は`gemini-3.5-flash-lite`、1件は`gemini-3.1-flash-lite`を使用した。artifact verifierはcoverage/provenance/集計整合を通過したが、Human proxy **0.887 < 0.900**で品質gateはFAIL。他の固定thresholdはAI-like **0.058**、Context **0.628**、Conversation **0.979**、Questions **0.005**、Echo **0.101**で通過。返信本文は開いていない。
+
+Tapple live benchmarkは14シナリオのうち6件をprimary 3.1で生成したところで、次のケースがHTTP 502 `candidate_validation_failed`となり停止。6件はいずれも機械期待に合格せず、全文や具体的な候補内容は未確認。Contact Benchはprimary 3.1でA/B/Cを各3案生成し、3/3完了したが`adaptation_pass: false` / `manual_review_required`。こちらも返信内容は未確認。最新差分への独立コードレビューはPASSし、評価器・threshold・canonicalケースの変更なし。
+
+全backend **1,555 passed / 2 warnings**、frontend production build、compileall、benchmark CLI help、`git diff --check`はPASS。残作業は返信内容の最終人手確認（Contact A/B/C、70ケースの代表/要確認例、Tapple生成済み6件）、その所見に基づく修正・再生成・再レビュー、Tapple残り8件、資料の最終確認と公開。候補本文は最終受け入れ段階まで開かず、合格前のpushはしない。Human proxy/Contact/Tappleの機械gateが未達のため、Step 18-R4は未完了。
+
+## 2026-10-10 非本文作業：診断集計とTapple受諾判定の修正
+
+返信本文の目視確認を保留し、再現できるコード上の問題を先に修正した。
+
+- Contact Benchの`observed_candidate_aggregates`は最終返信から再計算する。修復前に却下した候補の診断値が残る問題を防いだ
+- 関連するGold返信をvalidatorへ渡し、長い返信の完全コピーやほぼコピーをrepair対象にする。短い定型表現は誤検知しない境界テストを追加した
+- Tappleは一般的な活動希望を過去の誘いへの受諾と扱わない。直近の本人Turnに誘いがある場合だけ短い肯定を受諾とする。話題を変えた後の古い誘いへの誤紐付けを回帰テストに加えた。相手が「ぜひ一緒に行きたい」と明確に伝えた場合は、本人からの誘いが先になくても日程調整へ進める
+
+変更前にRED、変更後にGREENを確認した。Tapple strategy **632 passed**、backend全体 **1,561 passed / 2 warnings**、Frontend production build、Python compileall、`git diff --check`は**PASS**。警告はFastAPI `on_event`の既存非推奨通知。最新差分へのfresh独立code reviewは**PASS**。生成artifactは未確認。
+
+前回の独立返信レビューはContact・70ケース・Tappleすべて**FAIL**。今回も返信本文を開かず、修正後の実API生成と本文レビューを最終段階に残した。Tapple残りケース、70ケース評価、資料とbranchの公開も未完了のためStep 18-R4は未完成・未push。評価器、閾値、canonical 70ケースは変更していない。
+
+## 2026-10-10 非本文作業：根拠判定と質問方針の境界
+
+生成返信の本文確認は保留したまま、静的な再現ケースとレビューで見つかった問題を修正した。workload validatorは「前は忙しくなかったけど今日は…」のような時間差と、同じ日の否定を分離する。非時間語の「前の人」では過去扱いせず、会議の否定と食事抜きの肯定が混ざるときは各根拠を別々に判定する。否定の口語表現も回帰テストへ追加した。
+
+Promptでは感情共有の返信の焦点を相手の内容・文脈から選び、Goldは主に口調・距離感・文量へ用いる。会話上の目的があり、相手が答えやすい質問ならGoldに同じ質問例がなくても許容する。一方で助言を求められていないときに理由や詳しい状況を掘り下げない。テストは実際の感情共有メッセージ分類、system promptへの方針挿入、プロンプトの重複上限を確認する。
+
+最終コードの全backend suiteは**1,577 passed / 2 warnings**、frontend production buildは**PASS**。FastAPI `on_event`非推奨以外の失敗はない。評価器・閾値・canonical 70ケースに変更はない。今回のコードでの70ケース・Contact Bench・Tapple実API再生成、本文の最終確認、GitHubへの更新は未完了であり、Step 18-R4は未完成・未push。
+
+## 2026-10-10 最終返信確認とAPI制限の再評価
+
+最終コードで返信文を確認し、終了を伝えた後に未提示の連絡日程を約束する候補と、同じ話題を言い換えるだけの候補群を再現した。明示終了の意図分類、候補群の多数echo検知、根拠のない時間表現を別の日付へ置き換えないrepair指示を追加した。freshな独立コードReviewerは**PASS**。最終backend suiteは**1,588 passed / 2 warnings**、frontend build、compileall、`git diff --check`も**PASS**。
+
+最新コードでの70ケース実走は**45/70でrate_limit_exhaustedにより停止**した。完了44件の集計はAI-like **0.100**、Context **0.631**、Human **0.904**、Conversation **0.965**だが、全ケースを完了していないため受け入れ結果には使わない。直近の完走済み70ケースも今回のコード以前であり、Human **0.864**と未達だった。
+
+最終コードで確認したb39/b44の2ケースは**2/2完了**し、終了後の未提示日程と単純な言い換え候補群は修正された。ただし、これは限定的なspot checkであり、全体品質を示さない。Contact BenchはA/BのみのartifactでCが`candidate_validation_failed`となり未完了。Tappleは旧14件runが機械期待**1/14**かつ独立本文評価FAILで、今回のコードでは再実行できていない。
+
+APIログではprimary `gemini-3.1-flash-lite`のHTTP 429を確認した後、secondary `gemini-3.5-flash-lite`とsecondary `gemini-3.1-flash-lite`も429となった。429の種別と解除時刻は不明なため、追加API呼び出しを停止した。返信品質の残課題、未完了ベンチ、最新コードでの全70ケース評価が残るため、Step 18-R4は**未完成**。評価器・threshold・canonicalケースは変更していない。
+
+この時点のコードは作業branch `codex/chat-quality-20261008`にあり、GitHub `main`の基点は`a75ba76998a377e527f1ea3bedaa655a6b89569c`。レビューとオフライン検証は通過したが、品質受け入れ条件を満たしていないためmainには反映しない。WIPのfork作業branch更新は、最終資料と差分を確認してから行う。

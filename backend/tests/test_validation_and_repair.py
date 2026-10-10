@@ -95,6 +95,25 @@ def test_hard_validator_detects_violations():
     assert generation.validate_candidate_replies(v_no_q, 3, condition="質問しない") == []
 
 
+def test_validator_rejects_long_gold_reply_copies_but_allows_short_common_phrases():
+    gold_reply = "今日はありがとう！お店もすごくよかったし、またゆっくり話せて楽しかった！"
+    copied_with_punctuation_changes = "今日はありがとう、お店もすごくよかったしまたゆっくり話せて楽しかった！"
+    replies = [copied_with_punctuation_changes, "短い定型表現です", "別の返信です"]
+
+    violations = generation.validate_candidate_replies(
+        replies,
+        expected_candidates=3,
+        style_reference_replies=[gold_reply, "了解です笑"],
+    )
+
+    assert any("過去のGold返信をコピー" in error for error in violations)
+    assert generation.validate_candidate_replies(
+        ["了解です笑", "短く返します", "別の返信です"],
+        expected_candidates=3,
+        style_reference_replies=["了解です笑"],
+    ) == []
+
+
 def test_followup_validator_rejects_only_exact_normalized_latest_self_echo():
     """追いメッセージは直近の自分の文そのものだけを表記差込みで拒否する。"""
     latest_self = "カフェ楽しみだね！ また話そう。"
@@ -1251,6 +1270,50 @@ def test_normal_validator_rejects_unverified_recurring_effort_claim_about_counte
     assert any("相手の継続的な状況を確認できる情報がありません" in error for error in violations)
 
 
+def test_normal_validator_requires_grounding_for_weekly_work_recurrence():
+    reply = "今週も頑張ったね"
+    unsupported = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今日仕事で疲れた",
+    )
+    grounded = generation.validate_candidate_replies(
+        [reply],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今週も仕事で疲れた",
+        known_self_facts=[],
+        chat_history_text="相手: 今週も仕事で疲れた",
+    )
+
+    assert any("相手の継続的な状況を確認できる情報がありません" in error for error in unsupported)
+    assert grounded == []
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        "今週は仕事で疲れた",
+        "今週中は仕事",
+    ],
+    ids=["week-is-not-recurrence", "within-week-is-not-recurrence"],
+)
+def test_normal_validator_does_not_treat_week_period_as_weekly_recurrence(context):
+    violations = generation.validate_candidate_replies(
+        ["今週も頑張ったね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=context,
+        known_self_facts=[],
+        chat_history_text=f"相手: {context}",
+    )
+
+    assert any("相手の継続的な状況を確認できる情報がありません" in error for error in violations)
+
+
 def test_normal_validator_rejects_unverified_today_recurrence_in_work_greeting():
     violations = generation.validate_candidate_replies(
         ["今日もお仕事おつかれさまです！"],
@@ -1316,6 +1379,146 @@ def test_normal_validator_allows_today_advice_when_message_mentions_today():
     assert not any(
         "相手の時間情報を確認できる情報がありません" in error for error in violations
     )
+
+
+def test_normal_validator_repairs_candidate_set_when_every_report_reply_is_echo():
+    violations = generation.validate_candidate_replies(
+        [
+            "おー、ギター始めたんですね！いいですね笑",
+            "ギター始めたんですね！すごい！",
+            "ギター始めたんだ！かっこいいですね！",
+        ],
+        expected_candidates=3,
+        mode="normal",
+        counterpart_message="ギター始めてみた",
+        known_self_facts=[],
+        chat_history_text="相手: ギター始めてみた",
+    )
+
+    assert any("返信案の過半数が相手の発言の言い換え" in violation for violation in violations)
+
+
+def test_candidate_set_echo_repair_guidance_is_specific_and_does_not_invent_facts():
+    violations = ["返信案の過半数が相手の発言の言い換えです。"]
+    categories = generation._repair_violation_categories(violations)
+    messages = generation._build_repair_messages(
+        [{"role": "system", "content": "返信を作って"}],
+        '{"replies": ["ギター始めたんですね！いいですね"]}',
+        violations,
+        3,
+    )
+
+    assert "candidate_set_echo" in categories
+    repair_prompt = messages[-1]["content"]
+    assert "話題に対する具体的な感想や自然な関心" in repair_prompt
+    assert "確認できない本人の経験や予定を足さず" in repair_prompt
+
+
+def test_single_paraphrase_in_mixed_candidate_set_does_not_trigger_set_repair():
+    violations = generation.validate_candidate_replies(
+        [
+            "ギター始めたんですね！",
+            "何を弾いてみたいんですか？",
+            "最初は指が痛くなりそうですね",
+        ],
+        expected_candidates=3,
+        mode="normal",
+        counterpart_message="ギター始めてみた",
+        known_self_facts=[],
+        chat_history_text="相手: ギター始めてみた",
+    )
+
+    assert not any("返信案の過半数が相手の発言の言い換え" in violation for violation in violations)
+
+
+def test_question_candidates_are_not_repaired_as_an_all_echo_report_set():
+    violations = generation.validate_candidate_replies(
+        [
+            "ギター始めたんですね？",
+            "ギター始めたんですか？",
+            "ギター始めたんだね？",
+        ],
+        expected_candidates=3,
+        mode="normal",
+        counterpart_message="ギター始めてみた",
+        known_self_facts=[],
+        chat_history_text="相手: ギター始めてみた",
+    )
+
+    assert not any("返信案の過半数が相手の発言の言い換え" in violation for violation in violations)
+
+
+def test_majority_echo_set_with_one_informative_question_triggers_repair():
+    violations = generation.validate_candidate_replies(
+        [
+            "ギター始めたんですね！",
+            "ギター始めたんだね！すごい！",
+            "何か弾ける曲とかあるの？",
+        ],
+        expected_candidates=3,
+        mode="normal",
+        counterpart_message="ギター始めてみた",
+        known_self_facts=[],
+        chat_history_text="相手: ギター始めてみた",
+    )
+
+    assert any("返信案の過半数が相手の発言の言い換え" in violation for violation in violations)
+
+
+def test_normal_validator_rejects_new_future_commitment_after_explicit_closure():
+    violations = generation.validate_candidate_replies(
+        ["了解です！また話しましょうね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message="今日はこのへんで",
+        known_self_facts=[],
+        chat_history_text="相手: 今日はこのへんで",
+    )
+
+    assert any("会話終了後に新しい連絡時期や約束を追加" in violation for violation in violations)
+
+
+def test_normal_validator_allows_uncommitted_signoff_and_mirrors_explicit_next_time():
+    assert not any(
+        "会話終了後に新しい連絡時期や約束を追加" in violation
+        for violation in generation.validate_candidate_replies(
+            ["了解！またね"], expected_candidates=1, mode="normal",
+            counterpart_message="今日はこのへんで", known_self_facts=[],
+            chat_history_text="相手: 今日はこのへんで",
+        )
+    )
+    assert not any(
+        "会話終了後に新しい連絡時期や約束を追加" in violation
+        for violation in generation.validate_candidate_replies(
+            ["また明日ね！"], expected_candidates=1, mode="normal",
+            counterpart_message="また明日ね", known_self_facts=[],
+            chat_history_text="相手: また明日ね",
+        )
+    )
+    assert not any(
+        "会話終了後に新しい連絡時期や約束を追加" in violation
+        for violation in generation.validate_candidate_replies(
+            ["了解！また今度ね"], expected_candidates=1, mode="normal",
+            counterpart_message="今日はこのへんで", known_self_facts=[],
+            chat_history_text="相手: 今日はこのへんで",
+        )
+    )
+
+
+def test_unsupported_time_violation_gets_time_specific_repair_guidance():
+    violation = "案1に相手の時間情報を確認できる情報がありません。現在の会話で今日と確認できない場合、今日の仕事や過ごし方を前提にしないでください。"
+    categories = generation._repair_violation_categories([violation])
+    messages = generation._build_repair_messages(
+        [{"role": "system", "content": "返信を作って"}],
+        '{"replies": ["今日はゆっくり休んでね"]}',
+        [violation],
+        1,
+    )
+
+    assert "unsupported_time" in categories
+    repair_prompt = messages[-1]["content"]
+    assert "根拠のない今日・昨日・明日などの時間表現を削除" in repair_prompt
+    assert "別の日時や、出来事がすでに終わったという前提に置き換えない" in repair_prompt
 
 
 def test_normal_validator_allows_today_recurrence_when_counterpart_says_today_too():
@@ -1613,6 +1816,158 @@ def test_normal_validator_allows_workload_or_strain_when_counterpart_said_it():
             known_self_facts=[],
             chat_history_text=f"相手: {message}",
         ) == []
+
+
+def test_normal_validator_allows_effort_inference_from_concrete_workload_evidence():
+    message = "今日は朝から会議が3つあって昼も食べ損ねた"
+    assert generation.validate_candidate_replies(
+        ["忙しい一日だったんですね。コーヒーで少し生き返れてよかった！"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=message,
+        known_self_facts=[],
+        chat_history_text=f"相手: {message}",
+    ) == []
+
+    historical_negation = "前は忙しくなかったけど、今日は朝から会議が3つあって昼も食べ損ねた"
+    assert generation.validate_candidate_replies(
+        ["忙しい一日だったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=historical_negation,
+        known_self_facts=[],
+        chat_history_text=f"相手: {historical_negation}",
+    ) == []
+
+    for historical_marker in ("先月", "最近", "去年"):
+        historical_context = f"{historical_marker}は忙しくなかったけど、今日は朝から会議が3つあって昼も食べ損ねた"
+        assert generation.validate_candidate_replies(
+            ["忙しい一日だったんですね"],
+            expected_candidates=1,
+            mode="normal",
+            counterpart_message=historical_context,
+            known_self_facts=[],
+            chat_history_text=f"相手: {historical_context}",
+        ) == []
+
+    separate_historical_context = "昨日は忙しくなかった。今日は朝から会議が3つあった"
+    assert generation.validate_candidate_replies(
+        ["忙しい一日だったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=separate_historical_context,
+        known_self_facts=[],
+        chat_history_text=f"相手: {separate_historical_context}",
+    ) == []
+
+    mixed_evidence = "会議が3つあったわけではないけど、昼食を食べ損ねた"
+    assert generation.validate_candidate_replies(
+        ["忙しい一日だったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=mixed_evidence,
+        known_self_facts=[],
+        chat_history_text=f"相手: {mixed_evidence}",
+    ) == []
+
+    mixed_evidence_with_shi = "会議が3つあったわけではないし、昼食を食べ損ねた"
+    assert generation.validate_candidate_replies(
+        ["忙しい一日だったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=mixed_evidence_with_shi,
+        known_self_facts=[],
+        chat_history_text=f"相手: {mixed_evidence_with_shi}",
+    ) == []
+
+    non_temporal_front_reference = "前の人より忙しくないけど、今日は朝から会議が3つあって昼も食べ損ねた"
+    front_reference_violations = generation.validate_candidate_replies(
+        ["忙しい一日だったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=non_temporal_front_reference,
+        known_self_facts=[],
+        chat_history_text=f"相手: {non_temporal_front_reference}",
+    )
+    assert any("相手の負荷や疲れの理由" in issue for issue in front_reference_violations)
+
+    for current_denial in (
+        "前は忙しくなかったし、今も忙しくないけど、今日は朝から会議が3つあって昼も食べ損ねた",
+        "前は忙しくなかったけど、今日は忙しくないし朝から会議が3つあって昼も食べ損ねた",
+    ):
+        current_denial_violations = generation.validate_candidate_replies(
+            ["忙しい一日だったんですね"],
+            expected_candidates=1,
+            mode="normal",
+            counterpart_message=current_denial,
+            known_self_facts=[],
+            chat_history_text=f"相手: {current_denial}",
+        )
+        assert any("相手の負荷や疲れの理由" in issue for issue in current_denial_violations)
+
+    extreme = generation.validate_candidate_replies(
+        ["ヘトヘトになるまで頑張ったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=message,
+        known_self_facts=[],
+        chat_history_text=f"相手: {message}",
+    )
+    assert any("相手の負荷や疲れの理由" in issue for issue in extreme)
+
+    for strong_claim in (
+        "かなり忙しい一日だったんですね",
+        "めちゃくちゃ忙しい一日だったんですね",
+        "死ぬほど忙しい一日だったんですね",
+        "めちゃ忙しい一日だったんですね",
+        "忙しすぎる一日だったんですね",
+    ):
+        strong_violations = generation.validate_candidate_replies(
+            [strong_claim],
+            expected_candidates=1,
+            mode="normal",
+            counterpart_message=message,
+            known_self_facts=[],
+            chat_history_text=f"相手: {message}",
+        )
+        assert any("相手の負荷や疲れの理由" in issue for issue in strong_violations)
+
+    for negated in (
+        "今日は会議が3つあったけど忙しくはなかった",
+        "今日は会議が3つあったけど全然余裕だった",
+        "今日は会議が3つあったけど忙しいわけじゃなかった",
+        "今日は会議が3つあったけど忙しかったわけではない",
+        "今日は会議が3つあったけど大変だったわけではない",
+        "今日は会議が3つあったけど忙しいほどではなかった",
+        "今日は会議が3つあったけど忙しいってほどじゃなかった",
+        "今日は会議が3つあったけど忙しいというほどではなかった",
+        "今日は会議が3つあったけど忙しいって感じではなかった",
+        "今日は会議が3つあったけど忙しいとは言えなかった",
+        "今日は会議が3つあったけど忙しいとは言えない",
+        "今日は忙しくなかったけど、朝から会議が3つあって昼も食べ損ねた",
+        "今日は会議が3つあったわけではない",
+        "今日は昼食を食べ損ねたわけではない",
+    ):
+        violations = generation.validate_candidate_replies(
+            ["忙しい一日だったんですね"],
+            expected_candidates=1,
+            mode="normal",
+            counterpart_message=negated,
+            known_self_facts=[],
+            chat_history_text=f"相手: {negated}",
+        )
+        assert any("相手の負荷や疲れの理由" in issue for issue in violations)
+
+    denied_evidence = "今日は会議が3つなかったし昼ご飯も食べ損ねてない"
+    denied_violations = generation.validate_candidate_replies(
+        ["忙しい一日だったんですね"],
+        expected_candidates=1,
+        mode="normal",
+        counterpart_message=denied_evidence,
+        known_self_facts=[],
+        chat_history_text=f"相手: {denied_evidence}",
+    )
+    assert any("相手の負荷や疲れの理由" in issue for issue in denied_violations)
 
 
 def test_normal_validator_does_not_infer_busyness_from_negated_busy_context():
@@ -1995,6 +2350,37 @@ def test_schedule_repair_asks_user_without_inventing_a_sendable_reply():
     assert "アプリ利用者にだけ" in repair
     assert "予定" in repair and "生活習慣" in repair
     assert "返信候補として確認質問を作らない" in repair
+
+
+@pytest.mark.parametrize(
+    ("violation", "required_guidance"),
+    [
+        (
+            "案1に相手の継続的な状況を確認できる情報がありません。"
+            "一度の疲れや忙しさから、毎日・いつも頑張っていると決めつけないでください。",
+            "頻度や継続性を示す表現を削除",
+        ),
+        (
+            "案1に相手の負荷や疲れの理由を確認できる情報がありません。"
+            "疲れたという発言だけで、相手の負荷や疲れの理由を決めつけないでください。",
+            "負荷の強さや疲れの理由を示す表現を削除",
+        ),
+    ],
+    ids=["unsupported-recurrence", "unsupported-effort"],
+)
+def test_hard_repair_removes_unsupported_recurrence_or_effort_without_replacing_it(
+    violation, required_guidance
+):
+    repair = generation._build_repair_messages(
+        [{"role": "system", "content": "reply"}],
+        '{"replies":["候補"]}',
+        [violation],
+        candidates=3,
+    )[-1]["content"]
+
+    assert required_guidance in repair
+    assert "別の頻度・時間・負荷・理由を補って置き換えない" in repair
+    assert "相手に送る短い確認質問" not in repair
 
 
 def test_unresolved_reference_repair_remains_a_sendable_counterpart_question():
@@ -2615,7 +3001,16 @@ def test_generate_with_repair_success(client, monkeypatch):
     r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
     assert r.status_code == 200
     assert call_count == 2
-    assert len(r.json()["replies"]) == 3
+    replies = r.json()["replies"]
+    assert set(replies) == {
+        "本いいですね！\n何読んでるんですか？\n気になります笑",
+        "読書好きなんですね！\nおすすめありますか？\n教えてください",
+        "本いいなー！\n最近読めてないです笑\n何か探してみようと思いますが、おすすめありますか？",
+    }
+    assert len(set(replies)) == 3
+    assert not generation._is_fragmented_split(replies)
+    # Each returned option is independently sendable; validation doesn't require fixed answer structures.
+    assert generation.validate_candidate_replies(replies, expected_candidates=3) == []
     conn = generation.database.get_conn()
     try:
         batch = conn.execute(

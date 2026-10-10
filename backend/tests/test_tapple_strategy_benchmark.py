@@ -3,11 +3,109 @@ import sys
 
 import pytest
 
+from app.routers import generation
+
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from run_tapple_strategy_benchmark import SCENARIOS, expectation_met
+from run_tapple_strategy_benchmark import (
+    SCENARIOS,
+    TAPPLE_BENCHMARK_CANDIDATES,
+    _evaluate_result,
+    expectation_met,
+)
+
+
+def _three_replies(reply):
+    """Keep the target reply plus two short contextual phrasings for validator tests."""
+    core = reply.rstrip("。.!！?？ ")
+    return [
+        reply,
+        f"そうなんですね、{core}",
+        f"うん、{core}",
+    ]
+
+
+def _declining_engagement_replies(reply):
+    """Pair the tested phrase with distinct, pressure-free contextual off-ramps."""
+    options = (
+        "そうなんですね。また話せるときに話しましょう。",
+        "了解です。無理せず過ごしてくださいね",
+        "気にしないでね。また話したくなったら話そう",
+        "わかった。またね",
+        "うん、また話せるときに話そう",
+    )
+    selected = [reply]
+    for option in options:
+        if all(generation._jaccard_similarity(option, prior) < 0.85 for prior in selected):
+            selected.append(option)
+        if len(selected) == TAPPLE_BENCHMARK_CANDIDATES:
+            return selected
+    raise AssertionError("Could not assemble three distinct declining-engagement replies")
+
+
+def test_tapple_benchmark_requests_three_replies_and_requires_all_three():
+    assert TAPPLE_BENCHMARK_CANDIDATES == 3
+    scenario = next(item for item in SCENARIOS if item["id"] == "meeting_hesitation")
+    latest_contact = scenario["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": "wait",
+            "rationale": "相手の迷いを尊重します。",
+            "evidence": [latest_contact],
+            "invite_example": None,
+        },
+        "replies": [
+            "無理せずメッセージで話しましょう。",
+            "焦らず、もう少しここで話せたらうれしいです。",
+        ],
+    }
+
+    assert not expectation_met(scenario, result)
+    result["replies"] = [
+        "無理せずメッセージで話しましょう。",
+        "焦らず、もう少しここで話せたらうれしいです。",
+        "会うことは急がず、安心できるペースで話しましょう。",
+    ]
+    assert expectation_met(scenario, result)
+
+
+def test_tapple_benchmark_fails_case_when_any_reply_violates_context_safety():
+    scenario = next(item for item in SCENARIOS if item["id"] == "meeting_hesitation")
+    latest_contact = scenario["messages"][-1]["content"]
+    result = {
+        "strategy": {
+            "action": "wait",
+            "rationale": "相手の迷いを尊重します。",
+            "evidence": [latest_contact],
+            "invite_example": None,
+        },
+        "replies": [
+            "無理せずメッセージで話しましょう。",
+            "急がず、自分のペースで大丈夫です。",
+            "ぜひ来週会いましょう。",
+        ],
+    }
+
+    assert not expectation_met(scenario, result)
+
+
+def test_tapple_benchmark_rejects_duplicate_reply_triplet():
+    scenario = next(item for item in SCENARIOS if item["id"] == "decline")
+    latest_contact = scenario["messages"][-1]["content"]
+    reply = "わかりました、教えてくれてありがとう！"
+    result = {
+        "strategy": {
+            "action": "stop",
+            "rationale": "相手の意思を尊重します。",
+            "evidence": [latest_contact],
+            "invite_example": None,
+        },
+        "replies": [reply, reply, reply],
+    }
+
+    assert "reply_validation_failed" in _evaluate_result(scenario, result)
 
 
 def test_live_tapple_benchmark_covers_positive_ambiguous_and_declined_invites():
@@ -45,7 +143,7 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
                 "evidence": [contact_text],
                 "invite_example": "駅前のカフェでお茶しませんか？" if action == "invite" else None,
             },
-            "replies": [reply],
+            "replies": _three_replies(reply),
         }
 
     assert expectation_met(
@@ -78,7 +176,14 @@ def test_tapple_benchmark_expectations_distinguish_clear_ambiguous_and_declined(
     )
     assert expectation_met(
         scenarios["counterproposal"],
-        result_for("counterproposal", "continue", "日曜なら大丈夫です、ありがとう！"),
+        {
+            **result_for("counterproposal", "continue", "日曜なら大丈夫です、ありがとう！何時ごろがよさそうですか？"),
+            "replies": [
+                "日曜なら大丈夫です、ありがとう！何時ごろがよさそうですか？",
+                "日曜がいいですね！何時ごろなら空いてますか？",
+                "日曜日ならうれしいです！時間は何時頃に決めますか？",
+            ],
+        },
     )
     assert not expectation_met(
         scenarios["counterproposal"],
@@ -120,7 +225,7 @@ def test_tapple_benchmark_rejects_fragmentary_replies_despite_matching_markers(
             "evidence": [latest_contact],
             "invite_example": "駅前のカフェでお茶しませんか？" if action == "invite" else None,
         },
-        "replies": [reply],
+        "replies": _three_replies(reply),
     }
 
     assert not expectation_met(scenario, result)
@@ -136,7 +241,7 @@ def test_tapple_benchmark_rejects_absolute_safety_reassurance():
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["絶対安全なので安心してください。"],
+        "replies": _three_replies("絶対安全なので安心してください。"),
     }
 
     assert not expectation_met(scenario, result)
@@ -161,7 +266,7 @@ def test_tapple_benchmark_applies_production_reply_validation_to_invite_scenario
             "evidence": [latest_contact],
             "invite_example": "駅前のカフェでお茶しませんか？",
         },
-        "replies": [reply],
+        "replies": _three_replies(reply),
     }
 
     assert not expectation_met(scenario, result)
@@ -194,7 +299,7 @@ def test_tapple_benchmark_rejects_rationales_that_overstate_contact_intent(
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["カフェ気になりますね、どんなお店ですか？"],
+        "replies": _three_replies("カフェ気になりますね、どんなお店ですか？"),
     }
 
     assert not expectation_met(scenario, result)
@@ -220,7 +325,7 @@ def test_tapple_benchmark_does_not_use_superseded_interest_to_support_rationale(
             "evidence": [scenario["messages"][-1]["content"]],
             "invite_example": None,
         },
-        "replies": ["わかりました。無理に誘いません。"],
+        "replies": _three_replies("わかりました。無理に誘いません。"),
     }
 
     assert not expectation_met(scenario, result)
@@ -251,7 +356,7 @@ def test_tapple_benchmark_allows_rationales_that_explicitly_deny_overclaim(
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["カフェ気になりますね、どんなお店ですか？"],
+        "replies": _three_replies("カフェ気になりますね、どんなお店ですか？"),
     }
 
     assert expectation_met(scenario, result)
@@ -285,11 +390,11 @@ def test_live_benchmark_covers_meeting_hesitation_and_safety_boundaries():
                 "evidence": [latest_contact],
                 "invite_example": None,
             },
-            "replies": ["無理せず、もう少しメッセージで話しましょう。"],
+            "replies": _three_replies("無理せず、もう少しメッセージで話しましょう。"),
         }
         assert expectation_met(scenario, result), scenario_id
 
-        result["replies"] = ["ぜひ来週会いましょう。"]
+        result["replies"] = _three_replies("ぜひ来週会いましょう。")
         assert not expectation_met(scenario, result), scenario_id
 
 
@@ -319,7 +424,7 @@ def test_tapple_benchmark_rejects_indirect_persuasion_after_boundaries(
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["わかりました。考え直してもらえるとうれしいです。"],
+        "replies": _three_replies("わかりました。考え直してもらえるとうれしいです。"),
     }
 
     assert not expectation_met(scenario, result)
@@ -339,7 +444,7 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
             "evidence": [contact_text],
             "invite_example": None,
         },
-        "replies": ["了解です。また話そう。"],
+        "replies": _three_replies("了解です。また話そう。"),
     }
 
     assert required_markers
@@ -364,7 +469,7 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
         "そうなんだね。また話そうね",
         "気にしないでね、また話せるときに話そう",
     ):
-        result["replies"] = [natural_reply]
+        result["replies"] = _declining_engagement_replies(natural_reply)
         assert expectation_met(scenario, result), natural_reply
 
     for reply in (
@@ -390,7 +495,7 @@ def test_declining_engagement_requires_a_brief_contextual_reply_without_pursuit(
         "了解です。そうなんですね。無理せず、また話したくなったら話しましょう。",
         "なんで返事が短くなったの？今度カフェに行きませんか？",
     ):
-        result["replies"] = [reply]
+        result["replies"] = _three_replies(reply)
         assert not expectation_met(scenario, result), reply
 
 
@@ -405,7 +510,7 @@ def test_shared_activity_low_reciprocity_waits_while_warm_reciprocal_case_invite
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["パンケーキのお店、気になりますね。"],
+        "replies": _three_replies("パンケーキのお店、気になりますね。"),
     }
 
     assert expectation_met(weak, result)

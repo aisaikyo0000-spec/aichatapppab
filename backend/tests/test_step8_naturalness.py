@@ -50,7 +50,8 @@ def test_2_unsupported_inference_policy():
 def test_3_no_question_strategy():
     """Test 3: NO QUESTION が正式な戦略として許可されること。"""
     sysp = _sysp()
-    assert "逆質問は情報の確認や会話上の明確な目的がある場合だけ" in sysp
+    assert "会話を続けるためだけの質問は加えない" in sysp
+    assert "確認や会話上の目的があり、相手が答えやすい質問は使ってよい" in sysp
     replies = ["おつかれさまです", "それは疲れますね", "ゆっくり休んでください"]
     assert validate_candidate_replies(replies, 3) == []
 
@@ -70,7 +71,8 @@ def test_4_short_message_handling():
             counterpart_length_tier=tier,
             counterpart_length_chars=len(contact),
         )
-        assert "内容のある状態共有は、入力の短さだけを理由に同じ一言の労いへまとめない" in sysp
+        assert "短い入力というだけで内容のある状態共有を一言に縮めず" in sysp
+        assert "自然に完結するなら短く返す" in sysp
         assert "短い候補を必ず1案以上" not in sysp
 
 
@@ -127,7 +129,10 @@ def test_9_gold_style_preservation(client):
     assert prof["hierarchy_tier"] == "sparse_manual_gold_fallback"
     assert prof["same_contact_gold_samples"] == 1
     policy = style.to_learned_policy_prompt(prof)
-    assert "質問なし・短い返信も正常" in policy
+    assert "文量・構成の観測値" in policy
+    assert "中央値" in policy
+    assert "観測値です" in policy
+    assert "質問なし・短い返信も正常" not in policy
 
 
 def test_imperative_te_endings_are_complete_replies():

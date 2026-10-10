@@ -21,16 +21,19 @@ def test_question_optional_prompt_rules():
         conversation_ledger=ledger,
     )
 
-    # 1. HARD INVARIANTS 第9条は質問任意（質問なし返信は正常系）
-    assert "9. 質問は任意" in sysp
+    # 質問は回答内容に応じて選択し、質問なしで自然に終える選択肢も残す。
+    assert "【REPLY CONTENT CHOICE】" in sysp
+    assert "相手の明確な質問にはまず答える" in sysp
+    assert "質問なしで自然に終えるならそこで終え" in sysp
     assert "質問必須（絶対ルール）" not in sysp
     assert "3段構成" not in sysp
 
-    # 2. HARD INVARIANTS 第10条に文脈参照
-    assert "10. 会話継続・文脈参照" in sysp
+    # 会話履歴の文脈参照を維持する。
+    assert "10. 文脈参照" in sysp
+    assert "自然に終える場面では会話を続ける話題を足さない" in sysp
+    assert "会話を継続すること" not in sysp
 
-    # 3. OUTPUT CONTRACT 第4条は質問任意（旧「質問必須の絶対遵守」は存在しない）
-    assert "4. 質問は任意" in sysp
+    # 固定構成や質問の強制は存在しない。
     assert "質問必須の絶対遵守" not in sysp
     assert "質問を省いた案は不正" not in sysp
 

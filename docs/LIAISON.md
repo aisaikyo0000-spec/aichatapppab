@@ -3,9 +3,38 @@
 このファイルは ChatGPT との疎通専用です。作業者はここに報告を記載し、ChatGPT はこのファイルを読んで次の指示を出します。
 コード未完成の状態で commit しなくても、このファイルで状況共有できます。
 
-最終更新: 2026-10-10 / Contact Bench R27と条件監査を記録
+最終更新: 2026-10-10 / 最終返信確認・APIレート制限状況を追記
 
 ## 2026-10-10 最新状況
+
+### 最終確認後の最新状況（2026-10-10）
+
+- 生成返信を最終段階で確認し、明示的な会話終了後の再連絡約束と、候補群の大半が相手発言を言い換える問題を再現・修正した。時間表現の根拠不足ではvalidatorを緩めず、repair専用の修正指示を追加した。終了表現・質問・要回答連絡の優先順、一般的な「またね」と具体的な約束の区別も回帰テストで固定した。
+- 対象コードのfresh独立レビューは**PASS**。最新`python -m pytest backend/tests -q`は**1,588 passed / 2 warnings**。Frontend production build、Python compileall、`git diff --check`も**PASS**。警告は既存のFastAPI `on_event`非推奨通知。
+- 最新コードの正規70ケース実API検証は、**45/70件で停止**。エラーは`rate_limit_exhausted`。累計は44件分のみで、AI-like **0.100**、Context **0.631**、Human **0.904**、Conversation **0.965**。完走していないため、これらを70ケースの合否として扱わない。別途、先行版での70/70完走runはHuman **0.864**未達で、最新コードの合格根拠ではない。
+- 最終コードでb39/b44の選択実測を**2/2完了**。終了後に未提示の再連絡日程を加える候補は修復され、同じ話題をただ言い換える候補群も自然な反応へ置き換わった。これは2ケースの確認に限られ、70ケース全体を通過したことを意味しない。
+- 429ログでprimary `gemini-3.1-flash-lite`のレート制限を確認後、secondary `gemini-3.5-flash-lite`、secondary `gemini-3.1-flash-lite`へ順次切り替えたが、secondary側も429となり最終runが停止した。レート制限の種類・リセット時刻はAPI応答から特定できない。残りの実API試験は未実施で、現在のquota状態が変わるまで追加呼び出しを控える。
+- Contact Benchの最新完走artifactはA/Bのみ、Cは`candidate_validation_failed`で**未完了**。unsupported-time repair guidanceは追加したが、quota停止後の実API再試行はできていない。Tappleの前回14シナリオrunは全件生成されたものの、機械期待は**1/14**で、独立本文レビューもFAIL。最新コードでの再実行は未実施。
+- このためStep 18-R4は**未完成**。評価器・threshold・canonical 70ケースは変更していない。GitHub `main`への反映は行っていない。現在の作業branchと進捗記録はWIPとしてforkへ更新予定。
+
+### 2026-10-10 前回時点の記録（以下は最終確認前の履歴）
+
+- 一般返信の内容・文量・質問方針を正規ブロックに統合し、同一相手Goldの文体指示がsystem/user両方へ重複する経路を削除した。明示tone、事実安全性、Gold > same-contact > global、自然な会話終端は維持した。
+- Gemini 3.5 Flash Liteの以前のContact BenchはA/B/C計9返信まで完了したが、独立出力評価は**FAIL**。最新コードでの再実行はprimary `gemini-3.1-flash-lite`でA/B/Cの3/3完了。artifactは`manual_review_required` / `adaptation_pass: false`で、返信本文は未確認。独立レビューも保留している。
+- 正規70ケース実API回帰は**70/70完了・エラー0・92 LLM calls**（17ケース修復）。primary accountで69ケースが3.5、1ケースが3.1を使用。verifierはcase coverage / provenance / summary整合を通過したが、Human proxy **0.887**が固定threshold **0.900**未満のため**FAIL**。他の値はAI-like **0.058**、Context **0.628**、Conversation **0.979**、Questions **0.005**、Echo **0.101**でthreshold内。返信本文は未確認。
+- Tapple実API機械ベンチは14シナリオ中6件で停止。6件はprimary 3.1で返信生成、次のケースはHTTP 502 `candidate_validation_failed`。全14件の完了・期待判定には至らず、PASS扱いしない。返信本文は未確認。
+- 最新コード全体suiteは**1,561 passed / 2 warnings**、frontend production build、compileall、`git diff --check`は**PASS**。現在の差分に対する独立コードReviewerも**PASS**（生成返信本文は対象外）。
+- Contact Benchの最終返信集計を再計算し、Gold返信コピー検査を初回生成・repairに追加した。Tappleの一般的な活動希望、直近の誘いへの短い了承、話題変更後の古い誘いを区別する履歴判定も追加した。Tapple strategy suiteは**632 passed**。
+- 初回の独立コードレビューは、三案まとめての重複検査漏れと、「今週も」の根拠として「今週は」「今週中」を誤って許容する点を指摘して**FAIL**。両方を修正して回帰テストを追加した。freshな独立レビューとテスト差分レビューは**PASS**。評価基準やthresholdは変更していない。
+- 作業branchは`codex/chat-quality-20261008`。確認時のfork SHAは未コミット差分前の`68f7d2b`、GitHub `main`は`a75ba76`。Step 18-R4は未完了で、mainへの反映はしていない。
+
+### 2026-10-10 作業順の更新（返信本文の確認は最後）
+
+- ユーザー希望により、生成返信の読み込み・人手品質判定は最後の受け入れ段階まで保留する。現時点では返信内容を見ていない。前回完了した9返信Contact Benchの独立判定FAILは既知の未解決課題として残し、最新の再実行はAでhard validationに止まったため、品質比較には使わない。
+- 返信本文を確認せずに済む検証を先に実施した。`python -m pytest backend/tests -q` **1,561 passed / 2 warnings**、`frontend`の`npm run build`、Python `compileall`、`git diff --check`は**PASS**。評価コード・70ケース入力に差分なし。
+- 合成検索ベンチは6 query中5件に正解がありRecall@4 **1.0**、MRR **1.0**、Negative混入**0**、該当例なしのqueryへの返却**0**。小規模・手書きセットの動作確認に限り、実データ品質の根拠にはしない。Embedding比較と実Goldの人手評価は未完了で、本番方式は変更しない。
+- 生成・機械評価artifactはTEMP内に隔離し、返信本文は見ていない。次の最終段階でContact A/B/C、70ケースの代表/要確認例、Tappleの生成済み6件を人手確認し、必要な修正と再レビューを行う。Tappleの残り8件は、失敗原因を最終返信確認後に判断して再実行する。
+- Human proxyのthreshold未達、Contact adaptationのFAIL、Tapple incomplete、最終返信確認が残るためStep 18-R4は未完成。現在の作業treeは未commit・未pushで、GitHub `main`は`a75ba76`のまま。
 
 ### Step 18-R4 Contact Adaptation R21〜R26の再検証
 
@@ -651,6 +680,22 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - `python -m pytest backend/tests -q` **968 passed / 2 warnings**。第三者境界を含むTapple strategy tests **403 passed**。Gemini primary3.5→primary3.1→secondary3.5→secondary3.1のrate-limit切替テスト **45 passed**。frontend production build、Python compileall、benchmark `--help`、`git diff --check` **PASS**。独立Safety ReviewerとPython Reviewerはともに**PASS**
 - Gemini APIは未呼出し。朝の確認までは実キー疎通を保留する。実APIでの最新70ケース、Contact Bench 3/3、Tapple全11ケースの生成文と目視評価が残るため、最終判定は**未完成**。作業branchのWIPを更新し、upstream mainは変更しない
 
+## Step 18-R4 Contact Adaptation R29（2026-10-10、継続中）
+
+- 修復時に、確認できない継続性・負荷を削り、別の推測に置き換えない指示を追加した。独立レビューで感情共有時に理由を尋ねる余地が見つかったため、助言・意見を求められていない場合は理由や詳しい状況を尋ねない方針も復元した。本人Goldに同様の質問実績がある場合だけ、会話に合う質問を許容する。再現テストは修正前に失敗し、修正後にPASS
+- Gemini 3.5 Flash LiteのContact BenchでA/B/C計9返信の生成が完了。独立受け入れReviewerは**FAIL**。Aは短く砕けたが、BはGoldの文量傾向より短く、CはB寄りで中間の距離感が弱かった。返信の焦点も3相手とも労い・休息提案に偏った。質問がないこと自体はこの入力では問題なし
+- `python -m pytest backend/tests -q`: **1,555 passed / 2 warnings**。`frontend`の`npm run build`、`python -m compileall -q backend/app`、`git diff --check`も**PASS**。警告は既存のFastAPI `on_event`非推奨通知
+- R29の変更コードに対する独立Reviewerは、感情共有時の理由確認ルール欠落を指摘して**FAIL**。指摘箇所は修正したが、修正後のfresh code reviewは未完了。最新70ケース回帰、Tapple実生成、Contact Benchの改善確認も未実施
+- 検証はbackend/frontend/staticを並行実行し、実APIベンチは共有quotaとログを競合させないため単独実行した。作業branch `codex/chat-quality-20261008`、GitHub main基点 `a75ba76`。R29の変更と本記録は未commit・未push。Step 18-R4は**未完成**
+
+## 2026-10-10 非本文作業：Goldコピー・Tapple受諾境界
+
+返信本文の再確認を保留し、前回の独立レビューで見つかったコード上の問題を修正した。Contact Benchは修復前に却下した候補の集計を残さず、最終返信から集計値を再計算する。Gold返信と20文字以上の完全コピー・ごく近いコピーを検出し、短い定型表現は対象外にする。初回生成とrepairの両方で検査する。
+
+Tappleでは、最新の相手発言にある一般的な活動希望だけで日程調整を許可しない。直近の本人の誘いが会話履歴にあり、その後に別話題へ移っていない場合だけ、短い了承を受諾と扱う。相手が「ぜひ一緒に行きたい」と明確に伝えた場合は、本人からの誘いが先になくても日程調整へ進める。修正前に失敗する回帰テストを追加した。Tapple strategy **632 passed**、全backend **1,561 passed / 2 warnings**。Frontend build、Python compileall、`git diff --check`も**PASS**。fresh独立code reviewer **PASS**。
+
+今回はGemini APIを使わず、生成artifactも開いていない。前回の返信レビューはContact・70ケース・Tappleすべて**FAIL**のまま。修正後の実API再生成、返信本文の最終確認、Tappleの残りケース、資料とブランチの公開が残るためStep 18-R4は未完了・未push。評価器、閾値、canonical 70ケースに変更はない。
+
 ## 2026-10-09 評価・検索の原因分離（Iteration 1）
 
 - 既存70ケースの4軸は独立した人手評価ではなく、`naturalness`の語彙・パターン指標を`min`等でまとめた代理指標と確認した。語彙一致による偽陰性と、話題を一語繰り返すだけの偽陽性が記録されている。評価器・閾値・70ケースは変更せず、意味評価と送信可能性評価を別層にする
@@ -665,3 +710,10 @@ Contact Benchの「3/3」は、CLIの終了コードでは判定しない。`run
 - 変更コードの独立レビューは**PASS**。全backend suiteは当初**1 failed / 1,536 passed / 2 warnings**。失敗は質問ペースcueの配置変更後も旧表現をsystem prompt内に期待していたテストだった。文言のassertを外し、会話上の質問抑制を自然さ評価で確認する形へ直した。重複assertも除去。`test_step7_natural_conversation.py`と関連テストは**117 passed**、テスト差分の独立Pythonレビューも**PASS**。更新後の全suiteを再実行中
 - 既存条件の調査では、短文・質問なしを許容する指示が複数ブロックに繰り返される一方、相手別Styleは主に参考情報で、トーン加点も小さいことを確認した。これはR27の類似した文体に影響した可能性があるが、因果は未確定。次は事実安全性・Gold優先を保ち、短文/質問指示を一か所に整理する最小比較を行う
 - 更新後の全backend suiteは**1,537 passed / 2 warnings**、frontend production buildと`git diff --check`も**PASS**。Contact Benchは未達で、最新70ケースと全差分Reviewerは未完了。Step 18-R4は未完成。コード・資料のWIP commitは`1905286`。GitHub mainは変更していない
+
+## 2026-10-10 静的品質ゲート：文脈根拠と返信方針
+
+- workload validatorの過去時点と現在時点の否定を区別し、具体的な会議・食事抜きの根拠を個別評価する回帰テストを追加。単一手がかりの否定で別の肯定根拠まで捨てない。複数回の独立レビュー指摘に合わせて境界を修正し、最終レビュー **PASS**
+- 返信方針は会話内容・確認済み事実を先にし、Goldは主に口調・距離感・文量の調整に使う。感情共有への質問はGoldに同類例がなくても、会話上の目的があり相手が答えやすい場合に限り許可。相手の理由・詳細を詮索しない。通常返信と追いメッセージの優先順位テスト、プロンプト重複上限テストを維持
+- 最終コードの全backend suite **1,577 passed / 2 warnings**、frontend `npm run build` **PASS**。レビューで重複指示や過剰制約を見つけ、修正後再検証した。警告は既存FastAPI `on_event`非推奨
+- ユーザー希望により生成返信の人手確認は依然保留。今回の最終コードで70ケース・Contact・Tappleの実API再生成と本文レビューは未実施。以前の実API結果は不合格のまま保持し、合格扱いしない。Step 18-R4は未完成・未push

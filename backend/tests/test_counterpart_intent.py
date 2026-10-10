@@ -1,6 +1,6 @@
 """Step 3: 相手意図（counterpart_intent）の決定論的分類テスト。
 
-Intent 6種: question / invitation / answer_required / emotional_share / reaction / report。
+Intent 7種: question / invitation / answer_required / closing / emotional_share / reaction / report。
 優先順位: question > invitation > answer_required > emotional_share > reaction > report。
 """
 from __future__ import annotations
@@ -39,6 +39,34 @@ def test_5_emotional_share():
 def test_6_answer_required():
     """Test 6: 疑問符なしの要回答連絡は answer_required。"""
     assert prompt.classify_counterpart_intent("明日は14時集合ね") == "answer_required"
+
+
+def test_explicit_conversation_closure_has_a_distinct_intent_and_policy():
+    text = "今日はこのへんで"
+    assert prompt.classify_counterpart_intent(text) == "closing"
+
+    ledger = prompt.build_conversation_state_ledger(
+        [{"sender": "contact", "content": text}], condition=""
+    )
+    assert ledger["counterpart_intent"] == "closing"
+
+    system_prompt = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text=f"相手: {text}",
+        conversation_ledger=ledger,
+    )
+    assert "【COUNTERPART INTENT】\nclosing" in system_prompt
+    assert "新しい話題・質問・連絡時期の約束を足さず" in system_prompt
+
+
+def test_answer_required_precedes_a_closing_cue_in_the_same_message():
+    assert prompt.classify_counterpart_intent("了解、また連絡するね") == "answer_required"
+    assert prompt.classify_counterpart_intent("今日はありがとう、明日は14時集合ね") == "answer_required"
+
+
+def test_combined_future_contact_phrase_is_classified_as_closing():
+    assert prompt.classify_counterpart_intent("また明日連絡するね") == "closing"
 
 
 def test_priority_question_over_invitation():
@@ -117,8 +145,8 @@ def test_prompt_contains_intent_question():
 
 
 def test_prompt_contains_all_intent_policies():
-    """全6 Intent の方針文が定義され、Prompt に反映できること。"""
-    for intent in ("question", "invitation", "answer_required", "report", "reaction", "emotional_share"):
+    """全Intentの方針文が定義され、Prompt に反映できること。"""
+    for intent in ("question", "invitation", "answer_required", "closing", "report", "reaction", "emotional_share"):
         sysp = prompt.build_system_prompt(
             contact={"name": "相手", "profile": ""},
             condition="",
@@ -142,6 +170,7 @@ def test_e2e_intent_flows_into_context_and_prompt(client):
         ("明日何時にする？", "question"),
         ("今度一緒に行こうよ", "invitation"),
         ("今日ちょっと嫌なことあってさ", "emotional_share"),
+        ("今日はこのへんで", "closing"),
     ]
     for idx, (text, want) in enumerate(cases):
         cid = client.post("/api/contacts", json={"name": f"意図相手{idx}", "profile": ""}).json()["id"]
@@ -180,3 +209,79 @@ def test_e2e_generate_with_intent_report_short_reply(client, monkeypatch):
     r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
     assert r.status_code == 200
     assert len(r.json()["replies"]) == 3
+
+
+def test_e2e_generate_preserves_answer_to_direct_question(client, monkeypatch):
+    """生成APIが、providerの直接質問への回答を送信候補として保持する。"""
+    cid = client.post("/api/contacts", json={"name": "予定確認相手", "profile": ""}).json()["id"]
+    client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": "明日何時にする？"})
+    expected_replies = [
+        "明日14時で大丈夫だよ！",
+        "14時くらいでどうかな？",
+        "明日なら14時に行けるよ！",
+    ]
+
+    class AnsweringProvider:
+        name = "answering_fake"
+
+        def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
+            prompt_text = "".join(m.get("content", "") for m in messages)
+            assert "相手の質問への回答を最優先" in prompt_text
+            assert "明日何時にする？" in prompt_text
+            return json.dumps({"replies": expected_replies})
+
+        def available_models(self):
+            return []
+
+    monkeypatch.setattr("app.routers.generation.factory.get_provider", lambda *a, **k: AnsweringProvider())
+    monkeypatch.setattr("app.routers.generation.get_ai_config", lambda: {
+        "provider": "answering_fake", "model": "fake-model", "api_key": "x",
+        "temperature": 0.8, "max_tokens": 512, "history_limit": 50,
+    })
+
+    response = client.post(
+        "/api/generate",
+        json={"contact_id": cid, "condition": "明日14時で大丈夫", "candidates": 3},
+    )
+
+    assert response.status_code == 200
+    replies = response.json()["replies"]
+    assert len(replies) == 3
+    assert all("14時" in reply for reply in replies)
+
+
+def test_e2e_generate_keeps_substantive_emotional_share_reply(client, monkeypatch):
+    """短い感情共有への具体的な受け止めが、生成APIで定型一言に潰れない。"""
+    cid = client.post("/api/contacts", json={"name": "感情共有相手", "profile": ""}).json()["id"]
+    incoming = "最近仕事が忙しくて休めてなくて、ちょっとしんどい"
+    client.post(f"/api/contacts/{cid}/messages", json={"sender": "contact", "content": incoming})
+    candidate = "休めない日が続くのはしんどいね…\n少しでも休める時間が取れるといいね"
+
+    class EmpatheticProvider:
+        name = "empathetic_fake"
+
+        def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
+            prompt_text = "".join(m.get("content", "") for m in messages)
+            assert "【COUNTERPART INTENT】\nemotional_share" in prompt_text
+            assert incoming in prompt_text
+            return json.dumps({"replies": [candidate, "忙しいのが続くとつらいよね…少しでも休めるといいね", "それはしんどいね！無理しすぎないでね"]})
+
+        def available_models(self):
+            return []
+
+    monkeypatch.setattr("app.routers.generation.factory.get_provider", lambda *a, **k: EmpatheticProvider())
+    monkeypatch.setattr("app.routers.generation.get_ai_config", lambda: {
+        "provider": "empathetic_fake", "model": "fake-model", "api_key": "x",
+        "temperature": 0.8, "max_tokens": 512, "history_limit": 50,
+    })
+
+    response = client.post(
+        "/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3}
+    )
+
+    assert response.status_code == 200
+    replies = response.json()["replies"]
+    assert len(replies) == 3
+    assert replies[0] == candidate
+    assert "休めない日が続く" in replies[0]
+    assert "しんどい" in replies[0]

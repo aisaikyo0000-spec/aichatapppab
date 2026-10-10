@@ -12,6 +12,7 @@ from app.routers.generation import (
     _is_tapple_private_place_proposal,
     _parse_replies_strict,
     _parse_tapple_strategy as _parse_tapple_strategy_messages,
+    _build_safe_tapple_fallback_strategy,
     _tapple_strategy_output_violations,
     _unqualified_tapple_decline_matches,
     validate_candidate_replies,
@@ -82,7 +83,7 @@ def test_tapple_system_and_generation_prompts_share_one_compatible_json_contract
         assert '"replies"' in message["content"]
         assert '出力は必ず JSON形式の {"replies": ["案1の返信文章"' not in message["content"]
         assert '"invite_example":null' in message["content"]
-        assert "strategyは任意のトップレベル項目" in message["content"]
+        assert "strategyは必須" in message["content"]
         assert "invite_exampleはinvite時のみ文字列" in message["content"]
 
 
@@ -159,7 +160,7 @@ def test_tapple_prompts_require_a_safe_example_for_invite():
     assert "具体的な店名や日時を会話にないのに作らない" in initial_text
     assert "invite_exampleの文面にも駅前やカフェなど公共の場所だと分かる表現" in initial_text
     assert '"invite_example":null' in initial_text
-    assert "strategyは任意のトップレベル項目" in initial_text
+    assert "strategyは必須" in initial_text
     assert "invite_exampleはinvite時のみ文字列" in initial_text
 
     repair = _build_repair_messages(
@@ -183,7 +184,7 @@ def test_tapple_prompts_require_a_safe_example_for_invite():
     assert "会話にない自分の体験・予定・意向を事実として足さない" in repair_text
     assert "inviteを基本方針として選んでください" in repair_text
     assert '"invite_example":null' in repair_text
-    assert "strategyは任意のトップレベル項目" in repair_text
+    assert "strategyは必須" in repair_text
     assert '"invite_example":"安全な公共の場所を使った低圧な誘い方の例"' not in repair_text
 
 
@@ -4765,7 +4766,8 @@ def test_strategy_is_omitted_when_final_replies_are_replaced_by_safe_clarificati
 
     assert response.status_code == 200, response.text
     assert response.json()["replies"] == ["何の話だったっけ？"]
-    assert "strategy" not in response.json()
+    assert response.json()["strategy"]["action"] == "wait"
+    assert response.json()["strategy"]["evidence"] == [statement]
 
 
 def test_malformed_or_missing_strategy_does_not_break_reply_parsing():
@@ -4803,6 +4805,20 @@ def test_accepted_prior_invitation_is_scheduling_not_a_second_invitation():
     assert result.invite_example is None
 
 
+def test_invalid_strategy_fallback_preserves_accepted_invitation_state():
+    conversation = [
+        {"sender": "contact", "content": "コーヒー好きです"},
+        {"sender": "self", "content": "今度、駅前のカフェに一緒に行きませんか？"},
+        {"sender": "contact", "content": "ぜひ一緒に行きたいです！"},
+    ]
+
+    result = _build_safe_tapple_fallback_strategy(conversation)
+
+    assert result is not None
+    assert result.action == "continue"
+    assert result.evidence == ["ぜひ一緒に行きたいです！"]
+
+
 def test_wait_action_rejects_an_implicit_joint_invitation_in_replies():
     violations = validate_candidate_replies(
         ["そうなんですよ！ぜひ今度行ってみましょう"],
@@ -4816,6 +4832,63 @@ def test_wait_action_rejects_an_implicit_joint_invitation_in_replies():
     assert any("誘い" in violation for violation in violations)
 
 
+@pytest.mark.parametrize("action", ["wait", "continue"])
+def test_non_invite_action_does_not_dismiss_ambiguous_activity_interest_with_solo_advice(action):
+    violations = validate_candidate_replies(
+        ["もし機会があればぜひ行ってみてください"],
+        1,
+        strategy_mode="tapple",
+        tapple_action=action,
+        counterpart_message="カフェいいですね！行ってみたいな。",
+    )
+
+    assert any("一人で行くよう勧め" in violation for violation in violations)
+
+
+def test_ambiguous_interest_does_not_create_a_personal_visit_plan():
+    history = [
+        {"sender": "self", "content": "駅前に気になるカフェができたみたいです"},
+        {"sender": "contact", "content": "カフェいいですね！行ってみたいな。"},
+    ]
+    violations = validate_candidate_replies(
+        ["近いうちに行ってみるつもりです"],
+        1,
+        counterpart_message=history[-1]["content"],
+        conversation_messages=history,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("本人の活動予定" in violation for violation in violations)
+
+    unanchored_history = [
+        {"sender": "contact", "content": "カフェいいですね！"},
+    ]
+    unanchored_violations = validate_candidate_replies(
+        ["カフェに行こうと思ってます"],
+        1,
+        counterpart_message=unanchored_history[-1]["content"],
+        conversation_messages=unanchored_history,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+    assert any("本人の活動予定" in violation for violation in unanchored_violations)
+
+    grounded_history = [
+        {"sender": "self", "content": "今度カフェに行ってみようと思ってます"},
+        {"sender": "contact", "content": "カフェいいですね！行ってみたいな。"},
+    ]
+    grounded_violations = validate_candidate_replies(
+        ["近いうちに行ってみるつもりです"],
+        1,
+        counterpart_message=grounded_history[-1]["content"],
+        conversation_messages=grounded_history,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+    assert not any("本人の活動予定" in violation for violation in grounded_violations)
+
+
 def test_tapple_prompt_requires_strategy_and_action_consistent_replies():
     messages = prompt.build_initial_generation_messages(
         system_prompt="system",
@@ -4827,3 +4900,39 @@ def test_tapple_prompt_requires_strategy_and_action_consistent_replies():
     assert "strategyは必須" in instruction
     assert "waitまたはstop" in instruction
     assert "返信候補も会う提案を含めない" in instruction
+    assert "一緒に行く意思は不明" in instruction
+    assert "相手が挙げた活動や話題に直接つながる返信" in instruction
+    assert "店の雰囲気を知っているように述べず" in instruction
+    assert "一人で行くよう勧めたり" in instruction
+    assert "既知の関心を一度だけ共有" in instruction
+
+
+def test_accepted_invitation_replies_advance_to_logistics_without_reinviting():
+    conversation = [
+        {"sender": "contact", "content": "コーヒー好きです"},
+        {"sender": "self", "content": "今度、駅前のカフェに一緒に行きませんか？"},
+        {"sender": "contact", "content": "ぜひ一緒に行きたいです！"},
+    ]
+    unadvanced = validate_candidate_replies(
+        ["ぜひ行きましょう！", "ありがとうございます！", "楽しみです！"],
+        3,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        conversation_messages=conversation,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+    advanced = validate_candidate_replies(
+        [
+            "うれしい！いつ頃が都合よさそう？",
+            "いいね！日程はまた相談しよう",
+            "楽しみ！予定合わせていこうね",
+        ],
+        3,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        conversation_messages=conversation,
+        strategy_mode="tapple",
+        tapple_action="continue",
+    )
+
+    assert any("日程調整" in violation for violation in unadvanced)
+    assert not any("日程調整" in violation for violation in advanced)

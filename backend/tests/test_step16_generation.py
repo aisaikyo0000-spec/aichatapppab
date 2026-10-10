@@ -84,9 +84,10 @@ def test_candidate_roles_guidance():
         condition="",
         chat_history_text="相手: 今日疲れた",
     )
-    assert "案の順序によって役割を固定しない" in sysp
+    assert "【REPLY CONTENT CHOICE】" in sysp
+    assert "自然に異なる焦点がある場合だけ分ける" in sysp
     assert "案1は最も自然で短い反応" not in sysp
-    assert "固定パターンは禁止" in sysp
+    assert "案1=短いリアクション" not in sysp
 
 
 def test_question_budget_guideline():

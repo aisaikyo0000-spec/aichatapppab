@@ -103,6 +103,7 @@ class StyleProfile:
     tame_ratio: float = 0.1
     # 記号・絵文字・笑
     period_ratio: float = 0.05
+    comma_ratio: float = 0.0
     exclamation_ratio: float = 0.8
     question_ratio: float = 0.5
     question_free_ratio: float = 0.5
@@ -155,6 +156,7 @@ def compute_style_metrics(texts: list[str]) -> StyleProfile:
 
     # 記号・絵文字
     period_count = sum(1 for t in texts if "。" in t)
+    comma_count = sum(1 for t in texts if "、" in t)
     excl_count = sum(1 for t in texts if "！" in t or "!" in t)
     q_count = sum(1 for t in texts if "？" in t or "?" in t)
     laugh_count = sum(1 for t in texts if LAUGH_MARKER_PATTERN.search(t))
@@ -199,6 +201,7 @@ def compute_style_metrics(texts: list[str]) -> StyleProfile:
         hybrid_ratio=round(hybrid_count / n, 2),
         tame_ratio=round(tame_count / n, 2),
         period_ratio=round(period_count / n, 2),
+        comma_ratio=round(comma_count / n, 2),
         exclamation_ratio=round(excl_count / n, 2),
         question_ratio=round(q_count / n, 2),
         question_free_ratio=round(1.0 - (q_count / n), 2),
@@ -378,13 +381,12 @@ def infer_contact_tone(hierarchical: dict[str, Any], requested_tone: str = "") -
 
 
 def to_learned_policy_prompt(
-    hierarchical: dict[str, Any], *, suppress_question_rate: bool = False
+    hierarchical: dict[str, Any],
 ) -> str:
     """階層プロファイルからプロンプト用ポリシーブロックを生成する。"""
     p: StyleProfile = hierarchical.get("active_profile", StyleProfile())
     tier = hierarchical.get("hierarchy_tier", "global")
     sample_count = p.sample_count
-    same_contact_gold_samples = int(hierarchical.get("same_contact_gold_samples", 0) or 0)
 
     # 少数比率でも一方に決めつけず、混在傾向をそのまま表す。
     if p.keigo_ratio >= 0.65:
@@ -399,32 +401,30 @@ def to_learned_policy_prompt(
             f"（敬語{int(p.keigo_ratio*100)}%・混合{int(p.hybrid_ratio*100)}%・タメ口{int(p.tame_ratio*100)}%）"
         )
 
-    punct_desc = "句点『。』はほぼ使わず" if p.period_ratio < 0.2 else "適度に句点『。』を使用し"
+    punct_desc = (
+        "読点『、』と句点『。』はほぼ使わず"
+        if p.comma_ratio < 0.2 and p.period_ratio < 0.2
+        else "読点『、』や句点『。』も自然な範囲で使い"
+    )
     laugh_desc = f"『笑』の使用率約{int(p.laugh_ratio*100)}%"
     emoji_desc = f"1通あたり平均{p.emoji_avg_count}個（頻出: {' '.join(p.frequent_emojis)}）"
     contact_adaptation = ""
-    contact_length_guidance = ""
     if tier == "same_contact_recent_manual_gold":
         contact_adaptation = (
             f"- 同一相手Gold: {hierarchical.get('same_contact_gold_samples', 0)}件の本人手入力傾向を"
             f"Global Goldへ段階的に反映（重み{hierarchical.get('contact_adaptation_weight', 0):.2f}）。\n"
         )
-        if same_contact_gold_samples >= 5:
-            contact_length_guidance = (
-                " 同一相手Goldが十分ある場合は短さを一律に優先せず、"
-                "今回の内容に必要な返信量をその文量分布に合わせる。"
-            )
 
     return (
         f"【LEARNED USER RESPONSE POLICY】\n【USER LEARNED STYLE PROFILE】（採用階層: {tier} / 学習サンプル数: {sample_count}件）\n"
         f"ユーザー本人が実際に送信してきたメッセージ実績から抽出した文体・構造ポリシーです。\n"
         f"{contact_adaptation}"
         f"- 口調・トーン: {tone_desc}\n"
-        f"- 文量・構成: 1通あたり中央値{p.char_median}文字（IQR: {p.char_p25}〜{p.char_p75}文字）、中央値{p.line_median}行・{p.sent_median}文。{contact_length_guidance}\n"
+        f"- 文量・構成の観測値: 1通あたり中央値{p.char_median}文字（IQR: {p.char_p25}〜{p.char_p75}文字）、中央値{p.line_median}行・{p.sent_median}文。\n"
         f"- 記号・絵文字: {punct_desc}、『！』を多用。{laugh_desc}。絵文字は{emoji_desc}\n"
-        f"- 会話構造: 相手の発言への自然な反応を最優先し、質問・深掘り・自己開示は会話上の意味があり相手が答えやすい場合に使う。会話を続けるためだけの質問はしない。質問なし・短い返信も正常だが、返信量は本人実績の文量分布と現在の内容から決める。一人称は『{p.first_person}』。相手の名前が履歴や設定で確認でき、呼ぶのが自然な場合だけ名前を使い、未確認の名前や呼びかけは作らない。\n"
+        f"- 一人称の観測値: 『{p.first_person}』。相手の名前は履歴や設定で確認でき、呼ぶのが自然な場合だけ使う。\n"
         f"- 避ける表現: 会話の相手に向けた返信として形式的すぎる引用・説明口調。特定の語句を一律に禁止せず、会話とのつながりを見て自然な表現を選ぶ。\n"
-        f"- 基本姿勢: 固定された画一ルールではなく、本人の実際の実績スタイル・テンポを最上位の正解として反映すること"
+        f"- このプロファイルは本人の送信実績から算出した観測値です。"
     )
 
 
@@ -447,13 +447,11 @@ def build_same_contact_gold_pairs_block(contact_id: int, limit: int = 10) -> str
 def build_relationship_summary(
     contact_id: int | None,
     requested_tone: str = "",
-    *,
-    suppress_question_guidance: bool = False,
 ) -> str:
     """同一相手への返信距離感サマリー（Step 18）。観測特徴のみを記述し、関係ラベルは付けない。
 
     Same-contact Gold（手入力実績）から本人がその相手へ返すときの距離感・温度感・
-    フォーマル度・文量・質問率を観測し、短い抽象ブロックとして返す。相手の文体を
+    フォーマル度・文量を観測し、短い抽象ブロックとして返す。相手の文体を
     コピーするためのものではなく、本人の返信特徴を学習するためのもの。
     実績0件時は空文字（Global へ fallback）。少数時は参考程度と明記する。
     """
@@ -475,17 +473,6 @@ def build_relationship_summary(
         formality = "丁寧"
     else:
         formality = "丁寧さと砕け具合が混在"
-    tone_balance_guidance = ""
-    if n >= 5 and prof.hybrid_ratio + prof.tame_ratio >= 0.45 and prof.hybrid_ratio >= prof.tame_ratio + 0.08:
-        tone_balance_guidance = (
-            "自動口調では本人Goldの混合スタイルを基本にし、一般的な敬語だけの表現へ一律に寄せない。"
-            "内容や場面に合う範囲で丁寧さと本人らしい会話調を混ぜる。比率や候補数は固定しない。"
-        )
-    elif n >= 5 and prof.hybrid_ratio + prof.tame_ratio >= 0.45 and prof.tame_ratio >= prof.hybrid_ratio + 0.08:
-        tone_balance_guidance = (
-            "自動口調では本人Goldの砕けた会話調を基本にし、一般的な丁寧語だけへ一律に寄せない。"
-            "内容や場面に合う丁寧さは保ちつつ、無理な口調変化や比率・候補数の固定は避ける。"
-        )
     # 温度感（笑・絵文字・感嘆符の観測値から。名前による固定なし）
     warm_score = prof.laugh_ratio + min(prof.emoji_avg_count, 2.0) / 2.0 + prof.exclamation_ratio
     if warm_score >= 1.2:
@@ -504,81 +491,27 @@ def build_relationship_summary(
         brevity = "Global Goldより相対的に短め"
     else:
         brevity = "Global Goldと同程度"
-    length_guidance = ""
-    if n >= 5:
-        length_guidance = (
-            "本人Goldの文量分布を今回の返信量に反映する。相手の発言内容とGoldの返信例から必要な厚みを選び、"
-            "状態や気持ちの共有には短い労いだけで毎回終えず、今回の内容に沿う感想・共感も検討する。"
-            "短い挨拶・受領・終了は簡潔でよい。確認できない行動や結果を足さず、相手の発言を言い換えて水増ししたりしない。質問で長さを作らない。"
-            "固定文字数・Gold語句のコピーはしない。"
-        )
-    if n >= 5 and 0.45 <= prof.laugh_ratio < 0.85:
-        length_guidance += (
-            "笑い表現の頻度は候補全体の参考にとどめ、Goldの頻度感を自然な範囲で反映する。"
-            "文脈に合わない案や候補数の調整目的で笑を足さない。"
-        )
-    if n >= 6 and global_gold.sample_count >= 5 and length_delta >= 5:
-        relative_length = (
-            "かなり長め"
-            if prof.char_median >= global_gold.char_median * 1.4
-            else "長め"
-        )
-        length_guidance += (
-            f"Global Goldより{relative_length}に返す傾向がある。Goldの文量分布も参考にする。今回の内容に必要な返信量を選ぶ。"
-        )
-    if length_guidance:
-        length_guidance += "候補間で自然な違いが作れる場合だけ反応の焦点を変え、似た案が自然なら無理に変えない。"
-    confidence = f"（この相手の手入力Gold {n}件をGlobal Goldに段階的に反映）"
+    confidence = f"（同一相手Gold {n}件。推定はGlobal Goldへ段階的に反映）"
     tone_guidance = ""
     explicit_tone_label = {"keigo": "敬語", "hybrid": "ハイブリッド", "tame": "タメ口"}.get(
         requested_tone
     )
     if explicit_tone_label:
-        tone_balance_guidance = ""
         tone_guidance = (
-            f"今回の明示トーン指定（{explicit_tone_label}）を最優先し、"
-            "相手別の混在傾向を理由に別の口調を混ぜない。"
+            f"明示トーン指定（{explicit_tone_label}）が最優先。相手別の傾向はこの指定を変えない。"
         )
-    elif formality == "丁寧さと砕け具合が混在":
+    elif n < 5:
         tone_guidance = (
-            f"丁寧・混合・砕けた文体の実績比率は{int(prof.keigo_ratio * 100)}%・{int(prof.hybrid_ratio * 100)}%・{int(prof.tame_ratio * 100)}%。"
-            "この比率は候補数の目標ではなく、今回の話題に自然な本人らしさを選ぶ参考にする。"
+            f"同一相手Gold {n}件の口調傾向は暫定。Global Goldを基準にする。"
         )
-        if n < 5:
-            tone_guidance += (
-                "同一相手Goldが3〜4件のため、これはまだ暫定的な傾向です。"
-                "Global Goldの口調を基準にし、この少数例だけを理由に距離感を切り替えないでください。"
-            )
-        elif prof.hybrid_ratio + prof.tame_ratio >= 0.45 and prof.hybrid_ratio >= prof.tame_ratio + 0.08:
-            tone_guidance += (
-                "自動口調ではGoldの混合スタイルを基本にし、一般的な敬語だけの候補群へ一律に寄せない。"
-                "場面に合う範囲で丁寧さと本人らしい会話調を混ぜる。無理な口調変更や比率の固定はしない。"
-                "笑や絵文字だけでは口調適応と見なさない。"
-            )
-        elif prof.hybrid_ratio + prof.tame_ratio >= 0.45 and prof.tame_ratio >= prof.hybrid_ratio + 0.08:
-            tone_guidance += (
-                "自動口調ではGoldの砕けた会話調を基本にし、候補群を一律の敬語にそろえない。"
-                "内容に合う丁寧さは保ち、無理な口調変更や比率の固定はしない。笑や絵文字だけでは口調適応と見なさない。"
-            )
-        elif prof.hybrid_ratio + prof.tame_ratio >= 0.45:
-            tone_guidance += (
-                "自動口調ではGoldにある丁寧さと会話調の混ざり方を基本にする。"
-                "候補群を一般的な敬語だけにそろえず、特定の案数や比率は目標にしない。"
-                "笑や絵文字だけでは口調適応と見なさない。"
-            )
-        else:
-            tone_guidance += (
-                "Goldに会話調の実績がある場合は、今回の話題に合う範囲でその距離感も候補に反映する。"
-            )
-        tone_guidance += (
-            "事務連絡や深刻な話題など砕けると不自然な場面では無理に崩さず、"
-            "同じ丁寧さの言い換えだけで3案を埋めない。"
+    else:
+        tone_guidance = (
+            "十分な同一相手Goldの傾向はGlobal Goldより優先する補助情報だが、本人Gold実例と現在の文脈を優先する。"
         )
-    question_guidance = "質問は会話上必要な場合だけ使う。"
     return (
         f"＜この相手への返信距離感＞{confidence}\n"
         f"- 距離感: {formality}・{warmth}（笑い{'多め' if prof.laugh_ratio >= 0.3 else '少なめ'}・{brevity}）。"
-        f"同一相手Goldの文量中央値は{prof.char_median}字、Global Goldは{global_gold.char_median}字。{length_guidance}"
-        f"{tone_guidance}{tone_balance_guidance}返信の長さはこの差も参考にしつつ、現在の会話内容に合う範囲で決めること。"
-        f"本人のGold実例と現在の会話内容を優先し、{question_guidance}"
+        f"同一相手Goldの文量中央値は{prof.char_median}字、Global Goldは{global_gold.char_median}字。"
+        f"口調の観測（丁寧・混合・砕けた）は{int(prof.keigo_ratio * 100)}%・"
+        f"{int(prof.hybrid_ratio * 100)}%・{int(prof.tame_ratio * 100)}%。{tone_guidance}"
     )

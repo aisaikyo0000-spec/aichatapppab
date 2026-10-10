@@ -84,7 +84,8 @@ def test_6_no_forced_long_for_short_input():
         counterpart_length_tier="short",
         counterpart_length_chars=2,
     )
-    assert "内容のある状態共有は、入力の短さだけを理由に同じ一言の労いへまとめない" in sysp
+    assert "短い入力というだけで内容のある状態共有を一言に縮めず" in sysp
+    assert "自然に完結するなら短く返す" in sysp
     assert "短い候補を必ず1案以上" not in sysp
     # 固定ルール（必ず○文・最低○文字）がないこと
     assert "必ず3文" not in sysp
@@ -99,8 +100,8 @@ def test_7_no_forced_diversity():
         condition="",
         chat_history_text="相手: 今日バイト8時間だった",
     )
-    assert "意味のある違いがある場合だけ違わせる" in sysp
-    assert "固定パターンは禁止" in sysp
+    assert "自然に異なる焦点がある場合だけ分ける" in sysp
+    assert "内容や長さ、質問の有無を機械的に変えない" in sysp
 
 
 def test_8_question_candidates_allowed_when_needed():

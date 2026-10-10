@@ -27,6 +27,9 @@ from benchmark_config import (  # noqa: E402
 from benchmark_response import benchmark_run_state, extract_api_error_code  # noqa: E402
 
 
+TAPPLE_BENCHMARK_CANDIDATES = 3
+
+
 SCENARIOS = (
     {
         "id": "explicit_interest",
@@ -356,12 +359,26 @@ def _evaluate_result(scenario: dict, result: dict) -> list[str]:
     replies = result.get("replies")
     if (
         not isinstance(replies, list)
-        or len(replies) != 1
-        or not isinstance(replies[0], str)
-        or not replies[0].strip()
+        or len(replies) != TAPPLE_BENCHMARK_CANDIDATES
+        or any(not isinstance(reply, str) or not reply.strip() for reply in replies)
     ):
         failures.append("missing_or_invalid_reply")
-        replies = []
+        replies = (
+            [reply for reply in replies if isinstance(reply, str) and reply.strip()]
+            if isinstance(replies, list)
+            else []
+        )
+    if len(replies) == TAPPLE_BENCHMARK_CANDIDATES:
+        set_violations = generation.validate_candidate_replies(
+            replies,
+            TAPPLE_BENCHMARK_CANDIDATES,
+            counterpart_message=latest_contact,
+            conversation_messages=conversation_messages,
+            strategy_mode="tapple",
+            tapple_action=action,
+        )
+        if set_violations:
+            failures.append("reply_validation_failed")
     for reply in replies:
         if scenario.get("no_follow_up_questions") and _FOLLOW_UP_QUESTION_RE.search(reply):
             failures.append("follow_up_question_not_allowed")
@@ -601,7 +618,7 @@ def main() -> int:
                     json={
                         "contact_id": contact_id,
                         "condition": "",
-                        "candidates": 1,
+                        "candidates": TAPPLE_BENCHMARK_CANDIDATES,
                         "strategy_mode": "tapple",
                         "tone": args.tone,
                     },

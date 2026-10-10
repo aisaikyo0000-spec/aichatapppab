@@ -114,7 +114,8 @@ class GeminiProvider(AIProvider):
                 )
 
             body_text = resp.text or ""
-            logger.info("Gemini API response: status=%d, body=%s", resp.status_code, body_text[:500])
+            # Response bodies may include prompts, personal messages, or generated replies.
+            logger.info("Gemini API response: status=%d", resp.status_code)
 
             try:
                 return self._parse_response(resp, body_text)
@@ -174,7 +175,7 @@ class GeminiProvider(AIProvider):
                     code="rate_limit",
                 )
             raise AIError(
-                f"AI APIエラーが発生しました。(HTTP {resp.status_code}) {body_text[:200]}",
+                f"AI APIエラーが発生しました。(HTTP {resp.status_code})",
                 code="provider_error",
             )
 
@@ -191,7 +192,7 @@ class GeminiProvider(AIProvider):
                     code="rate_limit",
                 )
             if error_msg:
-                logger.warning("Gemini API error in response body: %s", error_msg)
+                raise AIError("Gemini APIからエラーが返されました。", code="provider_error")
 
         try:
             content = data["choices"][0]["message"]["content"]

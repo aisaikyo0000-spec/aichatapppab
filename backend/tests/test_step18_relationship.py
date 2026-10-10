@@ -74,6 +74,22 @@ def _seed_accepted_generation(cid: int, text: str = "いいですね笑") -> Non
         conn.close()
 
 
+def _build_messages_with_contact_summary(
+    summary: str, *, history: str = "相手: 今日は仕事だった", mode: str = "normal"
+) -> list[dict[str, str]]:
+    system_prompt = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        same_contact_gold_samples=8,
+        same_contact_reply_style_block=summary,
+    )
+    return generation._build_initial_generation_messages(
+        {"system_prompt": system_prompt, "chat_text": history},
+        mode=mode,
+        candidates=3,
+        strategy_mode="normal",
+    )
+
+
 TAME_PAIRS = [
     ("今日暇だった", "いいなー笑"),
     ("眠い", "わかるよ笑"),
@@ -127,7 +143,8 @@ def test_relationship_summary_keigo_contact(client):
     block = style.build_relationship_summary(cid)
     assert "丁寧" in block
     assert "5件" in block
-    assert "本人Goldの文量分布を今回の返信量に反映する" in block
+    assert "同一相手Goldの文量中央値は" in block
+    assert "Global Goldは" in block
 
 
 def test_relationship_summary_keeps_mixed_contact_tone_mixed(client):
@@ -143,10 +160,9 @@ def test_relationship_summary_keeps_mixed_contact_tone_mixed(client):
     summary = style.build_relationship_summary(cid)
 
     assert "丁寧さと砕け具合が混在" in summary
-    assert "本人Goldの混合スタイルを基本" in summary
-    assert "場面に合う範囲で丁寧さと本人らしい会話調を混ぜる" in summary
-    assert "比率や候補数は固定しない" in summary
-    assert "笑や絵文字だけでは口調適応と見なさない" in summary
+    assert "十分な同一相手Goldの傾向はGlobal Goldより優先する補助情報" in summary
+    assert "本人Gold実例と現在の文脈を優先" in summary
+    assert "口調の観測（丁寧・混合・砕けた）は" in summary
 
 
 def test_relationship_summary_distinguishes_hybrid_and_more_casual_gold(client):
@@ -172,8 +188,10 @@ def test_relationship_summary_distinguishes_hybrid_and_more_casual_gold(client):
         _seed_gold(client, "会話調が多い相手", casual_pairs)
     )
 
-    assert "本人Goldの混合スタイルを基本" in hybrid_summary
-    assert "本人Goldの砕けた会話調を基本" in casual_summary
+    assert "丁寧さと砕け具合が混在" in hybrid_summary
+    assert "砕けた・" in casual_summary
+    assert "口調の観測（丁寧・混合・砕けた）は" in hybrid_summary
+    assert "口調の観測（丁寧・混合・砕けた）は" in casual_summary
 
 
 def test_relationship_summary_includes_mixed_tone_guidance_below_old_threshold(client):
@@ -184,7 +202,8 @@ def test_relationship_summary_includes_mixed_tone_guidance_below_old_threshold(c
 
     assert "丁寧さと砕け具合が混在" in summary
     assert "本人Goldでは砕けた会話調がやや多い" not in summary
-    assert "一般的な丁寧語だけへ一律に寄せない" in summary
+    assert "暫定傾向" not in summary
+    assert "Global Goldより優先する補助情報" in summary
     assert "3案中少なくとも2案を敬語だけで終わらせず" not in summary
 
 
@@ -200,7 +219,7 @@ def test_explicit_tone_overrides_mixed_contact_tone_guidance(client):
 
     summary = style.build_relationship_summary(cid, requested_tone="keigo")
 
-    assert "明示トーン指定（敬語）を最優先" in summary
+    assert "明示トーン指定（敬語）が最優先" in summary
     assert "敬語語尾を使わない案を少なくとも1つ" not in summary
 
 
@@ -232,8 +251,9 @@ def test_sparse_contact_tone_summary_does_not_override_global_mixed_profile(clie
 
     summary = style.build_relationship_summary(local_id)
 
-    assert "自動口調ではGoldの砕けた会話調を基本" not in summary
-    assert "自動口調では本人Goldの混合スタイルを基本" not in summary
+    assert "口調傾向は暫定" in summary
+    assert "Global Goldを基準" in summary
+    assert "会話調を基本" not in summary
 
 
 def test_relationship_summary_describes_contact_relative_message_length(client):
@@ -248,10 +268,64 @@ def test_relationship_summary_describes_contact_relative_message_length(client):
 
     assert "Global Goldより相対的に長め" in summary
     assert "同一相手Goldの文量中央値は" in summary
-    assert "返信の長さはこの差も参考にしつつ" in summary
-    assert "現在の会話内容に合う範囲で決めること" in summary
-    assert "質問は会話上必要な場合だけ使う" in summary
-    assert "相手の発言を言い換えて水増ししたりしない" in summary
+    assert "Global Goldより相対的に長め" in summary
+    assert "Global Goldを基準" not in summary
+    assert "質問は会話上必要な場合だけ使う" not in summary
+    assert "水増し" not in summary
+
+
+def test_relationship_summary_keeps_contact_measurements_without_generic_reply_rules(client):
+    _seed_gold(client, "測定用Global", KEIGO_PAIRS)
+    contact_id = _seed_gold(
+        client,
+        "測定用Contact",
+        [
+            ("最近忙しい", "それは大変だね、無理しないでね笑"),
+            ("映画を見た", "映画いいね！どんな感じだった？"),
+            ("週末は休みです", "よかったですね！ゆっくりできそうですね"),
+            ("カフェに行きました", "いいですね！落ち着けそうなところでしたか？"),
+            ("旅行してきた", "楽しそう！写真とか撮った？"),
+        ],
+    )
+
+    summary = style.build_relationship_summary(contact_id)
+
+    assert "5件" in summary
+    assert "同一相手Goldの文量中央値は" in summary
+    assert "Global Goldは" in summary
+    assert "口調の観測（丁寧・混合・砕けた）は" in summary
+    assert "本人Gold実例と現在の文脈を優先" in summary
+    assert "Global Goldより相対的に" in summary
+    assert "自動口調では" not in summary
+    for duplicate in (
+        "質問は会話上必要な場合だけ",
+        "質問で長さを作らない",
+        "短い労いだけで毎回終えず",
+        "返信の長さはこの差も参考にしつつ",
+        "候補間で自然な違いが作れる場合だけ",
+        "固定文字数",
+    ):
+        assert duplicate not in summary
+
+
+def test_sparse_relationship_summary_marks_contact_tendency_as_provisional(client):
+    _seed_gold(client, "少数例Global", KEIGO_PAIRS)
+    contact_id = _seed_gold(
+        client,
+        "少数例Contact",
+        [
+            ("映画を見た", "映画いいね笑"),
+            ("カフェに行った", "いいな、楽しそう"),
+            ("旅行した", "楽しそうだね！"),
+        ],
+    )
+
+    summary = style.build_relationship_summary(contact_id)
+
+    assert "同一相手Gold 3件" in summary
+    assert "暫定" in summary
+    assert "Global Goldを基準" in summary
+    assert "会話調を基本" not in summary
 
 
 def test_relationship_summary_adapts_candidate_level_laugh_and_length_distribution(client, monkeypatch):
@@ -277,12 +351,10 @@ def test_relationship_summary_adapts_candidate_level_laugh_and_length_distributi
 
     summary = style.build_relationship_summary(cid)
 
-    assert "笑い表現の頻度は候補全体の参考" in summary
-    assert "かなり長め" in summary
-    assert "Goldの文量分布も参考にする" in summary
-    assert "1案だけ" not in summary
-    assert "状態や気持ちの共有には短い労いだけで毎回終えず" in summary
-    assert "候補間で自然な違いが作れる場合だけ反応の焦点を変え" in summary
+    assert "口調の観測（丁寧・混合・砕けた）は" in summary
+    assert "Global Goldより相対的に長め" in summary
+    assert "状態や気持ちの共有には短い労いだけで毎回終えず" not in summary
+    assert "候補間で自然な違いが作れる場合だけ反応の焦点を変え" not in summary
 
 
 def test_contact_tone_fit_neutral_without_data(client):
@@ -357,7 +429,7 @@ def test_learned_policy_never_emits_question_frequency_as_generation_cue():
         assert "質問で終える割合" not in block
         assert "質問多め" not in block
         assert "質問少なめ" not in block
-        assert "質問・深掘り・自己開示は会話上の意味があり相手が答えやすい場合に使う" in block
+        assert "質問・深掘り・自己開示は会話上の意味があり相手が答えやすい場合に使う" not in block
 
 
 def test_relationship_summary_never_emits_question_frequency_for_reliable_gold(client):
@@ -376,7 +448,7 @@ def test_relationship_summary_never_emits_question_frequency_for_reliable_gold(c
     assert "質問少なめ" not in summary
     assert "質問普通" not in summary
     assert "質問率" not in summary
-    assert "質問は会話上必要な場合だけ使う" in summary
+    assert "質問は会話上必要な場合だけ使う" not in summary
 
 
 def test_question_rate_is_suppressed_in_complete_prompt_after_self_question(client):
@@ -402,8 +474,8 @@ def test_question_rate_is_suppressed_in_complete_prompt_after_self_question(clie
     assert "質問少なめ" not in system_prompt
     assert "質問率" not in system_prompt
     assert "今回は質問なしでも成立する候補を優先" in system_prompt
-    assert "相手が明確な質問をしている場合は必ず回答" in system_prompt
-    assert "相手の明確な質問への回答や、未解決事項の確認に必要な質問は引き続き使ってよい" in system_prompt
+    assert "相手の明確な質問にはまず答える" in system_prompt
+    assert "確認や会話上の目的があり、相手が答えやすい質問は使ってよい" in system_prompt
 
 
 def test_question_gold_preference_softens_consecutive_question_prompt():
@@ -457,8 +529,9 @@ def test_combined_generation_prompt_omits_gold_question_rate_but_keeps_questions
     assert "質問率" not in system_prompt
     assert "質問多め" not in system_prompt
     assert "質問少なめ" not in system_prompt
-    assert "質問は任意: 質問を含めるかどうかは会話状況次第" in system_prompt
-    assert "会話上の意味があり相手が答えやすい質問は使ってよい" in system_prompt
+    assert "【REPLY CONTENT CHOICE】" in system_prompt
+    assert "自然に完結するなら短く返す" in system_prompt
+    assert "会話を続けるためだけの質問は加えない" in system_prompt
     assert generation._contact_style_question_rate(
         style.StyleProfile(sample_count=8, question_ratio=0.8)
     ) == 0.8
@@ -468,7 +541,6 @@ def test_contact_gold_style_is_separate_from_counterpart_writing_style():
     sysp = prompt.build_system_prompt(
         contact={"name": "相手", "profile": ""},
         same_contact_gold_samples=12,
-        same_contact_gold_length_median=50,
         counterpart_style_block="相手は短文中心です",
         same_contact_reply_style_block=(
             "この相手への本人Goldは混合口調が中心。笑と感嘆符を使う傾向。"
@@ -481,7 +553,7 @@ def test_contact_gold_style_is_separate_from_counterpart_writing_style():
     assert "本人Goldは混合口調が中心" in sysp
     assert "相手は短文中心です" in sysp
     assert "十分な同一相手Goldに由来する傾向" in sysp
-    assert "状態や気持ちの共有には、短文でも本人Goldらしい温度感と反応の厚みを保ち" in sysp
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
     user_style_start = sysp.index("【USER'S SAME-CONTACT REPLY STYLE】")
     counterpart_start = sysp.index("【COUNTERPART STYLE ADAPTATION】")
     assert user_style_start < counterpart_start
@@ -530,46 +602,99 @@ def test_initial_generation_prioritizes_contact_gold_without_fixed_length():
         "この相手のGoldはGlobalより長め。3案のうち1案は共感に具体的な反応を添える。"
     )
 
-    messages = prompt.build_initial_generation_messages(
-        system_prompt="contact style is available in system prompt",
-        contact_style_instruction=relationship_summary,
-    )
+    messages = _build_messages_with_contact_summary(relationship_summary)
 
     user_instruction = messages[1]["content"]
+    complete_prompt = messages[0]["content"] + "\n" + user_instruction
     assert "確認できない事実や相手の状況" in user_instruction
     assert "プロフィールの嗜好は本人の経験の根拠にしない" in user_instruction
-    assert "この相手に対する本人Goldの口調・文量を優先" in user_instruction
+    assert "【USER'S SAME-CONTACT REPLY STYLE】" in messages[0]["content"]
     assert "本人のその相手への口調・距離感を一般的な丁寧語より優先" in user_instruction
-    assert "相手の直近文の短さやGlobalの一般傾向だけで全案を短くしない" in user_instruction
-    assert "状態共有を毎回一言の労いに縮めず" in user_instruction
+    assert "状態共有を毎回一言の労いに縮めず" not in user_instruction
     assert "1案だけ" not in user_instruction
-    assert "固定文字数には合わせない" in user_instruction
-    assert relationship_summary in user_instruction
+    assert "固定文字数には合わせない" not in user_instruction
+    assert relationship_summary in messages[0]["content"]
+    assert relationship_summary not in user_instruction
+    assert complete_prompt.count(relationship_summary) == 1
 
     long_relationship_summary = "この相手はGlobal Goldよりかなり長めに返す傾向がある。"
-    long_messages = prompt.build_initial_generation_messages(
-        system_prompt="contact style is available in system prompt",
-        contact_style_instruction=long_relationship_summary,
-    )
+    long_messages = _build_messages_with_contact_summary(long_relationship_summary)
     long_user_instruction = long_messages[1]["content"]
-    assert "状態共有を毎回一言の労いに縮めず" in long_user_instruction
+    assert long_relationship_summary in long_messages[0]["content"]
+    assert long_relationship_summary not in long_user_instruction
+    assert "状態共有を毎回一言の労いに縮めず" not in long_user_instruction
     assert "1案だけ" not in long_user_instruction
 
 
 def test_initial_generation_distinguishes_candidate_meaning_not_just_wording():
-    messages = prompt.build_initial_generation_messages(
-        system_prompt="system",
-        contact_style_instruction="同一相手Goldの傾向を優先する",
-    )
+    messages = _build_messages_with_contact_summary("同一相手Goldの傾向を優先する")
 
     user_instruction = messages[1]["content"]
     assert "自然に差が生まれる場合は反応の焦点を変えてよい" not in user_instruction
-    assert "入力が短いという理由だけで内容のある状態共有を毎回一言の労いに縮めない" in user_instruction
+    assert "入力が短いという理由だけで内容のある状態共有を毎回一言の労いに縮めない" not in user_instruction
     assert "本人のその相手への口調・距離感を一般的な丁寧語より優先" in user_instruction
-    assert "会話上の意味があり答えやすい質問は使える" in user_instruction
+    assert "会話上の意味があり答えやすい質問は使える" not in user_instruction
     assert "質問は情報が本当に必要な場合だけ" not in user_instruction
-    assert "内容への返答が自然に短く成立する場面では、簡潔に返して構いません" in user_instruction
+    assert "内容への返答が自然に短く成立する場面では、簡潔に返して構いません" not in user_instruction
     assert "短くするのは挨拶・相づち・受領・終了など内容の幅が狭い場面に限り" not in user_instruction
+
+
+def test_system_prompt_has_one_content_first_reply_choice_guidance():
+    system_prompt = prompt.build_system_prompt(contact={})
+
+    assert system_prompt.count("【REPLY CONTENT CHOICE】") == 1
+    assert "相手の明確な質問にはまず答える" in system_prompt
+    assert "自然に完結するなら短く返す" in system_prompt
+    assert "会話を続けるためだけの質問は加えない" in system_prompt
+    assert "本人Goldの文量傾向を参考にしつつ" in system_prompt
+    assert "4. 質問は任意:" not in system_prompt
+    assert "短い入力だけを理由に機械的に一言へ縮めたり" not in system_prompt
+
+
+def test_complete_normal_generation_prompt_has_no_duplicated_choice_guidance():
+    system_prompt = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        tone="keigo",
+        same_contact_gold_samples=8,
+        same_contact_reply_style_block=(
+            "本人Goldは会話調が中心です。本人Goldの文量中央値（観測値）: 52文字"
+        ),
+        counterpart_length_tier="short",
+        counterpart_length_chars=3,
+        conversation_ledger={
+            "counterpart_intent": "emotional_share",
+            "last_contact_message": "最近ちょっと疲れた",
+        },
+    )
+    messages = generation._build_initial_generation_messages(
+        {"system_prompt": system_prompt, "chat_text": "相手: 最近ちょっと疲れた"},
+        mode="normal",
+        candidates=3,
+        strategy_mode="normal",
+    )
+    complete_prompt = system_prompt + "\n" + messages[-1]["content"]
+    output_contract = system_prompt.split("【OUTPUT CONTRACT】", 1)[1]
+
+    assert complete_prompt.count("【REPLY CONTENT CHOICE】") == 1
+    assert complete_prompt.count("短い入力というだけで内容のある状態共有を一言に縮めず") == 1
+    assert complete_prompt.count("会話を続けるためだけの質問は加えない") == 1
+    assert "質問は必要性がある案にだけ含め、複数の未解決点" not in complete_prompt
+    assert "案3=質問あり" not in output_contract
+    assert "・質問任意" not in output_contract
+    assert "状態共有を毎回一言の労いに縮めず" not in messages[-1]["content"]
+    assert "質問攻めにしない" not in complete_prompt
+    assert "質問を追加していないか" not in complete_prompt
+    assert "違いを作るために話題や反応を無理に変えず" not in complete_prompt
+    assert "返信内容が自然に完結する長さを選び" not in complete_prompt
+    assert "Gold 実例と一致しているか" not in complete_prompt
+    assert "質問は曖昧さの解消や会話上の明確な意味がある場合に限り" not in complete_prompt
+    assert "本人Goldの文量中央値（観測値）: 52文字" in complete_prompt
+    assert "本人Goldは会話調が中心です" in complete_prompt
+    assert "相手の明確な質問にはまず答える" in complete_prompt
+    assert "トーン指定: 【敬語】" in complete_prompt
+    assert "明示された口調指定がない場合は" in complete_prompt
+    assert "確認できない事実や相手の状況" in complete_prompt
+    assert "明示された口調指定があれば最優先する" in messages[-1]["content"]
 
 
 def test_contact_style_soft_repair_detects_large_gold_mismatch_but_honors_explicit_tone():
@@ -760,6 +885,17 @@ def test_contact_style_laugh_guidance_accounts_for_reliable_one_in_three_gold_ra
 
     assert any("笑" in issue or "w" in issue for issue in issues)
     assert low_confidence_issues == []
+
+
+def test_contact_style_laugh_guidance_detects_partial_coverage_gap_for_consistent_gold():
+    replies_with_one_laugh = ["おつかれ笑", "大変だったね！", "今日はどうだった？"]
+
+    issues = generation._contact_style_laugh_issues(
+        replies_with_one_laugh,
+        style.StyleProfile(sample_count=6, laugh_ratio=1.0),
+    )
+
+    assert any("笑" in issue or "w" in issue for issue in issues)
 
 
 def test_contact_style_register_issue_describes_partial_conversational_coverage_accurately():
@@ -2038,10 +2174,10 @@ def test_generation_prompt_varies_reaction_focus_without_forcing_questions(clien
     ctx = generation._build_context(cid, "", "", "normal")
     system_prompt = ctx["system_prompt"]
 
-    assert "短い入力だけを理由に機械的に一言へ縮めたり、Goldの文量へ無理に合わせたりしない" in system_prompt
+    assert "短い入力というだけで内容のある状態共有を一言に縮めず" in system_prompt
     assert "短くするのは挨拶" not in system_prompt
-    assert "逆質問は情報の確認や会話上の明確な目的がある場合だけ" in system_prompt
-    assert "状態共有への質問も、直近の文脈に沿い" in system_prompt
+    assert "会話を続けるためだけの質問は加えない" in system_prompt
+    assert "確認や会話上の目的があり、相手が答えやすい質問は使ってよい" in system_prompt
     assert "（Step 18-R4 追記）" not in system_prompt
 
 
@@ -2049,21 +2185,30 @@ def test_normal_prompt_does_not_force_every_option_to_start_with_empathy(client)
     cid = _seed_gold(client, "Reaction opening", TAME_PAIRS[:5])
     response = client.post(
         f"/api/contacts/{cid}/messages",
-        json={"sender": "contact", "content": "仕事で疲れた"},
+        json={"sender": "contact", "content": "今日ちょっと嫌なことあってさ"},
     )
     assert response.status_code == 201
 
     system_prompt = generation._build_context(cid, "", "", "normal")["system_prompt"]
 
-    assert "短い入力だけを理由に機械的に一言へ縮めたり、Goldの文量へ無理に合わせたりしない" in system_prompt
+    assert prompt.classify_counterpart_intent("今日ちょっと嫌なことあってさ") == "emotional_share"
+    assert "【COUNTERPART INTENT】\nemotional_share" in system_prompt
+    assert "短い入力というだけで内容のある状態共有を一言に縮めず" in system_prompt
     assert "まずこのメッセージ内容に対する反応・共感から返信を始めること" not in system_prompt
     emotional_share_policy = prompt._INTENT_POLICIES["emotional_share"]
-    assert "質問は曖昧さの解消や会話上の明確な意味がある場合に限り" in emotional_share_policy
+    assert emotional_share_policy in system_prompt
+    assert "内容と文脈から共感・感想・気遣い・自然な願いなどの焦点を選ぶ" in emotional_share_policy
+    assert "本人Goldは主に口調・距離感・文量を整える参考にする" in emotional_share_policy
+    assert "質問は曖昧さの解消や会話上の明確な意味がある場合に限り" not in emotional_share_policy
     assert "明確に助言・意見を求めている場合に限る" not in emotional_share_policy
-    assert "内容に沿う感想・気遣い・自然な願いなどを返すかは本人Goldと文脈から選ぶ" in emotional_share_policy
+    assert "理由や詳しい状況を尋ねない" in emotional_share_policy
+    assert "会話上の目的があり、文脈に合い相手が答えやすい質問は、本人Goldの有無にかかわらず選んでよい" in emotional_share_policy
+    assert "本人Goldで同じ距離感の質問が確認できる場合のみ" not in emotional_share_policy
+    assert "会話を続けるためだけの質問は加えない" in system_prompt
+    assert "毎回同じ労いの定型句に寄らない" in emotional_share_policy
     assert "本人Goldと会話に合う反応を選ぶ" in system_prompt
     assert "3案とも短くなることも許可する" not in system_prompt
-    assert "返信量は会話内容を満たす範囲で決め、本人Goldの文量は参考にとどめる" in system_prompt
+    assert "本人Goldの文量傾向を参考にしつつ" in system_prompt
     question_policy = prompt._INTENT_POLICIES["question"]
     assert "回答を先に返したうえで" in question_policy
     assert "会話上の意味があり、相手が答えやすい" in question_policy
@@ -2071,15 +2216,14 @@ def test_normal_prompt_does_not_force_every_option_to_start_with_empathy(client)
 
 
 def test_generation_prompt_does_not_force_one_sentence_for_tiredness_with_contact_gold():
-    messages = prompt.build_initial_generation_messages(
-        system_prompt="style system",
-        chat_history_text="相手: 仕事で疲れた",
-        candidates=3,
+    contact_summary = "本人Goldはこの相手に対して長めで、敬語と会話調が混在する。"
+    messages = _build_messages_with_contact_summary(
+        contact_summary,
+        history="相手: 仕事で疲れた",
         mode="followup",
-        contact_style_instruction=(
-            "本人Goldはこの相手に対して長めで、敬語と会話調が混在する。"
-        ),
     )
+    assert contact_summary in messages[0]["content"]
+    assert contact_summary not in messages[-1]["content"]
     user_instruction = messages[-1]["content"]
 
     assert "一文だけ返してください" not in user_instruction
@@ -2436,7 +2580,7 @@ def test_learned_policy_describes_mixed_tone_without_forcing_casual(client):
     assert "相手の呼称は『〇〇さん』" not in profile
 
 
-def test_learned_policy_does_not_override_contact_length_with_short_reply_bias():
+def test_learned_policy_exposes_length_measurements_without_reply_length_directive():
     profile = style.to_learned_policy_prompt({
         "active_profile": style.StyleProfile(
             sample_count=6,
@@ -2449,9 +2593,11 @@ def test_learned_policy_does_not_override_contact_length_with_short_reply_bias()
         "contact_adaptation_weight": 0.55,
     })
 
-    assert "中央値109文字" in profile
-    assert "短さを一律に優先せず" in profile
+    assert "文量・構成の観測値: 1通あたり中央値109文字" in profile
+    assert "短さを一律に優先せず" not in profile
     assert "短い相槌・一言反応を優先すること" not in profile
+    assert "質問なし・短い返信も正常" not in profile
+    assert "会話を続けるためだけの質問はしない" not in profile
 
 
 def test_relationship_summary_preserves_reliably_longer_contact_style(client):
@@ -2467,13 +2613,13 @@ def test_relationship_summary_preserves_reliably_longer_contact_style(client):
 
     summary = style.build_relationship_summary(cid)
 
-    assert "Global Goldよりかなり長めに返す傾向がある" in summary
-    assert "Goldの文量分布も参考に" in summary
+    assert "Global Goldより相対的に長め" in summary
+    assert "同一相手Goldの文量中央値は" in summary
     assert "1案だけ" not in summary
-    assert "候補間で自然な違いが作れる場合だけ" in summary
-    assert "確認できない行動や結果を足さず" in summary
-    assert "質問で長さを作らない" in summary
-    assert "状態や気持ちの共有には短い労いだけで毎回終えず" in summary
+    assert "候補間で自然な違いが作れる場合だけ" not in summary
+    assert "確認できない行動や結果を足さず" not in summary
+    assert "質問で長さを作らない" not in summary
+    assert "状態や気持ちの共有には短い労いだけで毎回終えず" not in summary
 
 
 def test_automatic_contact_tone_uses_confident_manual_gold_only(client):

@@ -63,7 +63,7 @@ def test_c_answering_direct_question_is_not_blocked():
         conversation_ledger=ledger,
     )
     assert "相手からの直近質問（要回答）: 明日何時にする？" in sysp
-    assert "相手が明確な質問をしている場合は" in sysp
+    assert "相手の明確な質問にはまず答える" in sysp
 
 
 def test_d_no_forced_three_step_structure_for_short_message():
@@ -84,11 +84,9 @@ def test_d_no_forced_three_step_structure_for_short_message():
     assert "質問を省いた案は不正" not in sysp
     assert "反応→自己開示→質問" not in sysp
     assert "【COUNTERPART MESSAGE LENGTH】" in sysp
-    assert "短いリアクション" in sysp
-    assert "Hard Limit ではない" in sysp
-    assert "返信量は内容と本人Goldを参考に決め" in sysp
-    assert "返信の長さは話題・会話状況・本人のGlobal Goldを参考に" in sysp
-    assert "内容への返答が自然に完結する範囲で決める" in sysp
+    assert "REPLY CONTENT CHOICE" in sysp
+    assert "短いリアクション" not in sysp
+    assert "返信の長さは話題・会話状況・本人のGlobal Goldを参考に" not in sysp
 
 
 def test_short_input_and_contact_gold_length_remain_advisory():
@@ -102,9 +100,9 @@ def test_short_input_and_contact_gold_length_remain_advisory():
         counterpart_length_chars=7,
     )
 
-    assert "相手別Goldの文量はこの相手への傾向を示す参考情報であり、固定目標ではない" in sysp
-    assert "返信内容が自然に完結する長さを選び" in sysp
-    assert "Goldに近づけるために話題を広げたりしないこと" in sysp
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
+    assert "返信内容が自然に完結する長さを選び" not in sysp
+    assert "Goldに近づけるために話題を広げたりしないこと" not in sysp
 
 
 def test_extremely_short_input_does_not_override_contact_gold_length():
@@ -117,8 +115,9 @@ def test_extremely_short_input_does_not_override_contact_gold_length():
         counterpart_length_chars=1,
     )
 
-    assert "ごく短い相づち・挨拶" in sysp
-    assert "ごく短い相づち・挨拶には短い返信が自然なこともあるが、本人Goldと返信内容に応じて決める" in sysp
+    assert "【COUNTERPART MESSAGE LENGTH】相手の直近メッセージ: 約1文字" in sysp
+    assert "ごく短い相づち・挨拶" not in sysp
+    assert "REPLY CONTENT CHOICE" in sysp
     assert "2行以上の返信は避ける" not in sysp
 
 
@@ -134,9 +133,11 @@ def test_counterpart_short_style_is_not_a_reply_length_target():
         counterpart_length_chars=7,
     )
 
-    assert "返信内容が自然に完結する長さを選び" in sysp
+    assert "【CONTACT GOLD LENGTH】" not in sysp
+    assert "【COUNTERPART MESSAGE LENGTH】" in sysp
+    assert "返信内容が自然に完結する長さを選び" not in sysp
     assert "相手が短文中心の場合、説明的な長文にせず短く返すこと" not in sysp
-    assert "相手の温度感は補助情報として扱い" in sysp
+    assert "温度感を距離感の補助情報として扱う" in sysp
     assert "20〜30%程度" not in sysp
 
 
@@ -151,7 +152,9 @@ def test_medium_incoming_does_not_force_same_line_count_for_contact_gold():
         counterpart_length_chars=12,
     )
 
-    assert "相手別Goldの文量傾向を主な参考にし" in sysp
+    assert "【CONTACT GOLD LENGTH】" not in sysp
+    assert "【COUNTERPART MESSAGE LENGTH】" in sysp
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
     assert "2〜3行程度の自然な返信を基本とすること" not in sysp
 
 
@@ -166,22 +169,24 @@ def test_medium_incoming_without_contact_gold_does_not_force_two_or_three_lines(
     )
 
     assert "2〜3行程度の自然な返信を基本とすること" not in sysp
-    assert "本人のGlobal Gold" in sysp
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
 
 
-def test_prompt_exposes_contact_gold_median_as_soft_evidence():
+def test_prompt_keeps_contact_gold_median_from_observed_relationship_summary():
+    relationship_summary = "本人Goldの文量中央値（観測値）: 109文字。Global Gold中央値: 64文字。"
     sysp = prompt.build_system_prompt(
         contact={"name": "相手", "profile": ""},
         condition="",
         chat_history_text="相手: 仕事で疲れた",
         same_contact_gold_samples=6,
-        same_contact_gold_length_median=109,
+        same_contact_reply_style_block=relationship_summary,
         counterpart_length_tier="short",
         counterpart_length_chars=7,
     )
 
     assert "本人Goldの文量中央値（観測値）: 109文字" in sysp
-    assert "固定の文字数目標ではなく" in sysp
+    assert "Global Gold中央値: 64文字" in sysp
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
 
 
 def test_e_all_three_without_questions_pass():

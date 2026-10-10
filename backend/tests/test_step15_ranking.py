@@ -110,6 +110,40 @@ def test_gold_similarity_aspects():
     assert prof.sample_count == 2
 
 
+def test_learned_style_profile_tracks_japanese_comma_frequency():
+    no_comma = style.compute_style_metrics(["そうなんだいいですね！", "楽しそう！"])
+    with_comma = style.compute_style_metrics(["そうなんだ、いいですね！", "楽しそう！"])
+
+    assert no_comma.comma_ratio == 0.0
+    assert with_comma.comma_ratio == 0.5
+
+
+def test_candidate_style_score_prefers_the_observed_comma_pattern():
+    profile = {
+        "weighted_profile": {
+            "sample_count": 4,
+            "char_p25": 1,
+            "char_p75": 80,
+            "char_median": 15,
+            "sent_median": 1,
+            "primary_tone": "hybrid",
+            "hybrid_ratio": 1.0,
+            "keigo_ratio": 0.0,
+            "tame_ratio": 0.0,
+            "period_ratio": 0.0,
+            "comma_ratio": 0.0,
+            "warai_ratio": 0.0,
+            "avg_emojis": 0.0,
+            "q_ratio": 0.0,
+        }
+    }
+
+    no_comma_score, _ = generation.score_candidate_style("そうなんだいいですね！", profile)
+    comma_score, _ = generation.score_candidate_style("そうなんだ、いいですね！", profile)
+
+    assert no_comma_score > comma_score
+
+
 def test_single_same_contact_gold_uses_global_fallback(client):
     """少数の同一相手Goldで全体の本人文体を置き換えない。"""
     global_cid = client.post("/api/contacts", json={"name": "全体相手", "profile": ""}).json()["id"]
@@ -137,22 +171,24 @@ def test_counterpart_not_copied():
     assert "オウム返し" in sysp
     assert "温度感" in sysp
     assert "20〜30%" not in sysp
-    assert "相手発言のオウム返し・コピーは避け" in sysp
+    assert "相手の文体は模倣せず" in sysp
+    assert "温度感を距離感の補助情報として扱う" in sysp
     assert "本人のGold実例とGlobalの本人文体" not in sysp
 
 
-def test_confident_same_contact_gold_gates_contact_adaptation_policy():
-    """十分な同一相手Goldがある場合だけGold優先の連絡先適応を使う。"""
+def test_sparse_same_contact_gold_stays_advisory():
+    """3件の同一相手Goldは弱い参考情報で、距離感などを切り替えない。"""
     sysp = prompt.build_system_prompt(
         contact={"name": "相手", "profile": ""},
         condition="",
         chat_history_text="相手: 今日まじ疲れた",
         same_contact_gold_samples=3,
+        same_contact_reply_style_block="本人Goldの文量中央値（観測値）: 24文字",
         counterpart_style_block="短文中心の相手",
     )
     assert "20〜30%" not in sysp
-    assert "本人のGold実例とGlobalの本人文体を土台" in sysp
-    assert "現在の会話内容を最優先" in sysp
+    assert "同一相手Goldはまだ少数のため弱い参考情報" in sysp
+    assert "この傾向だけで距離感・口調・文量を切り替えない" in sysp
 
 
 def test_closing_short_first():

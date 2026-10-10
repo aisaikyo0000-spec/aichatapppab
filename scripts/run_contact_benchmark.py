@@ -734,15 +734,17 @@ def build_contact_report_entry(result: dict, gold_pairs: list[tuple[str, str]]) 
     replies = result.get("replies", [])
     signatures = [style_sig(reply) for reply in replies]
     own_gold = [style_sig(gold) for _, gold in gold_pairs]
+    diagnostics = dict(result.get(
+        "contact_style_diagnostics", _finalize_contact_style_diagnostics(_new_contact_style_diagnostics())
+    ))
+    diagnostics["observed_candidate_aggregates"] = _safe_candidate_aggregates(replies)
     entry = {
         "replies": replies,
         "sigs": signatures,
         "style_profile": result["style_profile"],
         "successful_route": result.get("successful_route"),
         "models_used": result.get("models_used", []),
-        "contact_style_diagnostics": result.get(
-            "contact_style_diagnostics", _finalize_contact_style_diagnostics(_new_contact_style_diagnostics())
-        ),
+        "contact_style_diagnostics": diagnostics,
     }
     if own_gold and signatures:
         entry["own_gold"] = {

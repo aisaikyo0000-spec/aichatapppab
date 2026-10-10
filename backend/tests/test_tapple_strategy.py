@@ -2562,6 +2562,8 @@ def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_inv
         "カフェいいですね、今度一緒に映画を見に行きませんか？",
         "カフェも気になりますし、今度映画を見に行きませんか？",
         "今度カフェでお茶して、そのあと映画を見に行きませんか？",
+        "映画を見に行きませんか、それともカフェに行きませんか？",
+        "カフェいいですね、映画はどうですか？",
     ],
 )
 def test_tapple_invitation_must_target_the_discussed_activity(reply):

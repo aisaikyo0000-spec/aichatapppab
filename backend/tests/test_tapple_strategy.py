@@ -1314,7 +1314,11 @@ def test_tapple_benchmark_includes_a_receptive_but_not_yet_agreed_invitation_cas
             "evidence": ["近いうちに行ってみたいです"],
             "invite_example": "よかったら今度、駅前のカフェに行きませんか？難しければ大丈夫です。",
         },
-        "replies": ["そのカフェよさそうですね。よかったら今度一緒に行きませんか？"]
+        "replies": [
+            "パンケーキの写真、おいしそうですね！",
+            "駅前のカフェなんですね。写真の雰囲気が素敵ですね",
+            "カフェ巡りいいですね。パンケーキもおいしそうです",
+        ],
     }
 
     assert "近いうちに行ってみたいです" in latest_contact
@@ -1339,7 +1343,9 @@ def test_tapple_benchmark_covers_recent_disinterest_in_the_proposed_activity():
             "invite_example": None,
         },
         "replies": [
-            "駅前に気になるカフェがあるんですね！どんなお店か気になります笑"
+            "プリンの話も出てましたね。どんな種類が好きですか？",
+            "駅前のお店ってプリンもあるんですか？",
+            "カフェのお店なんですね。前に話していたプリンも置いてあるんでしょうか？",
         ],
     }
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
@@ -1360,7 +1366,11 @@ def test_tapple_benchmark_covers_an_unlisted_shared_hobby():
             "evidence": ["ボルダリングを体験してみたいです"],
             "invite_example": "よかったら今度、近くのボルダリングジムで体験してみませんか？",
         },
-        "replies": ["ボルダリング楽しそうですね。ぜひやってみたいです。"],
+        "replies": [
+            "ボルダリング楽しそうですね！僕も一度体験してみたいです",
+            "いいですね！初めてでも登れるコースってあるんですか？",
+            "自分も気になります。近くで体験できるところを探してみたいです",
+        ],
     }
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
 
@@ -1381,7 +1391,11 @@ def test_tapple_benchmark_does_not_use_another_interest_to_clear_disinterest():
             "evidence": ["今度一緒にカフェに行きたいです"],
             "invite_example": None,
         },
-        "replies": ["映画が好きなんですね。最近観て印象に残った作品はありますか？"],
+        "replies": [
+            "映画が好きなんですね！最近観て印象に残った作品ありますか？",
+            "映画いいですね、最近なにか観ましたか？",
+            "どんなジャンルの映画をよく観ますか？",
+        ],
     }
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
 
@@ -1443,7 +1457,11 @@ def test_tapple_benchmark_requires_wait_after_engagement_declines():
             "evidence": [latest_contact],
             "invite_example": None,
         },
-        "replies": ["わかりました。また話せるときに話そう。"],
+        "replies": [
+            "そうなんですね。また話せるときに話しましょう。",
+            "また話したくなったら話そう",
+            "了解です。無理せず過ごしてくださいね",
+        ],
     }
 
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
@@ -1722,9 +1740,78 @@ def test_scheduling_after_explicit_acceptance_is_allowed():
         counterpart_message="ぜひ一緒に行きたいです！",
         strategy_mode="tapple",
         tapple_action="continue",
+        conversation_messages=[
+            {"sender": "self", "content": "今度カフェに一緒に行きませんか？"},
+            {"sender": "contact", "content": "ぜひ一緒に行きたいです！"},
+        ],
     )
 
     assert not any("誘い" in violation for violation in violations)
+
+
+def test_general_activity_interest_without_a_prior_invitation_does_not_allow_scheduling():
+    violations = validate_candidate_replies(
+        ["来週カフェに行きませんか？"],
+        1,
+        counterpart_message="カフェに行きたいです。",
+        strategy_mode="tapple",
+        tapple_action="continue",
+        conversation_messages=[
+            {"sender": "contact", "content": "カフェに行きたいです。"},
+        ],
+    )
+
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_short_acceptance_of_prior_invitation_allows_scheduling():
+    violations = validate_candidate_replies(
+        ["楽しみです！日曜はどうですか？"],
+        1,
+        counterpart_message="うん、いいよ！楽しみ！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+        conversation_messages=[
+            {"sender": "self", "content": "今度カフェに一緒に行きませんか？"},
+            {"sender": "contact", "content": "うん、いいよ！楽しみ！"},
+        ],
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_explicit_joint_meeting_interest_can_move_to_scheduling_without_prior_invite():
+    violations = validate_candidate_replies(
+        ["楽しみです！日曜はどうですか？"],
+        1,
+        counterpart_message="ぜひ一緒に行きたいです！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+        conversation_messages=[
+            {"sender": "contact", "content": "ぜひ一緒に行きたいです！"},
+        ],
+    )
+
+    assert not any("誘い" in violation for violation in violations)
+
+
+def test_short_positive_reply_does_not_accept_an_old_invitation_after_topic_change():
+    violations = validate_candidate_replies(
+        ["来週カフェに行きませんか？"],
+        1,
+        counterpart_message="いいですね！",
+        strategy_mode="tapple",
+        tapple_action="continue",
+        conversation_messages=[
+            {"sender": "contact", "content": "カフェが好きです。"},
+            {"sender": "self", "content": "今度カフェに一緒に行きませんか？"},
+            {"sender": "contact", "content": "最近映画も見ました。"},
+            {"sender": "self", "content": "どんな映画を見たんですか？"},
+            {"sender": "contact", "content": "いいですね！"},
+        ],
+    )
+
+    assert any("誘い" in violation for violation in violations)
 
 
 def test_explicit_later_refusal_overrides_earlier_acceptance_for_scheduling():
@@ -4684,3 +4771,59 @@ def test_strategy_is_omitted_when_final_replies_are_replaced_by_safe_clarificati
 def test_malformed_or_missing_strategy_does_not_break_reply_parsing():
     assert _parse_tapple_strategy('{"replies":["a","b","c"]}', "相手: こんにちは") is None
     assert _parse_tapple_strategy('{"strategy":{"action":"maybe"}}', "相手: こんにちは") is None
+
+
+def test_tapple_strategy_mode_requires_a_usable_strategy():
+    violations = _tapple_strategy_output_violations(None)
+
+    assert violations
+    assert "strategy" in violations[0]
+
+
+def test_accepted_prior_invitation_is_scheduling_not_a_second_invitation():
+    conversation = (
+        "相手: コーヒー好きです\n"
+        "自分: 今度、駅前のカフェに一緒に行きませんか？\n"
+        "相手: ぜひ一緒に行きたいです！"
+    )
+    result = _parse_tapple_strategy(
+        _raw_strategy(
+            {
+                "action": "invite",
+                "rationale": "相手が誘いに同意しています。",
+                "evidence": ["ぜひ一緒に行きたいです！"],
+                "invite_example": "駅前のカフェでお茶しませんか？",
+            }
+        ),
+        conversation,
+    )
+
+    assert result is not None
+    assert result.action == "continue"
+    assert result.invite_example is None
+
+
+def test_wait_action_rejects_an_implicit_joint_invitation_in_replies():
+    violations = validate_candidate_replies(
+        ["そうなんですよ！ぜひ今度行ってみましょう"],
+        1,
+        strategy_mode="tapple",
+        tapple_action="wait",
+        counterpart_message="カフェいいですね！行ってみたいな。",
+    )
+
+    assert violations
+    assert any("誘い" in violation for violation in violations)
+
+
+def test_tapple_prompt_requires_strategy_and_action_consistent_replies():
+    messages = prompt.build_initial_generation_messages(
+        system_prompt="system",
+        chat_history_text="相手: カフェいいですね！行ってみたいな。",
+        strategy_mode="tapple",
+    )
+    instruction = messages[1]["content"]
+
+    assert "strategyは必須" in instruction
+    assert "waitまたはstop" in instruction
+    assert "返信候補も会う提案を含めない" in instruction

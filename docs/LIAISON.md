@@ -15,7 +15,7 @@
 - 最終コードでb39/b44の選択実測を**2/2完了**。終了後に未提示の再連絡日程を加える候補は修復され、同じ話題をただ言い換える候補群も自然な反応へ置き換わった。これは2ケースの確認に限られ、70ケース全体を通過したことを意味しない。
 - 429ログでprimary `gemini-3.1-flash-lite`のレート制限を確認後、secondary `gemini-3.5-flash-lite`、secondary `gemini-3.1-flash-lite`へ順次切り替えたが、secondary側も429となり最終runが停止した。レート制限の種類・リセット時刻はAPI応答から特定できない。残りの実API試験は未実施で、現在のquota状態が変わるまで追加呼び出しを控える。
 - Contact Benchの最新完走artifactはA/Bのみ、Cは`candidate_validation_failed`で**未完了**。unsupported-time repair guidanceは追加したが、quota停止後の実API再試行はできていない。Tappleの前回14シナリオrunは全件生成されたものの、機械期待は**1/14**で、独立本文レビューもFAIL。最新コードでの再実行は未実施。
-- このためStep 18-R4は**未完成**。評価器・threshold・canonical 70ケースは変更していない。GitHub `main`への反映は行っていない。現在の作業branchと進捗記録はWIPとしてforkへ更新予定。
+- このためStep 18-R4は**未完成**。評価器・threshold・canonical 70ケースは変更していない。GitHub `main`には反映していない。WIP commit `212d2f3`をforkの`codex/chat-quality-20261008`へpushし、リモートSHA一致を確認済み。
 
 ### 2026-10-10 前回時点の記録（以下は最終確認前の履歴）
 

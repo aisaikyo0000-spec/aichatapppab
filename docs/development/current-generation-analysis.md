@@ -2383,4 +2383,4 @@ Promptでは感情共有の返信の焦点を相手の内容・文脈から選�
 
 APIログではprimary `gemini-3.1-flash-lite`のHTTP 429を確認した後、secondary `gemini-3.5-flash-lite`とsecondary `gemini-3.1-flash-lite`も429となった。429の種別と解除時刻は不明なため、追加API呼び出しを停止した。返信品質の残課題、未完了ベンチ、最新コードでの全70ケース評価が残るため、Step 18-R4は**未完成**。評価器・threshold・canonicalケースは変更していない。
 
-この時点のコードは作業branch `codex/chat-quality-20261008`にあり、GitHub `main`の基点は`a75ba76998a377e527f1ea3bedaa655a6b89569c`。レビューとオフライン検証は通過したが、品質受け入れ条件を満たしていないためmainには反映しない。WIPのfork作業branch更新は、最終資料と差分を確認してから行う。
+この時点のコードは作業branch `codex/chat-quality-20261008`にあり、GitHub `main`の基点は`a75ba76998a377e527f1ea3bedaa655a6b89569c`。レビューとオフライン検証は通過したが、品質受け入れ条件を満たしていないためmainには反映しない。WIP commit `212d2f3`をforkの作業branchへpushし、リモートSHA一致を確認した。資料のcommitは次の更新に含める。

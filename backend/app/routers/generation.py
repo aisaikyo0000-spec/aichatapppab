@@ -579,6 +579,26 @@ def _unresolved_tapple_decline_match(
             unresolved = None
             unresolved_is_date_specific = False
     return unresolved
+
+
+def _tapple_decline_evidence_quote(decline_match: re.Match[str]) -> str:
+    """Use the exact sentence containing a decline, not a partial regex match."""
+    text = decline_match.string
+    boundaries = "。.!！?？\n"
+    sentence_start = max(
+        (text.rfind(mark, 0, decline_match.start()) for mark in boundaries),
+        default=-1,
+    ) + 1
+    sentence_ends = [
+        position
+        for mark in boundaries
+        if (position := text.find(mark, decline_match.end())) >= 0
+    ]
+    sentence_end = min(sentence_ends) + 1 if sentence_ends else len(text)
+    quote = text[sentence_start:sentence_end].strip()
+    if quote and decline_match.group(0) in quote:
+        return quote
+    return decline_match.group(0)
 _TAPPLE_INVITE_POSITIVE_RE = re.compile(
     r"(?:一緒に.{0,8}(?:行きたい|行こう|行きましょう|会いたい|会おう|会いましょう)|"
     r"(?:今度|近いうち).{0,8}(?:一緒に行きたい|会いたい|会いましょう)|"
@@ -1297,43 +1317,429 @@ _TAPPLE_REINVITATION_RE = re.compile(
     r"行きましょう|行きませんか|行ってみましょう|行ってみませんか|行ってみますか|行こう(?:よ)?)"
     r"(?:[。！!？?]|$)"
 )
+_TAPPLE_INVITATION_ACTION_RE = re.compile(
+    r"(?:見に行きませんか|食べに行きませんか|飲みに行きませんか|"
+    r"行ってみませんか|行ってみますか|行ってみましょう|行きませんか|"
+    r"行きましょう|行こう(?:よ)?|行こ(?:っか|うか|か)?|体験してみませんか|やってみませんか|"
+    r"試してみませんか|お茶しませんか|お茶しましょう|"
+    r"お話ししませんか|お話ししましょう|話しませんか|話しましょう|"
+    r"見ませんか|見よう(?:よ)?|食べませんか|飲みませんか|しませんか|しましょう|しよう(?:よ)?|"
+    r"会いませんか|会いましょう|会おう(?:よ)?|会わない(?:[？?])?|"
+    r"どう(?:ですか|かな|でしょうか)?(?:[？?]|$)|いかがですか|"
+    r"見ない(?:[？?])?|行かない(?:[？?])?|食べない(?:[？?])?|"
+    r"飲まない(?:[？?])?|デートしない(?:[？?])?|"
+    r"遊びに行かない(?:[？?])?)(?=\W|$|笑)"
+)
+_TAPPLE_INVITATION_AVOIDANCE_RE = re.compile(
+    r"(?P<activity>[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,})"
+    r"(?:には|では|へは|は|も|に|で|へ|を)?"
+    r"(?:行かない|行かなくて|会わない|会わなくて)"
+    r"(?:ように|ことに|ために|で済む(?:ように)?|方がいい|ほうがいい|いい(?:ように|ことに)?)"
+)
 
 
-def _tapple_invitation_targets_activity(reply: str, counterpart_message: str) -> bool:
+def _has_explicit_tapple_invitation(reply: str) -> bool:
+    """Distinguish a proposal to the contact from opinions and reported speech."""
+    text = unicodedata.normalize("NFKC", reply or "")
+    quotes = list(re.finditer(r"「[^」]*」|『[^』]*』", text))
+    for action in _TAPPLE_INVITATION_ACTION_RE.finditer(text):
+        if any(quote.start() <= action.start() < quote.end() for quote in quotes):
+            continue
+        if re.match(
+            r"[。.!！?？、,\s]*(?:と|って)"
+            r"(?:いう(?:話|こと)|[^。.!！?？\n]{0,16}"
+            r"(?:言|聞|誘|思|考|勧め|提案|連絡|案が出|依頼|頼ま|説明))",
+            text[action.end() :],
+        ):
+            continue
+        start = max(text.rfind(mark, 0, action.start()) for mark in "。.!！?？\n") + 1
+        prefix = text[start : action.start()]
+        avoidance_matches = list(_TAPPLE_INVITATION_AVOIDANCE_RE.finditer(prefix))
+        if avoidance_matches:
+            avoids_invitation = False
+            generic_noun_pattern = "(?:" + "|".join(
+                re.escape(term) for term in sorted(_TAPPLE_GENERIC_INTEREST_TERMS)
+            ) + ")+"
+            for avoidance in avoidance_matches:
+                invitation_tail = prefix[avoidance.end() :]
+                invitation_terms = {
+                    term
+                    for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+                    if term in invitation_tail
+                }
+                invitation_terms.update(_extract_tapple_interest_terms(invitation_tail))
+                invitation_terms.update(
+                    match.group("term")
+                    for match in re.finditer(
+                        r"(?P<term>[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,})"
+                        r"(?:を|に|で|でも|は|へ)",
+                        invitation_tail,
+                    )
+                    if not re.fullmatch(generic_noun_pattern, match.group("term"))
+                )
+                if not invitation_terms or any(
+                    avoided in invited or invited in avoided
+                    for avoided in (avoidance.group("activity"),)
+                    for invited in invitation_terms
+                ):
+                    avoids_invitation = True
+                    break
+            if avoids_invitation:
+                continue
+        elif re.search(
+            r"(?:ない(?:ように|ことに|ために|で済む(?:ように)?|方がいい|ほうがいい)|"
+            r"なくて(?:いい|よい)(?:ように|ことに)?)$",
+            prefix,
+        ):
+            continue
+        if "話" in action.group(0):
+            if re.search(r"(?:メッセージ|チャット|ここ|アプリ)(?:で|上で)", prefix):
+                continue
+            if not re.search(
+                r"会って|(?:カフェ|喫茶(?:店)?|ロビー|公園|駅前)(?:で|に行って|へ行って)",
+                prefix,
+            ):
+                continue
+        if action.group(0).startswith(("どう", "いかが")):
+            if not (
+                re.search(r"今度|一緒に|二人で|よかったら|もしよければ|来週|週末", prefix)
+                or prefix.rstrip().endswith("でも")
+            ):
+                continue
+        return True
+    return False
+
+
+def _tapple_invitation_targets_activity(
+    reply: str,
+    counterpart_message: str,
+    conversation_messages: list[dict[str, Any]] | None = None,
+) -> bool:
     """Require a concrete invitation to stay attached to the current activity."""
     normalized_counterpart = unicodedata.normalize("NFKC", counterpart_message or "")
+    counterpart_terms = _extract_tapple_interest_terms(normalized_counterpart)
+    counterpart_terms.update(
+        term for term in _TAPPLE_SHARED_ACTIVITY_TERMS if term in normalized_counterpart
+    )
+    disinterested_activity_terms: set[str] = set()
+    for term in counterpart_terms:
+        for occurrence in re.finditer(re.escape(term), normalized_counterpart):
+            tail = normalized_counterpart[occurrence.end() :]
+            disinterest = _TAPPLE_ACTIVITY_DISINTEREST_RE.match(tail)
+            if not disinterest:
+                continue
+            after_disinterest = tail[disinterest.end() :]
+            next_activity_positions = [
+                match.start()
+                for other_term in counterpart_terms
+                if other_term != term
+                for match in re.finditer(re.escape(other_term), after_disinterest)
+            ]
+            if next_activity_positions:
+                after_disinterest = after_disinterest[: min(next_activity_positions)]
+            renewed_interest = _TAPPLE_RENEWED_ACTIVITY_POSITIVE_RE.search(after_disinterest)
+            alternative_activity = re.search(
+                r"(?:けど|ですが|だけど|でも)[、,]?\s*"
+                r"(?P<activity>[\u30A0-\u30FFー\u3400-\u4DBF\u4E00-\u9FFF々]{2,}?)"
+                r"(?:体験してみたい|行ってみたい|食べてみたい|見てみたい|試してみたい)",
+                after_disinterest,
+            )
+            if renewed_interest and not (
+                alternative_activity
+                and term not in alternative_activity.group("activity")
+            ):
+                continue
+            disinterested_activity_terms.add(term)
+            break
     interest_matches = list(_TAPPLE_ACTIVITY_INTEREST_RE.finditer(normalized_counterpart))
     if not interest_matches:
+        if disinterested_activity_terms:
+            generic_noun_pattern = "(?:" + "|".join(
+                re.escape(term) for term in sorted(_TAPPLE_GENERIC_INTEREST_TERMS)
+            ) + ")+"
+            for clause in re.split(
+                r"(?<=[。.!！?？])", unicodedata.normalize("NFKC", reply or "")
+            ):
+                for action in _TAPPLE_INVITATION_ACTION_RE.finditer(clause):
+                    invitation_prefix = clause[: action.start()]
+                    named_terms = {
+                        term
+                        for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+                        if term in invitation_prefix
+                    }
+                    named_terms.update(
+                        term
+                        for term in _extract_tapple_interest_terms(invitation_prefix)
+                        if not re.fullmatch(generic_noun_pattern, term)
+                    )
+                    named_terms.update(
+                        match.group("term")
+                        for match in re.finditer(
+                            r"(?P<term>[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,})"
+                            r"(?:を|に|で|でも|は)(?:一緒に|二人で|ちょっと|ぜひ|今度|よかったら)*$",
+                            invitation_prefix,
+                        )
+                        if not re.fullmatch(generic_noun_pattern, match.group("term"))
+                    )
+                    named_occurrences = [
+                        (invitation_prefix.rfind(term), term)
+                        for term in named_terms
+                        if term in invitation_prefix
+                    ]
+                    if named_occurrences and max(named_occurrences)[1] in disinterested_activity_terms:
+                        return False
         return True
     interest = interest_matches[-1]
     clause_start = max(
         normalized_counterpart.rfind(mark, 0, interest.start())
         for mark in "。.!！?？\n"
     ) + 1
-    activity_terms = _extract_tapple_interest_terms(
-        normalized_counterpart[clause_start : interest.end()]
+    current_interest_clause = normalized_counterpart[clause_start : interest.end()]
+    activity_terms = _extract_tapple_interest_terms(current_interest_clause)
+    activity_terms.update(
+        term for term in _TAPPLE_SHARED_ACTIVITY_TERMS if term in current_interest_clause
     )
+    activity_terms.difference_update(disinterested_activity_terms)
+    if not activity_terms and clause_start > 0:
+        preceding = normalized_counterpart[:clause_start].rstrip("。.!！?？\n")
+        preceding_start = max(preceding.rfind(mark) for mark in "。.!！?？\n") + 1
+        preceding_clause = preceding[preceding_start:]
+        if _TAPPLE_ACTIVITY_INTEREST_RE.search(preceding_clause):
+            activity_terms = _extract_tapple_interest_terms(preceding_clause)
+    if not activity_terms and conversation_messages:
+        current_contact_index = next(
+            (
+                index
+                for index in range(len(conversation_messages) - 1, -1, -1)
+                if conversation_messages[index].get("sender") == "contact"
+                and unicodedata.normalize(
+                    "NFKC", str(conversation_messages[index].get("content") or "")
+                ) == normalized_counterpart
+            ),
+            -1,
+        )
+        if current_contact_index >= 0:
+            latest_self_message = next(
+                (
+                    unicodedata.normalize(
+                        "NFKC", str(message.get("content") or "")
+                    )
+                    for message in reversed(conversation_messages[:current_contact_index])
+                    if message.get("sender") == "self"
+                ),
+                "",
+            )
+            self_proposed_activity = bool(
+                re.search(
+                    r"(?:(?:一緒に|二人で).{0,16}|(?:今度|週末|来週).{0,12})"
+                    r"(?:行ってみたい|見てみたい|体験してみたい|やってみたい|"
+                    r"食べてみたい|飲んでみたい|行きたい|見たい)",
+                    latest_self_message,
+                )
+            )
+            if self_proposed_activity:
+                self_topic_terms = _extract_tapple_interest_terms(latest_self_message)
+                self_topic_terms.update(
+                    term
+                    for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+                    if term in latest_self_message
+                )
+                activity_terms.update(self_topic_terms)
+
+        contact_turns = [
+            unicodedata.normalize("NFKC", str(message.get("content") or ""))
+            for message in conversation_messages
+            if message.get("sender") == "contact"
+        ]
+        if contact_turns and contact_turns[-1] == normalized_counterpart:
+            contact_turns.pop()
+        # A short acknowledgment can sit between an explicitly stated interest
+        # and an elliptical follow-up. Look past at most one intervening
+        # contact turn, and stop at the nearest explicit activity so an older
+        # topic cannot override a newer one.
+        for prior_contact_turn in (
+            reversed(contact_turns[-2:]) if not activity_terms else ()
+        ):
+            prior_terms = _extract_tapple_interest_terms(prior_contact_turn)
+            prior_terms.update(
+                term
+                for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+                if term in prior_contact_turn
+            )
+            negative_terms = {
+                term
+                for term in prior_terms
+                if any(
+                    _TAPPLE_ACTIVITY_DISINTEREST_RE.match(
+                        prior_contact_turn[term_match.end() :]
+                    )
+                    for term_match in re.finditer(re.escape(term), prior_contact_turn)
+                )
+            }
+            if negative_terms:
+                disinterested_activity_terms.update(negative_terms)
+                break
+            has_interest_signal = bool(
+                _TAPPLE_ACTIVITY_INTEREST_RE.search(prior_contact_turn)
+                or (
+                    not re.search(r"[？?]", prior_contact_turn)
+                    and re.search(
+                        r"(?:好き|興味|気にな|ハマ|はま|よく.{0,2}(?:行く|する|見る|食べる))",
+                        prior_contact_turn,
+                    )
+                )
+            )
+            if not has_interest_signal:
+                continue
+            if prior_terms:
+                activity_terms = prior_terms
+                break
     if not activity_terms:
+        # If the current interest is elliptical and its referent is unresolved,
+        # permit a generic anaphoric invitation, but do not silently accept a
+        # newly named activity as though it were grounded in the conversation.
+        if interest_matches:
+            generic_noun_pattern = "(?:" + "|".join(
+                re.escape(term) for term in sorted(_TAPPLE_GENERIC_INTEREST_TERMS)
+            ) + ")+"
+            for clause in re.split(
+                r"(?<=[。.!！?？])", unicodedata.normalize("NFKC", reply or "")
+            ):
+                for action in _TAPPLE_INVITATION_ACTION_RE.finditer(clause):
+                    invitation_prefix = clause[: action.start()]
+                    named_terms = {
+                        term
+                        for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+                        if term in invitation_prefix
+                    }
+                    named_terms.update(
+                        match.group("term")
+                        for match in re.finditer(
+                            r"(?P<term>[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,})"
+                            r"(?:を|に|で|でも|は)(?:一緒に|二人で|ちょっと|ぜひ|今度|よかったら)*$",
+                            invitation_prefix,
+                        )
+                        if not re.fullmatch(generic_noun_pattern, match.group("term"))
+                    )
+                    if named_terms & disinterested_activity_terms:
+                        return False
+                    if named_terms:
+                        return False
         return True
     clauses = re.split(r"(?<=[。.!！?？])", unicodedata.normalize("NFKC", reply or ""))
+    found_invitation = False
+    found_grounded_reaction = False
     for index, clause in enumerate(clauses):
-        if not _TAPPLE_REINVITATION_RE.search(clause):
+        action_matches = list(_TAPPLE_INVITATION_ACTION_RE.finditer(clause))
+        if not action_matches:
+            if (
+                _TAPPLE_REINVITATION_RE.search(clause)
+                and re.search(
+                    r"(?:いいですね|いいね|楽しみ|嬉しい|うれしい|気になります|"
+                    r"興味があります|よさそう|良さそう|素敵ですね)",
+                    clause,
+                )
+            ):
+                reaction_terms = _extract_tapple_interest_terms(clause)
+                reaction_terms.update(
+                    term for term in activity_terms if term in clause
+                )
+                reaction_terms.update(
+                    term for term in _TAPPLE_SHARED_ACTIVITY_TERMS if term in clause
+                )
+                reaction_occurrences = [
+                    (clause.rfind(term), term)
+                    for term in reaction_terms
+                    if term in clause
+                ]
+                if (
+                    reaction_occurrences
+                    and max(reaction_occurrences)[1] in activity_terms
+                ):
+                    found_grounded_reaction = True
             continue
-        if any(term in clause for term in activity_terms):
-            return True
-        if index == 0 or "一緒に" not in clause:
-            continue
-        prior_clause = clauses[index - 1]
-        candidate_activity_terms = _extract_tapple_interest_terms(clause)
-        candidate_activity_terms.update(
-            term for term in _TAPPLE_SHARED_ACTIVITY_TERMS if term in clause
-        )
-        if (
-            any(term in prior_clause for term in activity_terms)
-            and not (candidate_activity_terms - activity_terms)
-        ):
-            return True
-    return False
+        found_invitation = True
+        for action in action_matches:
+            invitation_prefix = clause[: action.start()]
+            generic_noun_pattern = "(?:" + "|".join(
+                re.escape(term) for term in sorted(_TAPPLE_GENERIC_INTEREST_TERMS)
+            ) + ")+"
+            candidate_terms = {
+                term
+                for term in _extract_tapple_interest_terms(clause)
+                if not re.fullmatch(generic_noun_pattern, term)
+            }
+            candidate_terms.update(
+                match.group("term")
+                for match in re.finditer(
+                    r"(?P<term>[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,})"
+                    r"(?:を|に|で|でも|は)(?:一緒に|二人で|ちょっと|ぜひ|今度|よかったら)*$",
+                    invitation_prefix,
+                )
+                if not re.fullmatch(generic_noun_pattern, match.group("term"))
+            )
+            candidate_terms.update(
+                term for term in activity_terms if term in invitation_prefix
+            )
+            candidate_terms.update(
+                term
+                for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+                if term in invitation_prefix
+            )
+            candidate_occurrences = [
+                (invitation_prefix.rfind(term), term)
+                for term in candidate_terms
+                if term in invitation_prefix
+            ]
+            if candidate_occurrences:
+                latest_target = max(candidate_occurrences)[1]
+                if latest_target in disinterested_activity_terms:
+                    return False
+                if any(term in latest_target for term in activity_terms):
+                    continue
+                if not (
+                    index > 0
+                    and latest_target in {"ジム", "お店", "会場", "施設"}
+                ):
+                    return False
+            if index > 0 and "一緒に" in clause:
+                prior_clause = clauses[index - 1]
+                prior_terms = _extract_tapple_interest_terms(prior_clause)
+                prior_terms.update(
+                    term
+                    for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+                    if term in prior_clause
+                )
+                prior_terms.update(
+                    term for term in activity_terms if term in prior_clause
+                )
+                prior_occurrences = [
+                    (prior_clause.rfind(term), term)
+                    for term in prior_terms
+                    if term in prior_clause
+                ]
+                if (
+                    prior_occurrences
+                    and max(prior_occurrences)[1] in activity_terms
+                ):
+                    continue
+                if prior_occurrences:
+                    return False
+            if not candidate_occurrences and re.search(
+                r"行きませんか|行ってみませんか|行ってみますか|行ってみましょう|行きましょう|"
+                r"行こう|行こ(?:っか|うか|か)?|体験してみませんか|やってみませんか|試してみませんか",
+                action.group(0),
+            ):
+                continue
+            if not candidate_terms and re.search(
+                r"(?:会いませんか|会いましょう|会おう|お茶しませんか|"
+                r"お茶しましょう|お話ししませんか|お話ししましょう|"
+                r"話しませんか|話しましょう)",
+                action.group(0),
+            ):
+                continue
+            return False
+    return found_invitation or found_grounded_reaction
 
 
 _TAPPLE_SOLO_ACTIVITY_ADVICE_RE = re.compile(
@@ -1562,7 +1968,7 @@ def _parse_tapple_strategy(
         return TappleStrategy(
             action="stop",
             rationale="相手が会うことに明確な難しさを示しているため、誘い直さずここで止めます。",
-            evidence=[decline_match.group(0)],
+            evidence=[_tapple_decline_evidence_quote(decline_match)],
             invite_example=None,
         )
 
@@ -1736,7 +2142,7 @@ def _build_safe_tapple_fallback_strategy(
         return TappleStrategy(
             action="stop",
             rationale="相手が会うことに明確な難しさを示しているため、誘い直さずここで止めます。",
-            evidence=[decline_match.group(0)],
+            evidence=[_tapple_decline_evidence_quote(decline_match)],
             invite_example=None,
         )
 
@@ -1769,7 +2175,7 @@ def _tapple_strategy_output_violations(
     """Require a usable strategy and actionable guidance for invitations."""
     if strategy is None:
         return [
-            "strategyは必須です。判断根拠が弱い場合も省略せず、evidenceに会話中の相手の発言を示してaction=waitを選んでください。"
+            "strategyの欠落は出力形式の不備です。欠落だけを理由にaction=waitへ変更せず、会話全体に基づいてstrategyを補ってください。"
         ]
     if (
         strategy is not None
@@ -2423,6 +2829,10 @@ _PERSONAL_DESIRE_PATTERN = (
         r"行きたく|行きたい|見たく|見たい|観たく|観たい|食べたく|食べたい|飲みたく|飲みたい|"
         r"したく|したい|欲しく|欲しい|羨まし(?:い|くて)|うらやまし(?:い|くて)|好き|嫌い|苦手|得意|興味(?:が)?(?:ある|あります))"
 )
+_EXPLICIT_SELF_PERSPECTIVE_RE = re.compile(
+    r"(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が|として(?:も|は))"
+    r"|個人的(?:に|には)"
+)
 
 
 def _personal_desire_matches(text: str) -> list[re.Match[str]]:
@@ -2509,12 +2919,18 @@ def _contact_activity_topic(text: str) -> str:
     return prefix.strip(" 、。はがをにへでとの")[-10:]
 
 
-def _without_counterpart_preference_attribution(reply: str) -> str:
-    """Remove a clause-end preference attributed to the counterpart."""
+def _without_counterpart_preference_attribution(
+    reply: str, counterpart_message: str = ""
+) -> str:
+    """Remove counterpart-attributed preferences only when context supports them."""
     normalized_reply = unicodedata.normalize("NFKC", reply or "")
     attribution = re.search(
-        r"(?:好き|嫌い|苦手|得意)(?:なんだ|なん|な)?(?:ですね|だね|ですよね|だよね)"
-        r"|(?:好き|嫌い|苦手|得意)そう(?:ですね|だね|ですよね|だよね)",
+        r"(?P<preference>(?:好き|嫌い|苦手|得意)(?:なんだ|なん|な)?"
+        r"(?:ですね|だね|ですよね|だよね|よね)"
+        r"|(?:好き|嫌い|苦手|得意)そう(?:ですね|だね|ですよね|だよね|よね))"
+        r"|(?P<desire>(?:行ってみたい|行きたい|食べてみたい|食べたい|飲んでみたい|飲みたい|"
+        r"見てみたい|見たい|観てみたい|観たい|試してみたい|したい|欲しい|"
+        r"興味(?:が)?ある)(?:んだ|なんだ|なん|な)?(?:ですね|だね|ですよね|だよね|よね))",
         normalized_reply,
     )
     if not attribution:
@@ -2524,11 +2940,45 @@ def _without_counterpart_preference_attribution(reply: str) -> str:
         for mark in "。.!！?？\n"
     ) + 1
     attribution_prefix = normalized_reply[clause_start : attribution.start()]
-    if re.search(r"(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)", attribution_prefix):
+    explicit_self_perspective = _EXPLICIT_SELF_PERSPECTIVE_RE.search(
+        attribution_prefix
+    )
+    if explicit_self_perspective:
+        return normalized_reply
+    if attribution.lastgroup == "desire" and not _counterpart_supports_desire_attribution(
+        attribution_prefix + attribution.group(), counterpart_message
+    ):
         return normalized_reply
     return (
         normalized_reply[: attribution.start()]
         + normalized_reply[attribution.end() :]
+    )
+
+
+def _counterpart_supports_desire_attribution(
+    attributed_clause: str, counterpart_message: str
+) -> bool:
+    """Require a matching explicit counterpart desire before treating ``よね`` as agreement."""
+    counterpart_desires = _personal_desire_matches(counterpart_message)
+    counterpart_topic = _personal_desire_topic(counterpart_message)
+    if not counterpart_desires or not counterpart_topic:
+        return False
+
+    reply_topic = _personal_desire_topic(attributed_clause)
+    if reply_topic and not _topics_overlap(reply_topic, counterpart_topic):
+        return False
+
+    candidate_context = f"{counterpart_topic}{attributed_clause}"
+    candidate_kind = _personal_desire_fact_kind(counterpart_topic, candidate_context)
+    counterpart_kind = _personal_desire_fact_kind(counterpart_topic, counterpart_message)
+    compatible_positive_kinds = {candidate_kind, counterpart_kind} <= {
+        "interest:positive",
+        "activity_desire:positive",
+    }
+    return bool(
+        candidate_kind
+        and counterpart_kind
+        and (candidate_kind == counterpart_kind or compatible_positive_kinds)
     )
 
 
@@ -2604,9 +3054,11 @@ def _has_unverified_personal_desire(
     reply: str,
     known_self_facts: list[str] | None,
 ) -> bool:
-    desire_text = _without_counterpart_preference_attribution(reply)
+    desire_text = _without_counterpart_preference_attribution(
+        reply, counterpart_message
+    )
     has_explicit_self = bool(
-        re.search(r"(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)", desire_text)
+        _EXPLICIT_SELF_PERSPECTIVE_RE.search(desire_text)
         or re.search(r"(?:羨まし|うらやまし)", desire_text)
     )
     incoming_topic = _contact_activity_topic(counterpart_message)
@@ -3633,12 +4085,15 @@ def validate_candidate_replies(
                     f"案{i}に外部連絡先の交換や移動を促す表現があります。"
                     "連絡先交換を提案せず、タップル上で会話を続ける文面にしてください。"
             )
+            has_explicit_invitation = _has_explicit_tapple_invitation(rep)
             has_reinvitation = bool(_TAPPLE_REINVITATION_RE.search(rep))
             if (
                 tapple_action == "invite"
-                and has_reinvitation
+                and (has_reinvitation or has_explicit_invitation)
                 and counterpart_message
-                and not _tapple_invitation_targets_activity(rep, counterpart_message)
+                and not _tapple_invitation_targets_activity(
+                    rep, counterpart_message, conversation_messages
+                )
             ):
                 violations.append(
                     f"案{i}の誘い先が相手の現在の話題と結びついていません。"
@@ -3663,7 +4118,7 @@ def validate_candidate_replies(
                 and not has_unqualified_decline
                 and not unresolved_hesitation_or_safety
             )
-            if tapple_action == "invite" and not has_reinvitation:
+            if tapple_action == "invite" and not has_explicit_invitation:
                 violations.append(
                     f"案{i}はstrategy.action=inviteに沿っていません。"
                     "返信候補にも相手が断りやすい形で会う提案を含めてください。"
@@ -4027,7 +4482,7 @@ def validate_candidate_replies(
                 )
 
             transient_self_claim = re.search(
-                r"(?:僕|私|自分)(?:は|も|が)?[^。！!？?]{0,16}(?:今日|昨日|最近|さっき|今|この前)"
+                r"(?:僕|私|自分)(?:は|も|が)?[^。！!？?]{0,16}(?:今日|昨日|最近|さっき|今(?!度)|この前)"
                 r"[^。！!？?]{0,16}(?:バタバタ|忙し|仕事|出かけ|寝て|体調|疲れ|予定|行って|食べ|見て|買って)",
                 unicodedata.normalize("NFKC", rep),
             )
@@ -4306,6 +4761,7 @@ def _repair_output_instruction(
     candidates: int,
     strategy_mode: str,
     tapple_action: str | None = None,
+    tapple_strategy_missing: bool = False,
 ) -> str:
     if "private_experience_confirmation" in categories:
         return (
@@ -4320,7 +4776,9 @@ def _repair_output_instruction(
             "アプリ利用者向けの質問タグは使わないこと。"
         )
     if strategy_mode == "tapple":
-        return _repair_tapple_output_instruction(candidates, tapple_action)
+        return _repair_tapple_output_instruction(
+            candidates, tapple_action, strategy_missing=tapple_strategy_missing
+        )
     reply_template = ", ".join(f'"案{index}"' for index in range(1, candidates + 1))
     return (
         f"すべての不備を修正し、独立した完成品として{candidates}案を作成し、"
@@ -4329,9 +4787,17 @@ def _repair_output_instruction(
 
 
 def _repair_tapple_output_instruction(
-    candidates: int, tapple_action: str | None = None
+    candidates: int,
+    tapple_action: str | None = None,
+    *,
+    strategy_missing: bool = False,
 ) -> str:
     invite_action_guidance = (
+        "strategyのactionを会話全体から再評価し、そのactionと矛盾しない返信候補にしてください。"
+        "具体的な活動への近い時期の希望、本人の先行する関心、会話を広げる反応がそろえば、同意扱いせず低圧なinviteを選べます。"
+        "短い相づちだけなら誘わず、会話上の根拠が実際に足りない場合に限りwaitまたはclarifyにしてください。"
+        if strategy_missing
+        else
         "action=inviteを維持し、各候補に相手の意向を尋ねる低圧な誘いを含めてください。"
         "誘い先は相手が関心を示した活動そのものにしてください。"
         "本人が明示していない希望や予定は断定しないでください。"
@@ -4340,6 +4806,9 @@ def _repair_tapple_output_instruction(
         "単なる言い換えで終えず、活動への感想や自分の関心を短く示してよいですが、同行を前提にした表現や新しい誘いに変えないでください。質問は必要な場合だけにします。"
     )
     invite_reaction_guidance = (
+        ""
+        if strategy_missing
+        else
         "相手の『行ってみたい』という希望を受け止め、各候補で必ず低圧な誘いを提案してください。"
         if tapple_action == "invite"
         else "相手が『行ってみたい』と話したときは、その希望を受け止め、対象への自然な反応か関連する短い問いで返してください。"
@@ -4347,8 +4816,8 @@ def _repair_tapple_output_instruction(
     )
     return (
         f"不備を修正して返信候補を必ず{candidates}件作成してください。"
-        f"repliesとstrategyは両方必須です。判断根拠が弱い場合はaction=waitとし、evidenceには会話中の相手発言を指定してください。JSON形式の例: {prompt.format_tapple_output_contract(candidates)}。"
-        f"{prompt.tapple_strategy_contract_guidance()}"
+        f"{_repair_tapple_strategy_guidance(strategy_missing)}"
+        f"JSON形式の例: {prompt.format_tapple_output_contract(candidates)}。"
         "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め、返信候補とは別に短く低圧で断りやすい誘い方の例を1つ示してください。"
         "人目のある公共の場所を使い、連絡先交換を提案しないでください。"
         "invite_exampleの文面にも駅前やカフェなど公共の場所だと分かる表現を含めてください。"
@@ -4364,8 +4833,19 @@ def _repair_tapple_output_instruction(
         "相手が場所や活動に関心を示したときは、直前の自分の発言にある関心や具体的な話題と結びつけてください。訪問した事実がないのに店の雰囲気を知っているように述べず、相手の希望を一緒に行く約束へ読み替えないでください。"
         f"{invite_reaction_guidance}"
         "本人が直前の発言で同じ場所や活動への関心を示しているなら、その既知の関心を一度だけ共有して会話のつながりを作り、相づちだけで終えないでください。"
-        "根拠の不足を理由にstrategyを省略してはいけません。安全側のwaitを選んでください。"
+        "根拠が実際に足りない場合もstrategyを省略せず、waitまたはclarifyを選んでください。"
     )
+
+
+def _repair_tapple_strategy_guidance(strategy_missing: bool) -> str:
+    if strategy_missing:
+        return (
+            "strategyの欠落は出力形式の不備であり、根拠不足を意味しません。欠落だけを理由にwaitまたはcontinueへ固定せず、"
+            "会話全体を読み直してactionを選び、evidenceには相手の発言の完全一致抜粋を入れてください。"
+            "明示的な断り・迷い・安全上の懸念があればinviteを選ばず、会話上の根拠が実際に足りない場合に限りwaitまたはclarifyにしてください。"
+            "repliesとstrategyは両方必須です。"
+        )
+    return prompt.tapple_strategy_contract_guidance()
 
 
 def _repair_contact_style_guidance(
@@ -4445,7 +4925,14 @@ def _build_repair_messages(
     v_text = "\n".join(f"- {v}" for v in violations)
     categories = _repair_violation_categories(violations)
     output_instruction = _repair_output_instruction(
-        categories, candidates, strategy_mode, tapple_action
+        categories,
+        candidates,
+        strategy_mode,
+        tapple_action,
+        tapple_strategy_missing=(
+            strategy_mode == "tapple"
+            and any("strategyの欠落は出力形式の不備" in violation for violation in violations)
+        ),
     )
     repair_guidance = (
         _repair_contact_style_guidance(

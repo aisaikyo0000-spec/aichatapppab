@@ -851,8 +851,10 @@ def format_tapple_output_contract(candidates: int = 3) -> str:
 
 def tapple_strategy_contract_guidance() -> str:
     return (
-        " repliesとstrategyは両方必須のトップレベル項目です。strategyは必須で、判断が難しい場合も省略せず、"
-        "根拠不足ならaction=waitまたはstopとして、会話にある相手の発言をevidenceにしてください。"
+        " repliesとstrategyは両方必須のトップレベル項目です。strategyは必須です。strategyの欠落は出力形式の不備であり、"
+        "欠落だけを理由にwaitへ寄せず、会話全体を根拠に適切なactionを選んでください。"
+        "明示的な断り・迷い・安全上の懸念があればinviteを選ばず、会話上の根拠が実際に足りない場合はwaitまたはclarifyにしてください。"
+        "evidenceには会話にある相手の発言を指定してください。"
         "invite_exampleはinvite時のみ文字列にし、それ以外のactionではnullにしてください。"
     )
 

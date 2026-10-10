@@ -2560,6 +2560,7 @@ def test_tapple_repair_guidance_turns_unverified_desire_into_an_invitation_quest
     assert "相手の意向を尋ねる質問形の誘い" in repair_text
     assert "action=inviteを維持" in repair_text
     assert "同行を前提にした表現や新しい誘いに変えない" not in repair_text
+    assert "自然な反応か関連する短い問いで返してください" not in repair_text
 
 
 def test_tapple_positive_interest_does_not_clear_unresolved_safety_concern_for_scheduling():

@@ -1292,7 +1292,7 @@ _TAPPLE_REINVITATION_RE = re.compile(
     r"(?:お茶|飲み|ご飯|ごはん|食事)しない)(?:[？?]|$)"
     r"|(?:ぜひ|よかったら|もしよければ)?(?:一緒に)?"
     r"(?:お会いしましょう|お会いしませんか|会いましょう|会いませんか|会おう(?:よ)?|"
-    r"行きましょう|行きませんか|行ってみましょう|行ってみませんか|行こう(?:よ)?)"
+    r"行きましょう|行きませんか|行ってみましょう|行ってみませんか|行ってみますか|行こう(?:よ)?)"
     r"(?:[。！!？?]|$)"
 )
 _TAPPLE_SOLO_ACTIVITY_ADVICE_RE = re.compile(
@@ -3612,6 +3612,11 @@ def validate_candidate_replies(
                 and not has_unqualified_decline
                 and not unresolved_hesitation_or_safety
             )
+            if tapple_action == "invite" and not has_reinvitation:
+                violations.append(
+                    f"案{i}はstrategy.action=inviteに沿っていません。"
+                    "返信候補にも相手が断りやすい形で会う提案を含めてください。"
+                )
             if (
                 has_unresolved_meeting_boundary
                 and _TAPPLE_RECONSIDERATION_PRESSURE_RE.search(rep)

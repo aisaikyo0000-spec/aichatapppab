@@ -10,6 +10,7 @@ from app.ai import prompt
 from app.routers.generation import (
     _build_repair_messages,
     _repair_grounding_guidance,
+    _repair_violation_categories,
     _is_tapple_private_place_proposal,
     _parse_replies_strict,
     _parse_tapple_strategy as _parse_tapple_strategy_messages,
@@ -2543,9 +2544,13 @@ def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_inv
 
 
 def test_tapple_repair_guidance_turns_unverified_desire_into_an_invitation_question():
-    guidance = _repair_grounding_guidance(frozenset({"unsupported_personal_desire"}))
+    categories = _repair_violation_categories(
+        ["案2に本人の未確認の希望を追加しています。本人の好みや希望を作らないでください。"]
+    )
+    guidance = _repair_grounding_guidance(categories)
 
-    assert "本人の希望を断定しない" in guidance
+    assert "unsupported_personal_desire" in categories
+    assert "希望を断定しない" in guidance
     assert "相手の意向を尋ねる質問形の誘い" in guidance
 
 

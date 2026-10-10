@@ -20,6 +20,7 @@ from api_key_file import read_gemini_api_key  # noqa: E402
 from benchmark_config import (  # noqa: E402
     add_active_account_argument,
     build_gemini_benchmark_config,
+    isolate_benchmark_logging,
     load_gemini_benchmark_route,
     record_gemini_benchmark_success,
     successful_gemini_benchmark_route,
@@ -587,6 +588,7 @@ def main() -> int:
     config.DATA_DIR = temp_dir
     config.BACKUPS_DIR = temp_dir / "backups"
     config.CONTACTS_IMAGE_DIR = temp_dir / "contacts"
+    isolate_benchmark_logging(config, temp_dir)
     database.init_db()
 
     from fastapi.testclient import TestClient  # noqa: E402

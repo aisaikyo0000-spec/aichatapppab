@@ -12,7 +12,6 @@ from pathlib import Path
 sys.path.insert(0, "backend")
 from fastapi.testclient import TestClient
 from app import config, database
-from app.main import app
 from app.ai import factory
 from app.learning import style
 from app.routers import generation
@@ -20,6 +19,7 @@ from api_key_file import read_gemini_api_key
 from benchmark_config import (
     add_active_account_argument,
     build_gemini_benchmark_config,
+    isolate_benchmark_logging,
     load_gemini_benchmark_route,
     record_gemini_benchmark_success,
     successful_gemini_benchmark_route,
@@ -70,6 +70,7 @@ CONTACT_STYLE_DIAGNOSTIC_CATEGORIES = frozenset({
     "echo",
     "recommendation_overlap",
 })
+app = None
 _HARD_VALIDATION_STAGES = ("initial", "hard_repair", "style_repair", "style_followup")
 _QUALITY_GATE_STAGES = ("style_repair", "style_followup")
 _QUALITY_GATE_CATEGORIES = frozenset({
@@ -801,6 +802,7 @@ def _run_benchmark_with_database(args, contact_fixtures, fixture_source, key, se
 
 
 def main():
+    global app
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="gemini-3.5-flash-lite")
@@ -851,6 +853,10 @@ def main():
     db_path.parent.mkdir(parents=True, exist_ok=True)
     original_db_path = config.DB_PATH
     config.DB_PATH = db_path
+    isolate_benchmark_logging(config, db_path.parent / "benchmark-logs")
+    from app.main import app as test_app
+    app = test_app
+
     try:
         return _run_benchmark_with_database(
             args, contact_fixtures, fixture_source, key, secondary_key, db_path

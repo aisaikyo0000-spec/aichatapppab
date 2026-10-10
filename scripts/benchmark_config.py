@@ -7,6 +7,14 @@ import json
 from pathlib import Path
 
 
+def isolate_benchmark_logging(app_config: object, temp_dir: Path) -> Path:
+    """Keep benchmark logs out of the user's application log files."""
+    log_dir = Path(temp_dir) / "logs"
+    setattr(app_config, "LOG_DIR", log_dir)
+    setattr(app_config, "LOG_FILE", log_dir / "app.log")
+    return log_dir
+
+
 def add_active_account_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--active-account",

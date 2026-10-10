@@ -102,11 +102,13 @@ def main() -> int:
     # Importing this script in tests must not initialize a database or touch app state.
     _tmp = Path(tempfile.mkdtemp(prefix="pipebench_"))
     from app import config  # noqa: E402
+    from benchmark_config import isolate_benchmark_logging  # noqa: E402
 
     config.DB_PATH = _tmp / "app.db"
     config.DATA_DIR = _tmp
     config.BACKUPS_DIR = _tmp / "backups"
     config.CONTACTS_IMAGE_DIR = _tmp / "contacts"
+    isolate_benchmark_logging(config, _tmp)
 
     from app import database  # noqa: E402
 

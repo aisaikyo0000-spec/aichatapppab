@@ -147,8 +147,9 @@ def test_tapple_prompt_keeps_reply_grounded_when_invite_is_recommended():
     assert "自分が見ていない写真を見た前提にしない" in instruction
     assert "action=inviteの場合、各返信候補にも会話で根拠づけられる低圧な誘いを含め" in instruction
     assert "action=continueやwaitなどinvite以外の場合に" in instruction
-    assert "invite_exampleをコピーせず" in instruction
-    assert "低圧な誘いは確定した予定や訪問経験の主張ではなく、相手の意向を尋ねる提案" in instruction
+    assert "invite_exampleは誘いの方向性を示す別例" in instruction
+    assert "その文面を候補へそのままコピーしない" in instruction
+    assert "質問形で相手の意向を尋ねる提案" in instruction
 
 
 def test_tapple_prompts_require_a_safe_example_for_invite():
@@ -1320,9 +1321,9 @@ def test_tapple_benchmark_includes_a_receptive_but_not_yet_agreed_invitation_cas
             "invite_example": "よかったら今度、駅前のカフェに行きませんか？難しければ大丈夫です。",
         },
         "replies": [
-            "パンケーキの写真、おいしそうですね！",
-            "駅前のカフェなんですね。写真の雰囲気が素敵ですね",
-            "カフェ巡りいいですね。パンケーキもおいしそうです",
+            "駅前のパンケーキのお店、よかったら一緒に行ってみませんか？",
+            "パンケーキいいですね！駅前のお店、よかったら今度一緒に行きませんか？",
+            "パンケーキいいですね！よかったら今度そのお店に行きませんか？",
         ],
     }
 
@@ -1372,9 +1373,9 @@ def test_tapple_benchmark_covers_an_unlisted_shared_hobby():
             "invite_example": "よかったら今度、近くのボルダリングジムで体験してみませんか？",
         },
         "replies": [
-            "ボルダリング楽しそうですね！僕も一度体験してみたいです",
-            "いいですね！初めてでも登れるコースってあるんですか？",
-            "自分も気になります。近くで体験できるところを探してみたいです",
+            "ボルダリング体験楽しそうですね！よかったら今度一緒に行きませんか？",
+            "いいですね！今度一緒にやってみませんか？",
+            "ボルダリング気になります！よかったら一緒に体験してみませんか？",
         ],
     }
     assert run_tapple_strategy_benchmark._evaluate_result(scenario, result) == []
@@ -2513,6 +2514,7 @@ def test_tapple_invite_action_cannot_override_unresolved_historical_boundary(
     [
         ("駅前のカフェ気になりますよね笑", True),
         ("今度一緒に行ってみますか！", False),
+        ("今度一緒にボルダリングを体験してみませんか？", False),
     ],
 )
 def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_invite(

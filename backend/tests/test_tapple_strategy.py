@@ -9,6 +9,7 @@ import pytest
 from app.ai import prompt
 from app.routers.generation import (
     _build_repair_messages,
+    _repair_grounding_guidance,
     _is_tapple_private_place_proposal,
     _parse_replies_strict,
     _parse_tapple_strategy as _parse_tapple_strategy_messages,
@@ -2539,6 +2540,13 @@ def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_inv
         violation for violation in violations if "strategy.action=invite" in violation
     ]
     assert bool(action_violations) is expects_action_mismatch
+
+
+def test_tapple_repair_guidance_turns_unverified_desire_into_an_invitation_question():
+    guidance = _repair_grounding_guidance(frozenset({"unsupported_personal_desire"}))
+
+    assert "本人の希望を断定しない" in guidance
+    assert "相手の意向を尋ねる質問形の誘い" in guidance
 
 
 def test_tapple_positive_interest_does_not_clear_unresolved_safety_concern_for_scheduling():

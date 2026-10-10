@@ -5,6 +5,24 @@ from app.routers import generation
 from app import database
 
 
+@pytest.mark.parametrize("tone", ["", "keigo", "tame"])
+def test_user_punctuation_preference_is_soft_and_respects_tone_mode(tone):
+    """ユーザーの記号の好みを反映しつつ、口調指定と自然さを優先する。"""
+    system_prompt = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        tone=tone,
+    )
+
+    assert "「、」「。」は基本的に使わない" in system_prompt
+    assert "「！」「？」や絵文字" in system_prompt
+    assert "機械的に足さず" in system_prompt
+    assert "読みやすさと自然さを優先" in system_prompt
+    if tone == "keigo":
+        assert "【敬語】" in system_prompt
+    elif tone == "tame":
+        assert "【タメ口】" in system_prompt
+
+
 def test_scenario_1_single_topic():
     """TEST 1: 単一話題に対するプロンプト生成"""
     rules = prompt.load_knowledge_texts("rules")

@@ -1,15 +1,17 @@
 """AI生成設定の解決。
 
-優先順位: 設定画面(DB settings) > .env > デフォルト値
+優先順位: 明示したGeminiキー・ファイル > 設定画面(DB settings) > .env > デフォルト値
 API Keyはプロバイダごとに解決する（DB保存 または .env環境変数）。
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from .. import config as app_config
 from ..database import get_conn, get_setting
+from .credentials import read_gemini_api_key
 
 # プロバイダごとのAPI Key環境変数名
 _PROVIDER_ENV_KEYS: dict[str, str] = {
@@ -49,10 +51,42 @@ def _env_api_key(provider: str) -> str:
     env_name = _PROVIDER_ENV_KEYS.get(p)
     if not env_name:
         return ""
+    if p == "gemini":
+        key_file = _gemini_primary_key_file()
+        if key_file:
+            path = Path(key_file.strip().strip('"').strip("'")).expanduser()
+            if not path.is_absolute():
+                path = app_config.PROJECT_ROOT / path
+            file_key = read_gemini_api_key(path)
+            if file_key:
+                return file_key
     dotenv_val = _read_dotenv(env_name)
     if dotenv_val:
         return dotenv_val
     return os.getenv(env_name, "").strip()
+
+
+def _gemini_primary_key_file() -> str:
+    """Return the explicitly configured primary Gemini key-file path, if any."""
+    return _read_dotenv("GEMINI_API_KEY_FILE") or os.getenv(
+        "GEMINI_API_KEY_FILE", ""
+    ).strip()
+
+
+def _secondary_gemini_api_key() -> str:
+    """Read the optional second-account key from an env value or key file."""
+    key_file = _read_dotenv("GEMINI_SECONDARY_API_KEY_FILE") or os.getenv(
+        "GEMINI_SECONDARY_API_KEY_FILE", ""
+    ).strip()
+    if key_file:
+        path = Path(key_file.strip().strip('"').strip("'")).expanduser()
+        if not path.is_absolute():
+            path = app_config.PROJECT_ROOT / path
+        return read_gemini_api_key(path)
+
+    return _read_dotenv("GEMINI_SECONDARY_API_KEY") or os.getenv(
+        "GEMINI_SECONDARY_API_KEY", ""
+    ).strip()
 
 
 def _read_dotenv(name: str) -> str:
@@ -81,26 +115,52 @@ def get_ai_config() -> dict[str, Any]:
     ).strip()
     model = get_setting("ai_model", os.getenv("AI_MODEL", app_config.DEFAULT_MODEL)).strip()
 
-    # メインのAPI Key: 設定画面(DB) > .env環境変数
+    # 明示したGeminiキー・ファイルは、古い設定画面(DB)のキーより優先する。
+    # ファイル設定がない場合は従来どおりDB > .envの順で解決する。
     db_key = _db_api_key(provider)
-    api_key = db_key or _env_api_key(provider)
+    env_key = _env_api_key(provider)
+    primary_key_file_configured = (
+        provider.lower() == "gemini" and bool(_gemini_primary_key_file())
+    )
+    if primary_key_file_configured:
+        api_key = env_key
+        api_key_from_env = bool(env_key)
+    else:
+        api_key = db_key or env_key
+        api_key_from_env = not bool(db_key)
 
     # フォールバック: 設定画面(DB) > AI_FALLBACK_API_KEY > フォールバック先プロバイダの環境変数
     fallback_provider = get_setting(
-        "ai_fallback_provider", os.getenv("AI_FALLBACK_PROVIDER", "")
+        "ai_fallback_provider",
+        os.getenv("AI_FALLBACK_PROVIDER", app_config.DEFAULT_FALLBACK_PROVIDER),
     ).strip()
     fallback_model = get_setting(
-        "ai_fallback_model", os.getenv("AI_FALLBACK_MODEL", "")
+        "ai_fallback_model",
+        os.getenv("AI_FALLBACK_MODEL", app_config.DEFAULT_FALLBACK_MODEL),
     ).strip()
     fb_db_key = get_setting("ai_fallback_api_key", "").strip()
     fb_env_key = os.getenv("AI_FALLBACK_API_KEY", "").strip()
-    fallback_api_key = fb_db_key or fb_env_key or _env_api_key(fallback_provider)
+    same_provider = fallback_provider.lower() == provider.lower()
+    if fb_db_key:
+        fallback_api_key = fb_db_key
+        fallback_api_key_from_env = False
+    elif fb_env_key:
+        fallback_api_key = fb_env_key
+        fallback_api_key_from_env = True
+    elif same_provider:
+        fallback_api_key = api_key
+        fallback_api_key_from_env = api_key_from_env
+    else:
+        fallback_api_key = _env_api_key(fallback_provider)
+        fallback_api_key_from_env = bool(fallback_api_key)
+
+    secondary_api_key = _secondary_gemini_api_key() if provider.lower() == "gemini" else ""
 
     return {
         "provider": provider,
         "model": model,
         "api_key": api_key,
-        "api_key_from_env": not db_key,
+        "api_key_from_env": api_key_from_env,
         "temperature": _float_setting("ai_temperature", app_config.DEFAULT_TEMPERATURE),
         "max_tokens": _int_setting("ai_max_tokens", app_config.DEFAULT_MAX_TOKENS),
         "history_limit": _int_setting("ai_history_limit", app_config.DEFAULT_HISTORY_LIMIT),
@@ -108,7 +168,8 @@ def get_ai_config() -> dict[str, Any]:
         "fallback_provider": fallback_provider,
         "fallback_model": fallback_model,
         "fallback_api_key": fallback_api_key,
-        "fallback_api_key_from_env": not fb_db_key,
+        "fallback_api_key_from_env": fallback_api_key_from_env,
+        "secondary_api_key": secondary_api_key,
     }
 
 

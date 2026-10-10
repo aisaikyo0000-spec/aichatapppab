@@ -4,11 +4,15 @@ Frontendから外部AI APIを直接呼び出さず、必ずこのAPI経由で生
 """
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import logging
 import re
+import statistics
 import time
+import unicodedata
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -17,11 +21,17 @@ from ..ai import factory, naturalness, prompt
 from ..reply_policy import question_necessity
 from ..ai.base import AIError
 from ..ai.config import get_ai_config, get_contact_ai_config
-from ..schemas import GenerateRequest
+from ..schemas import GenerateRequest, TappleStrategy
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["generation"])
+
+# A soft contact-style repair may trade a tiny heuristic-score change for a
+# material Gold-style improvement. Hard validation still runs before this gate.
+_CONTACT_STYLE_MEAN_NATURALNESS_TOLERANCE = 0.025
+_CONTACT_STYLE_WORST_NATURALNESS_TOLERANCE = 0.05
+_CONTACT_STYLE_SCORE_TRADEOFF_TOLERANCE = 0.1
 
 
 def _strip_code_fence(text: str) -> str:
@@ -39,15 +49,37 @@ def _strip_code_fence(text: str) -> str:
 def _extract_ai_question(raw: str) -> str | None:
     """出力全体が [AI_QUESTION]...[/AI_QUESTION] の場合のみ質問文を抽出する（fullmatch）。"""
     t = _strip_code_fence(raw).strip()
-    match = re.fullmatch(r"\[AI_QUESTION\]\s*(.+?)\s*(?:\[/AI_QUESTION\])?", t, re.DOTALL)
+    match = re.fullmatch(
+        r"\[AI_QUESTION\]\s*((?:(?!\[/AI_QUESTION\]).)+?)(?:\s*\[/AI_QUESTION\])?",
+        t,
+        re.DOTALL,
+    )
     if match:
         q = match.group(1).strip()
         if q:
             return q
+    # Some providers wrap the safe question in the API's JSON reply shape.
+    # Accept only a single reply containing a complete question tag; never pull
+    # a private question out of a multi-candidate sendable response.
+    try:
+        payload = json.loads(t)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(payload, dict) and set(payload) == {"replies"}:
+        replies = payload.get("replies")
+        if isinstance(replies, list) and len(replies) == 1 and isinstance(replies[0], str):
+            nested = re.fullmatch(
+                r"\[AI_QUESTION\]\s*((?:(?!\[/AI_QUESTION\]).)+?)(?:\s*\[/AI_QUESTION\])?",
+                replies[0].strip(), re.DOTALL,
+            )
+            if nested and nested.group(1).strip():
+                return nested.group(1).strip()
     return None
 
 
-def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
+def _parse_replies_strict(
+    raw: str, candidates: int, *, strategy_mode: str = "none"
+) -> list[str]:
     """出力を厳格にパースする。newline fallback は完全排除。
 
     1. candidates == 1 の場合: 生テキスト（空以外）
@@ -58,7 +90,7 @@ def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
     t = _strip_code_fence(raw).strip()
     if not t:
         return []
-    if candidates <= 1:
+    if candidates <= 1 and strategy_mode != "tapple":
         return [t]
 
     # 1. JSON解析
@@ -77,6 +109,9 @@ def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
     except (json.JSONDecodeError, AttributeError):
         pass
 
+    if candidates <= 1 and strategy_mode == "tapple":
+        return []
+
     # 2. 【案1】【案2】【案3】または 案1: 案2: 案3:
     pattern = r"(?:^|\n)\s*(?:【案[1-9１-９]】|案[1-9１-９][:：]|\b(?:案[1-9１-９]|[1-9１-９]\.))\s*"
     splits = [p.strip() for p in re.split(pattern, t) if p.strip()]
@@ -91,24 +126,2804 @@ def _parse_replies_strict(raw: str, candidates: int) -> list[str]:
     return []
 
 
+_TAPPLE_DECLINE_RE = re.compile(
+    r"(?:会いたくない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません)|"
+    r"お会いしたく(?:は)?ない(?:です)?(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません)|"
+    r"お会いしたく(?:は)?ありません(?!わけではありません|とは言えません|とは限りません|とは思っていません|とは思ってない)|"
+    r"会いたくありません(?!わけではありません|とは言えません|とは限りません|とは思っていません|とは思ってない)|"
+    r"行きたくない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません)|"
+    r"行きたくありません(?!わけではありません|とは言えません|とは限りません)|"
+    r"(?:会いたい|行きたい).{0,12}(?:思わない|思いません|思っていない|思っていません|"
+    r"思ってない|思ってません|思っていなかった|思ってなかった|"
+    r"わけではない|わけじゃない|とは限らない|とは言えない)|"
+    r"(?:会う|お会いする|行く).{0,8}つもりは(?:ない|ありません)|"
+    r"(?:お会いする|ご一緒する|会うことは).{0,12}(?:難し(?!くない|くはない|くはありません|くありません|"
+    r"かった|くなかった|くはなかった|くはありませんでした|くありませんでした|"
+    r"ければ|いなら|いならば|いだったら|いであれば|"
+    r"いと言われるかもしれ(?:ない|ません)|いとは言われるかもしれ(?:ない|ません)|"
+    r"いかもしれ(?:ない|ません)|いとは言えません|いとは言い切れません|"
+    r"いとは限りません|いわけではない|"
+    r"いわけではありません|いわけじゃない|いわけじゃありません|いとは思わない|"
+    r"いと思わない|いとは思いません|いと思いません|いとは思っていない|"
+    r"いとは思っていません|いとは思ってない|いと思っていない|いと思っていません|"
+    r"いと思ってない|いとは思えない|いとは思えません|いと思えない|いと思えません|"
+    r"いと感じない|いと感じません|いことではない|いことではありません|"
+    r"いことはない|いことはありません)|"
+    r"無理(?!ではない|ではありません|じゃない|じゃありません|じゃなく|なら|ならば|だったら|であれば|"
+    r"かもしれ(?:ない|ません)|"
+    r"(?:だ)?とは思(?:いません|わない|っていません|ってない|えません)|(?:だ)?と思われたくない)|"
+    r"厳し(?!くない|くありません|くはない|くはありません|かった|くなかった|くはなかった|"
+    r"ければ|いなら|いならば|いだったら|いであれば|いかもしれ(?:ない|ません)|"
+    r"いとは言われるかもしれ(?:ない|ません)|いと言われるかもしれ(?:ない|ません)|"
+    r"いとは言えない|いとは言えません|"
+    r"いとは限らない|いとは限りません|いわけではない|いわけではありません|"
+    r"いわけじゃない|いわけじゃありません|いとは思っていない|いとは思っていません|"
+    r"いとは思ってない|いと思っていない|いと思っていません|いと思ってない)|"
+    r"(?:できな(?!くはない)|できません|できかねます)|したくな|"
+    r"差し?控え(?:ます|たい|た|させて)|控え(?:ます|たい|た|させて)|"
+    r"辞退|見送(?:ります|りたい|らせて)|致しかね|やめ(?:ます|たい|ておく|ておきます|ておきたい|よう)|"
+    r"考えていな|ご?遠慮(?:します|いたします|したい(?:です)?|させてください|させていただきます|"
+    r"させてもらいます|ください|願います|いただけますか|いただけませんか|"
+    r"いただければと思います|いただきたい(?:です)?))|"
+    r"会う(?:こと|の)(?:は|を)?考えられ(?:ません|ない)(?!わけではない|わけではありません)|"
+    r"会う(?:のは|ことは)?(?:今は)?(?:会う)?気分"
+    r"(?:ではありません|ではないです|じゃないです|ではない|じゃない)|"
+    r"会うのは.{0,8}避けたい(?:です)?|"
+    r"会う.{0,12}(?:難し(?!くない|くはない|くはありません|くありません|"
+    r"かった|くなかった|くはなかった|くはありませんでした|くありませんでした|"
+    r"ければ|いなら|いならば|いだったら|いであれば|"
+    r"いと言われるかもしれ(?:ない|ません)|いとは言われるかもしれ(?:ない|ません)|いとは言えません|"
+    r"いとは言い切れません|いかもしれ(?:ない|ません)|いとは限りません|"
+    r"いわけではない|いわけではありません|"
+    r"いわけじゃない|いわけじゃありません|いとは思わない|いと思わない|"
+    r"いとは思いません|いと思いません|いとは思っていない|いとは思っていません|"
+    r"いとは思ってない|いと思っていない|いと思っていません|いと思ってない|"
+    r"いとは思えない|いとは思えません|いと思えない|いと思えません|いと感じない|"
+    r"いと感じません|いことではない|いことではありません|いことはない|いことはありません)|"
+    r"無理(?!ではない|ではありません|じゃない|じゃありません|じゃなく|なら|ならば|だったら|であれば|"
+    r"かもしれ(?:ない|ません)|"
+    r"(?:だ)?とは思(?:いません|わない|っていません|ってない|えません)|(?:だ)?と思われたくない)|"
+    r"厳し(?!くない|くありません|くはない|くはありません|かった|くなかった|くはなかった|"
+    r"ければ|いなら|いならば|いだったら|いであれば|"
+    r"いかもしれ(?:ない|ません)|"
+    r"いとは言われるかもしれ(?:ない|ません)|いと言われるかもしれ(?:ない|ません)|"
+    r"いとは言えない|いとは言えません|"
+    r"いとは限らない|いとは限りません|いわけではない|いわけではありません|"
+    r"いわけじゃない|いわけじゃありません|いとは思っていない|いとは思っていません|"
+    r"いとは思ってない|いと思っていない|いと思っていません|いと思ってない)|"
+    r"(?:できな(?!くはない)|できません|できかねます)|したくな|"
+    r"差し?控え(?:ます|たい|た|させて)|控え(?:ます|たい|た|させて)|"
+    r"やめ(?:ます|たい|ておく|ておきます|ておきたい|よう)|"
+    r"考えていな)|"
+    r"(?:お会いできません(?!とは思えません|とは言い切れません|と感じません|ということはありません)|"
+    r"お会いできない(?:です)?|"
+    r"お会いできかねます)|"
+    r"(?:お誘い(?:について)?|会う|お会いする|ご一緒する|デート|お出かけ)"
+    r"(?:こと|の)?(?:は|を)(?:ちょっと)?"
+    r"(?:ご?遠慮(?:します|いたします|したい(?:です)?|させてください|させていただきます|"
+    r"させてもらいます|ください|願います|いただけますか|いただけませんか|"
+    r"いただければと思います|いただきたい(?:です)?)|お断り(?:します|いたします|申し上げます|"
+    r"したい(?:です)?|させてください|させていただきます|させてもらいます|"
+    r"です(?=。|$)|(?=。|$)))|"
+    r"今回は.{0,12}お断り(?:します|いたします|申し上げます|したい(?:です)?|"
+    r"させてください|させていただきます|させてもらいます|です(?=。|$)|(?=。|$))|"
+    r"(?:デート|お出かけ).{0,12}(?:難し|無理|できな|したくな)|"
+    r"(?:会えない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません|かな|かも)|"
+    r"会えません(?!か|わけではありません|とは言えません)|"
+    r"行けない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|とは限らない|とは限りません|かな|かも)|"
+    r"行けません(?!か|わけではありません|とは言えません)|"
+    r"空いていない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|かも)|"
+    r"空いてません(?!か|わけではありません|とは言えません)|"
+    r"都合が合わない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|かも)|"
+    r"都合が合いません(?!か|わけではありません|とは言えません)|"
+    r"都合がつかない(?!わけではない|わけではありません|わけじゃない|わけじゃありません|とは言えない|とは言えません|かも)|"
+    r"都合がつきません(?!か|わけではありません|とは言えません)|"
+    r"空いていません(?!か|わけではありません|とは言えません))|"
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|今週|来週|今月|来月|再来月|別の日|別日)"
+    r".{0,12}(?:予定があって|予定があり|都合が悪|空いていない|空いてません|厳し)|"
+    r"(?:お誘い|今回は).{0,8}(?:辞退|見送|控え)|"
+    r"今回は.{0,8}(?:やめ|遠慮(?!なく))|"
+    r"ごめんなさい.{0,16}(?:会|行)|今は.{0,8}(?:難し|無理|できな))"
+)
+_TAPPLE_COUNTERPROPOSAL_RE = re.compile(
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|その日).{0,12}"
+    r"(?:難し|無理|会えな|会えません|行けな|行けません|空いていない|空いてません|"
+    r"都合が合わな|都合が合いません|都合がつかな|都合がつきません|都合が悪|"
+    r"予定があって|予定があり|予定が合わな)"
+    r".{0,16}(?:でも|けど|が|なら|で|、).{0,12}"
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日)"
+    r".{0,8}(?:なら|は).{0,8}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)|"
+    r"(?:忙し|予定が合わな|都合が悪|会えな|行けな|難し|無理)"
+    r".{0,16}(?:でも|けど|が|なら|で|、).{0,16}"
+    r"(?:土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日)"
+    r".{0,8}(?:なら|は).{0,8}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)"
+)
+_TAPPLE_ACCEPTED_INVITATION_RE = re.compile(
+    r"(?:ぜひ|喜んで).{0,12}(?:一緒に|会いたい|会いましょう|行きましょう)|"
+    r"一緒に.{0,8}(?:行きたい|行きましょう|会いたい|会いましょう)|"
+    r"(?:ぜひ|喜んで).{0,8}(?:会おう|行こう)"
+)
+_TAPPLE_ACTIVITY_INTEREST_ACCEPTANCE_RE = re.compile(
+    r"(?:行きたい|会いたい)(?:です|！|。|$)"
+)
+_TAPPLE_SHORT_INVITATION_ACCEPTANCE_RE = re.compile(
+    r"^\s*(?:(?:うん|うんうん|はい|ええ|もちろん|ぜひ)[、,\s]*)?"
+    r"(?:いいよ|いいですね|いいね|大丈夫|楽しみ|お願いします|行こう|そうしよう)"
+    r"(?:です|ます|ね|よ)?"
+    r"(?:[、,！!。 ]*(?:楽しみ|嬉しい|うれしい|ありがとう)(?:です|ね|！|!)?)*"
+    r"[。！!？?]*\s*$"
+)
+_TAPPLE_CONTRADICTORY_INVITE_RATIONALE_RE = re.compile(
+    r"(?:意思を示して(?:いません|おらず)|"
+    r"(?:意思がない|意思はない)(?!わけではない|わけじゃない|とは限らない|とは言えない)|"
+    r"希望していません|曖昧さが残|とは言い切れない|と言い切れない|"
+    r"とは言えない(?!わけではない)|"
+    r"前向きではない|断って(?:いる|います|いた|る)|断った(?:可能性|かもしれ)|"
+    r"断られて(?:いる|います|いた)|拒否して(?:いる|います|いた)|"
+    r"拒否した(?:可能性|かもしれ)|会いたくない(?:と|って|様子)|"
+    r"行きたくない(?:と|って|様子)|(?:会う|行く)のは難し)"
+)
+_TAPPLE_CONTRADICTORY_STOP_RATIONALE_RE = re.compile(
+    r"(?:会いたい気持ち.{0,8}(?:強|ある)|会いたい意思|行きたい意思|"
+    r"明確な参加意思|ぜひ.{0,8}(?:会い|一緒に行き)|一緒に行きたい)"
+)
+_TAPPLE_UNSUPPORTED_INTENT_INFERENCE_RE = re.compile(
+    r"(?:会いたい気持ちがない|会いたい意思がない|"
+    r"会いたくない(?!わけではない(?:です)?|わけではありません|わけじゃない(?:です)?|"
+    r"わけじゃありません|とは限らない(?:です)?|とは限りません|"
+    r"とは言えない(?:です)?|とは言えません)|"
+    r"行きたくない(?!わけではない(?:です)?|わけではありません|わけじゃない(?:です)?|"
+    r"わけじゃありません|とは限らない(?:です)?|とは限りません|"
+    r"とは言えない(?:です)?|とは言えません))"
+)
+_TAPPLE_OBVIOUS_TOPIC_PIVOT_RE = re.compile(
+    r"(?:ところで|話(?:は)?変わるけど|そういえば|ちなみに).{0,24}"
+    r"(?:転職|就職|副業|投資|資格|仕事の相談|会社の相談|恋愛相談|悩み相談)|"
+    r"(?:転職して|転職を考え|就職して|副業を始め|投資を始め|投資に興味|"
+    r"資格を取|新しい会社に入|会社に入った|仕事の相談に乗って|"
+    r"会社の話.{0,10}(?:相談|ある)|(?:会社|仕事).{0,10}相談に乗って|相談に乗ってください|"
+    r"政治に興味|政治について|ゲームを始め|ゲームをしませんか|遊びませんか|"
+    r"釣りを始め|おすすめの竿|釣り.{0,12}(?:ハマ|好き|趣味|行く)|引っ越)"
+)
+_TAPPLE_DISRESPECTFUL_REPLY_RE = re.compile(
+    r"(?:自分勝手|わがまま|面倒くさい|しつこい|頭おかしい|意味わからない|"
+    r"だからモテない|性格悪い|常識ない|最低(?:ですね|だね|な人|すぎ)|"
+    r"死ね|死んで|消えて(?:ください|くれ|よ|ろ)|馬鹿|バカ|ばか|クズ|くず|キモい|"
+    r"気持ち悪い|うざい|ウザい|頭悪すぎ|メンヘラ|地雷女|ブス|性格終わって|"
+    r"(?:^|[。！？!?])クソ(?:$|[。！？!?]))"
+)
+_TAPPLE_UNVERIFIABLE_SAFETY_ASSURANCE_RE = re.compile(
+    r"(?:絶対|必ず|間違いなく|確実に).{0,8}"
+    r"(?:安全|安心して会え)(?!とは言えない|とは言えません|と言い切れない|と言い切れません)|"
+    r"(?:安全|安心して会え).{0,12}(?:保証|確約)(?!でき(?:る|ます)?とは言えない|"
+    r"できません|できない)|"
+    r"(?:安全|危険).{0,8}(?:問題ありません|大丈夫です)(?!とは言えません|とは言えない)"
+)
+_TAPPLE_PAST_MEETING_REAFFIRMATION_RE = re.compile(
+    r"(?:前回|前は|先日|以前|この前).{0,14}"
+    r"(?:会えなかった|会えませんでした|会うのは無理だった|会うのは難しかった|会うのは厳しかった)"
+    r".{0,16}(?:今度|次回|改めて).{0,8}"
+    r"(?:会いたい|会え(?:ます|る)|一緒に行きたい)"
+)
+_TAPPLE_HISTORICAL_DECLINE_CONTEXT_RE = re.compile(
+    r"(?:前は|以前は|昔は|かつて|前回は|以前).{0,24}"
+    r"(?:と思ってい(?:ました|た)|と考えてい(?:ました|た)|"
+    r"難しかった|厳しかった|無理だった)"
+)
+
+
+def _unqualified_tapple_decline_matches(text: str) -> list[re.Match[str]]:
+    declines = list(_TAPPLE_DECLINE_RE.finditer(text))
+    if not declines:
+        return []
+    counterproposals = list(_TAPPLE_COUNTERPROPOSAL_RE.finditer(text))
+    third_party_declines = list(_TAPPLE_THIRD_PARTY_DECLINE_RE.finditer(text))
+    reported_third_party_quotes = list(
+        _TAPPLE_REPORTED_THIRD_PARTY_QUOTE_RE.finditer(text)
+    )
+    quoted_declines = list(_TAPPLE_QUOTED_DECLINE_RE.finditer(text))
+    reported_declines = list(_TAPPLE_REPORTED_DECLINE_RE.finditer(text))
+    past_reaffirmations = list(_TAPPLE_PAST_MEETING_REAFFIRMATION_RE.finditer(text))
+    return [
+        decline
+        for decline in declines
+        if not _is_negated_tapple_decline(text, decline)
+        if not any(
+            counter.start() <= decline.start() < counter.end()
+            for counter in counterproposals
+        )
+        and not any(
+            third_party.start() <= decline.start() < third_party.end()
+            for third_party in third_party_declines
+        )
+        and not any(
+            quote.start() <= decline.start() < quote.end()
+            for quote in reported_third_party_quotes
+        )
+        and not any(
+            quote.start() <= decline.start() < quote.end()
+            for quote in quoted_declines
+        )
+        and not any(
+            report.start() <= decline.start() < report.end()
+            for report in reported_declines
+        )
+        and not any(
+            reaffirmation.start() <= decline.start() < reaffirmation.end()
+            for reaffirmation in past_reaffirmations
+        )
+        and not _has_reaffirmed_tapple_intent_after_decline(
+            text, decline, quoted_declines
+        )
+        and not _has_current_tapple_intent_before_historical_decline(
+            text, decline, quoted_declines
+        )
+        and not _has_linked_tapple_counterproposal(text, decline)
+    ]
+
+
+def _has_reaffirmed_tapple_intent_after_decline(
+    text: str,
+    decline: re.Match[str],
+    quoted_declines: list[re.Match[str]],
+) -> bool:
+    for positive in _TAPPLE_INVITE_POSITIVE_RE.finditer(text, decline.end()):
+        transition = text[decline.end() : positive.start()]
+        if not re.search(r"(?:今は|現在は|今なら)", transition):
+            continue
+        if any(
+            quote.start() <= decline.start() < quote.end()
+            for quote in quoted_declines
+        ):
+            continue
+        if _has_first_person_tapple_intent_evidence(
+            text, positive.group(0), _TAPPLE_INVITE_POSITIVE_RE
+        ):
+            return True
+    return False
+
+
+def _has_current_tapple_intent_before_historical_decline(
+    text: str,
+    decline: re.Match[str],
+    quoted_declines: list[re.Match[str]],
+) -> bool:
+    reported_quotes = list(_TAPPLE_REPORTED_THIRD_PARTY_QUOTE_RE.finditer(text))
+    third_party_declines = list(_TAPPLE_THIRD_PARTY_DECLINE_RE.finditer(text))
+    if any(
+        quote.start() <= decline.start() < quote.end()
+        for quote in [*quoted_declines, *reported_quotes, *third_party_declines]
+    ):
+        return False
+
+    for positive in _TAPPLE_INVITE_POSITIVE_RE.finditer(text, 0, decline.start()):
+        current_context = text[max(0, positive.start() - 20) : positive.start()]
+        if not re.search(r"(?:今は|現在は|今なら)", current_context):
+            continue
+        if not _has_first_person_tapple_intent_evidence(
+            text, positive.group(0), _TAPPLE_INVITE_POSITIVE_RE
+        ):
+            continue
+        for historical_decline in _TAPPLE_HISTORICAL_DECLINE_CONTEXT_RE.finditer(
+            text, positive.end()
+        ):
+            if (
+                historical_decline.start() <= decline.start()
+                and decline.end() <= historical_decline.end()
+            ):
+                return True
+    return False
+
+
+def _tapple_text_without_superseded_historical_declines(text: str) -> str:
+    declines = list(_TAPPLE_DECLINE_RE.finditer(text))
+    quoted_declines = list(_TAPPLE_QUOTED_DECLINE_RE.finditer(text))
+    reported_quotes = list(_TAPPLE_REPORTED_THIRD_PARTY_QUOTE_RE.finditer(text))
+    third_party_declines = list(_TAPPLE_THIRD_PARTY_DECLINE_RE.finditer(text))
+    reported_declines = list(_TAPPLE_REPORTED_DECLINE_RE.finditer(text))
+    attributed_spans = [
+        *quoted_declines,
+        *reported_quotes,
+        *third_party_declines,
+        *reported_declines,
+    ]
+    removals: list[tuple[int, int]] = []
+
+    for decline in declines:
+        if _is_negated_tapple_decline(text, decline):
+            continue
+        if any(
+            span.start() <= decline.start() < span.end()
+            for span in attributed_spans
+        ):
+            continue
+        if _has_current_tapple_intent_before_historical_decline(
+            text, decline, quoted_declines
+        ) or _has_reaffirmed_tapple_intent_after_decline(
+            text, decline, quoted_declines
+        ):
+            removals.append((decline.start(), decline.end()))
+
+    if not removals:
+        return text
+    result = list(text)
+    for start, end in removals:
+        result[start:end] = " " * (end - start)
+    return "".join(result)
+
+
+def _has_linked_tapple_counterproposal(
+    text: str, decline: re.Match[str]
+) -> bool:
+    if not any(
+        marker in decline.group(0)
+        for marker in ("難し", "厳し", "無理", "会えません", "お会いできません")
+    ):
+        return False
+    continuation = text[decline.end() : decline.end() + 48]
+    return bool(
+        re.search(r"(?:が|けど|けれど|でも|。)", continuation)
+        and not _TAPPLE_THIRD_PARTY_COUNTERPROPOSAL_RE.search(continuation)
+        and _TAPPLE_DIRECT_COUNTERPROPOSAL_RE.search(continuation)
+    )
+
+
+_TAPPLE_DECLINE_NEGATION_SUFFIX_RE = re.compile(
+    r"^(?:い)?(?:とは(?:言えない|言えません|言い切れない|言い切れません|限らない|限りません|思わない|思いません|"
+    r"思っていない|思っていません|思ってない|思ってません|思えない|思えません|"
+    r"感じない|感じません)|と(?:思わない|思いません|思えない|"
+    r"思えません|感じない|感じません)|ということは(?:ない|ありません)|"
+    r"わけでは(?:ない|ありません)|わけじゃ(?:ない|ありません)|"
+    r"ことでは(?:ない|ありません)|ことは(?:ない|ありません))"
+)
+
+
+def _is_negated_tapple_decline(text: str, decline: re.Match[str]) -> bool:
+    suffix = text[decline.end() : decline.end() + 28]
+    return bool(_TAPPLE_DECLINE_NEGATION_SUFFIX_RE.match(suffix))
+
+
+_TAPPLE_THIRD_PARTY_DECLINE_RE = re.compile(
+    r"(?:友達|友人|同僚|家族|兄弟|兄|姉|弟|妹|父|母|両親|親戚|いとこ|従兄弟|従姉妹|"
+    r"甥|姪|祖父|祖母|先輩|後輩|知人|別の人|他の人|ほかの人|彼氏|彼女)"
+    r"から.{0,16}(?:お会いしたく(?:は)?ない|お会いしたく(?:は)?ありません|"
+    r"会いたくない|会いたくありません|(?:お会いする|会う).{0,10}つもりは(?:ない|ありません)|"
+    r"(?:お会いする|会う).{0,12}(?:難し|無理|控え|遠慮))"
+    r".{0,16}(?:と言われ|って言われ|と聞|って聞)|"
+    r"(?:友達|友人|同僚|家族|兄弟|兄|姉|弟|妹|父|母|両親|親戚|いとこ|従兄弟|従姉妹|"
+    r"甥|姪|祖父|祖母|先輩|後輩|知人|別の人|他の人|ほかの人|彼氏|彼女)"
+    r"(?:が|は).{0,24}(?:(?:お会いする|ご一緒する|会う|行く).{0,12}"
+    r"(?:難し|無理|できな|控え|遠慮|つもりは(?:ない|ありません))|"
+    r"(?:お?会いたくない|お?会いたくありません|お会いしたくない|お会いしたくありません|"
+    r"行きたくない|行きたくありません))"
+    r".{0,16}(?:と言って|って言って|と話して|って話して|と聞いて|って聞いて)"
+)
+
+
+_TAPPLE_QUOTED_DECLINE_RE = re.compile(
+    r"[「『][^」』]{0,20}(?:お会いしたく(?:は)?ない|お会いしたく(?:は)?ありません|"
+    r"会いたくない|会いたくありません|(?:お会いする|ご一緒する|会う|行く).{0,10}"
+    r"(?:難し|無理|できな|控え|遠慮|つもりは(?:ない|ありません)))[^」』]{0,8}[」』]"
+    r"(?:"
+    r"(?:と|って)(?:(?:友達|友人|同僚|家族|相手|本人|知人|知り合い|先輩|後輩|同級生|"
+    r"彼氏|彼女|元彼女?|元カレ|元カノ|別の人|他の人|ほかの人|人)(?:に|から))?"
+    r"(?:言われ|聞かされ|聞き)|"
+    r"(?:と(?:(?:友達|友人|同僚|家族|相手|本人|知人|知り合い|人)に)?"
+    r"(?:私は|私が)?言(?:いました|った|って)|[。.!！?？])"
+    r".{0,20}(?:会いたい|会ってみたい|一緒に行きたい|行きたい)"
+    r")"
+)
+_TAPPLE_REPORTED_DECLINE_RE = re.compile(
+    r"(?:会う|お会いする|ご一緒する|デート|お出かけ).{0,12}"
+    r"(?:無理|難し|厳し|できな|控え|遠慮|お断り)"
+    r".{0,12}(?:と|って)(?:(?:友達|友人|同僚|家族|相手|本人|知人|人)に)?"
+    r"(?:言われ|聞かされ|聞き|言われる)"
+)
+
+
+_TAPPLE_DIRECT_COUNTERPROPOSAL_RE = re.compile(
+    r"(?:今日|明日|土曜|土曜日|日曜|日曜日|平日|週末|"
+    r"来週|今週|今月|来月|再来月|別の日|別日)"
+    r".{0,8}(?:なら|は|に).{0,10}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)"
+)
+
+
+def _unresolved_tapple_decline_match(
+    conversation_messages: list[dict[str, Any]], last_contact_index: int
+) -> re.Match[str] | None:
+    unresolved: re.Match[str] | None = None
+    unresolved_is_date_specific = False
+    for message in conversation_messages[: last_contact_index + 1]:
+        if message.get("sender") != "contact":
+            continue
+        text = prompt.clean_chat_message_content(str(message.get("content") or ""))
+        decline_matches = _unqualified_tapple_decline_matches(text)
+        date_unavailability_matches = list(
+            _TAPPLE_DATE_UNAVAILABILITY_RE.finditer(text)
+        )
+        for decline_match in decline_matches:
+            is_date_specific = bool(
+                any(
+                    date_match.start() <= decline_match.start() < date_match.end()
+                    for date_match in date_unavailability_matches
+                )
+            )
+            if not is_date_specific or unresolved is None or unresolved_is_date_specific:
+                unresolved = decline_match
+                unresolved_is_date_specific = is_date_specific
+        if (
+            unresolved
+            and not decline_matches
+            and _has_first_person_tapple_invite_positive(text)
+            and not _has_tapple_explicit_hesitation(text)
+            and not _has_tapple_safety_concern(text)
+        ):
+            unresolved = None
+            unresolved_is_date_specific = False
+        elif (
+            unresolved
+            and unresolved_is_date_specific
+            and not decline_matches
+            and _TAPPLE_DIRECT_COUNTERPROPOSAL_RE.search(text)
+            and not _TAPPLE_THIRD_PARTY_COUNTERPROPOSAL_RE.search(text)
+            and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(text)
+            and not _has_tapple_explicit_hesitation(text)
+            and not _has_tapple_safety_concern(text)
+        ):
+            unresolved = None
+            unresolved_is_date_specific = False
+    return unresolved
+_TAPPLE_INVITE_POSITIVE_RE = re.compile(
+    r"(?:一緒に.{0,8}(?:行きたい|行こう|行きましょう|会いたい|会おう|会いましょう)|"
+    r"(?:今度|近いうち).{0,8}(?:一緒に行きたい|会いたい|会いましょう)|"
+    r"(?:会いたい|会ってみたい)(?:です|！|。|$)|会いましょう|誘って(?:ください|ね|！|$))"
+)
+_TAPPLE_ACTIVITY_INTEREST_RE = re.compile(
+    r"(?:行ってみたい(?:です|な|ね|！|。|$)|食べてみたい(?:です|な|ね|！|。|$)|"
+    r"見てみたい(?:です|な|ね|！|。|$)|試してみたい(?:です|な|ね|！|。|$)|"
+    r"体験してみたい(?:です|な|ね|！|。|$)|"
+    r"気になって(?:います|ます|る)(?:ね|！|。|$)|"
+    r"興味が(?:あります|ある)(?:ね|！|。|$)|また行きたい(?:です|！|。|$))"
+)
+_TAPPLE_SHARED_ACTIVITY_TERMS = (
+    "カフェ", "喫茶", "コーヒー", "紅茶", "パンケーキ", "スイーツ", "ケーキ",
+    "ランチ", "ディナー", "ごはん", "食事", "焼肉", "ラーメン", "映画", "ミステリー",
+    "展示", "美術館", "水族館", "動物園", "遊園地", "ライブ", "音楽", "旅行", "温泉",
+    "散歩", "公園", "スポーツ", "サッカー", "野球", "ゲーム", "読書", "小説", "文庫", "料理",
+)
+_TAPPLE_GENERIC_INTEREST_TERMS = frozenset(
+    {"最近", "今日", "昨日", "週末", "休日", "今度", "興味", "関心", "体験", "経験", "趣味", "活動", "共通", "一緒", "時間", "場所", "ところ", "本当"}
+)
+
+
+def _extract_tapple_interest_terms(text: str) -> set[str]:
+    """Extract hobby terms only when they act as a specific activity noun."""
+    candidate_re = re.compile(
+        r"[\u30A0-\u30FFー]{2,}|[\u3400-\u4DBF\u4E00-\u9FFF々]{2,}|"
+        r"[A-Za-z][A-Za-z0-9+#.-]{1,}"
+    )
+    activity_predicate_re = re.compile(
+        r"^(?:が|は|も|に|を|なら|とか|巡り|鑑賞|する|して|の)?"
+        r".{0,2}(?:好き|興味|関心|気にな|ハマ|はま|楽し|よく.{0,2}"
+        r"(?:行く|する|見る|食べる)|行きたい|行ってみたい|食べてみたい|"
+        r"見てみたい|試してみたい|体験|したい|趣味|おすすめ)"
+    )
+    return {
+        match.group(0)
+        for match in candidate_re.finditer(text)
+        if match.group(0) not in _TAPPLE_GENERIC_INTEREST_TERMS
+        and activity_predicate_re.search(text[match.end() :])
+    }
+
+
+_TAPPLE_ACTIVITY_DISINTEREST_PREDICATE = (
+    r"(?:好き(?:では|じゃ)(?:ありません|ない(?!わけ|こと))|"
+    r"得意(?:では|じゃ)(?:ありません|ない(?!わけ|こと))|"
+    r"苦手(?!(?:(?:では|じゃ)(?:ない|ありません)|なわけではない|なわけじゃない|"
+    r"というわけではない|というほどではない))|"
+    r"嫌い(?!(?:(?:では|じゃ)(?:ない|ありません)|なわけではない|なわけじゃない|"
+    r"というわけではない|というほどではない))|"
+    r"興味(?:が)?(?:ありません|ない(?!わけ|こと))|"
+    r"行きたく(?:ありません|ない(?!わけ|こと))|"
+    r"行かない(?!わけ|こと)|"
+    r"行く気が(?:ありません|ない(?!わけ|こと))|"
+    r"行かなくな(?:った|りました)|"
+    r"気になりません|気にならない(?!わけ|こと))"
+)
+_TAPPLE_ACTIVITY_DISINTEREST_PREFIX = (
+    r"(?:あまり|そんなに|全然|もう|最近は|最近|ちょっと)?"
+)
+_TAPPLE_ACTIVITY_DISINTEREST_RE = re.compile(
+    rf"^(?:(?:(?:は|が|も|には|に|では|なら|だと)[、,：:\s]*)?"
+    rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREFIX}"
+    rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREDICATE}|"
+    rf"(?:に|へ|を)?(?:行く|行ってみる|訪れる|見る|観る|食べる|する)"
+    rf"(?:の|こと)(?:は|が)[、,：:\s]*"
+    rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREFIX}"
+    rf"{_TAPPLE_ACTIVITY_DISINTEREST_PREDICATE})"
+)
+_TAPPLE_RENEWED_ACTIVITY_POSITIVE_RE = re.compile(
+    r"(?:(?<!では)(?<!じゃ)(?:好き|得意)(?:です|だ|で|な|かも|と思います|と思う)?|"
+    r"行きたい|行ってみたい|食べてみたい|見てみたい|試してみたい|"
+    r"体験してみたい|気になって(?:います|ます|る)|興味が(?:あります|ある))"
+)
+
+
+def _has_recent_self_disinterest_in_tapple_activity(
+    conversation_messages: list[dict[str, Any]],
+    last_contact_index: int,
+    activity_term: str,
+) -> bool:
+    self_texts = [
+        prompt.clean_chat_message_content(str(message.get("content") or ""))
+        for message in conversation_messages[:last_contact_index]
+        if message.get("sender") == "self"
+        and prompt.clean_chat_message_content(str(message.get("content") or ""))
+    ]
+    renewed_interest_re = re.compile(
+        r"(?:また|今度|これから|今は|今でも).{0,8}"
+        r"(?:好き|行きたい|行ってみたい|気になって|興味)"
+    )
+    is_disinterested = False
+    for self_text in self_texts:
+        events: list[tuple[int, bool]] = []
+        for clause_match in re.finditer(r"[^。！？!?\n]+", self_text):
+            clause = clause_match.group(0)
+            for term_match in re.finditer(re.escape(activity_term), clause):
+                following_text = clause[term_match.end() :]
+                disinterest_match = _TAPPLE_ACTIVITY_DISINTEREST_RE.match(
+                    following_text
+                )
+                if disinterest_match is not None:
+                    disinterest_end = (
+                        clause_match.start()
+                        + term_match.end()
+                        + disinterest_match.end()
+                    )
+                    events.append(
+                        (
+                            clause_match.start()
+                            + term_match.end()
+                            + disinterest_match.start(),
+                            True,
+                        )
+                    )
+                    later_text = self_text[disinterest_end:]
+                    renewal_match = renewed_interest_re.search(later_text)
+                    if renewal_match:
+                        renewal_context = later_text[: renewal_match.end()]
+                        other_terms = (
+                            set(_TAPPLE_SHARED_ACTIVITY_TERMS)
+                            | _extract_tapple_interest_terms(renewal_context)
+                        ) - {activity_term}
+                        renewal_tail = later_text[renewal_match.end() :]
+                        renewal_is_negative = bool(
+                            _TAPPLE_ACTIVITY_DISINTEREST_RE.match(renewal_tail)
+                        )
+                        if not renewal_is_negative and not any(
+                            term in renewal_context for term in other_terms
+                        ):
+                            events.append(
+                                (disinterest_end + renewal_match.start(), False)
+                            )
+                    continue
+
+                positive_match = _TAPPLE_RENEWED_ACTIVITY_POSITIVE_RE.search(
+                    following_text
+                ) or _TAPPLE_ACTIVITY_INTEREST_RE.search(following_text)
+                if positive_match:
+                    events.append(
+                        (
+                            clause_match.start()
+                            + term_match.end()
+                            + positive_match.start(),
+                            False,
+                        )
+                    )
+
+        for _position, disinterest_event in sorted(events):
+            is_disinterested = disinterest_event
+
+    return is_disinterested
+
+
+def _has_recent_shared_tapple_activity(
+    conversation_messages: list[dict[str, Any]],
+    last_contact_index: int,
+    last_contact_text: str,
+) -> bool:
+    interest_match = _TAPPLE_ACTIVITY_INTEREST_RE.search(last_contact_text)
+    if interest_match is None:
+        return False
+
+    clause_start = max(
+        last_contact_text.rfind(mark, 0, interest_match.start())
+        for mark in ("。", "！", "？", "!", "?", "\n")
+    ) + 1
+    clause_end_candidates = [
+        index
+        for mark in ("。", "！", "？", "!", "?", "\n")
+        if (index := last_contact_text.find(mark, interest_match.end())) >= 0
+    ]
+    interest_clause = last_contact_text[
+        clause_start : min(clause_end_candidates, default=len(last_contact_text))
+    ]
+    contrast_markers = (
+        "とは言っても", "とはいうものの", "とはいえ", "とは言え", "ですが",
+        "だけど", "けれど", "けど", "ものの", "一方で", "でも", "が、", "が,",
+    )
+    contrast_positions = [
+        (interest_clause.rfind(marker), marker)
+        for marker in contrast_markers
+        if interest_clause.rfind(marker) >= 0
+    ]
+    if contrast_positions:
+        contrast_position, marker = max(contrast_positions)
+        interest_clause = interest_clause[contrast_position + len(marker) :]
+
+    previous_contact = next(
+        (
+            (index, prompt.clean_chat_message_content(
+                str(conversation_messages[index].get("content") or "")
+            ))
+            for index in range(last_contact_index - 1, -1, -1)
+            if conversation_messages[index].get("sender") == "contact"
+            and prompt.clean_chat_message_content(
+                str(conversation_messages[index].get("content") or "")
+            )
+        ),
+        None,
+    )
+    if previous_contact is None:
+        return False
+    previous_contact_index, previous_contact_text = previous_contact
+    if not re.search(
+        r"(?:好き|気にな|楽しみ|行ってみたい|食べてみたい|見てみたい|"
+        r"はまって|おすすめ)",
+        previous_contact_text,
+    ) and not _TAPPLE_ACTIVITY_INTEREST_RE.search(previous_contact_text) and not any(
+        mark in previous_contact_text for mark in ("？", "?")
+    ):
+        return False
+
+    prior_self_texts = [
+        prompt.clean_chat_message_content(str(message.get("content") or ""))
+        for message in conversation_messages[previous_contact_index + 1 : last_contact_index]
+        if message.get("sender") == "self"
+    ]
+    prior_contact_texts = [
+        prompt.clean_chat_message_content(str(message.get("content") or ""))
+        for message in conversation_messages[: last_contact_index]
+        if message.get("sender") == "contact"
+    ]
+    candidate_terms = set(_TAPPLE_SHARED_ACTIVITY_TERMS)
+    for prior_text in (*prior_contact_texts, *prior_self_texts, interest_clause):
+        candidate_terms.update(_extract_tapple_interest_terms(prior_text))
+    for term in sorted(candidate_terms, key=len, reverse=True):
+        if term not in interest_clause or not any(term in text for text in prior_contact_texts):
+            continue
+        if _has_recent_self_disinterest_in_tapple_activity(
+            conversation_messages, last_contact_index, term
+        ):
+            continue
+        if term in previous_contact_text and any(term in text for text in prior_self_texts):
+            return True
+        if (
+            any(mark in previous_contact_text for mark in ("？", "?"))
+            and any(term in text for text in prior_self_texts)
+        ):
+            return True
+    return False
+
+
+def _has_tapple_relevant_invite_hedge(text: str) -> bool:
+    activity_interest = _TAPPLE_ACTIVITY_INTEREST_RE.search(text)
+    if activity_interest:
+        conditional_before_interest = text[: activity_interest.start()]
+        if re.search(
+            r"(?:もし.{0,12}|(?:予定|都合|時間|タイミング|機会).{0,12})"
+            r"(?:たら|れば|かも|かな)",
+            conditional_before_interest,
+        ):
+            return True
+        return _TAPPLE_INVITE_HEDGE_RE.search(text[activity_interest.end() :]) is not None
+
+    return _has_tapple_post_acceptance_hedge(text)
+
+
+_TAPPLE_INVITE_HEDGE_RE = re.compile(
+    r"(?:たら|れば|かも|かな|いつか|できたら|できれば|行けたら|会えたら|"
+    r"行けない|会えない|難し|無理|今は|"
+    r"まだ.{0,8}(?:難し|無理|会え|行け|迷|悩|考え|早い|未定|分から|わから|決められ|決めかね|不安|抵抗))"
+)
+_TAPPLE_EXPLICIT_HESITATION_RE = re.compile(
+    r"^\s*(?:(?:正直|実は|私は|私も|本当は|ぶっちゃけ)(?:、|,)?.{0,8})?"
+    r"(?:(?:まだ|少し|ちょっと).{0,8})?"
+    r"(?:迷って|悩んで|考えさせて|決めかね).{0,20}"
+    r"(?:一緒に行き|行きたい|会いたい|会いましょう|デート|会う)|"
+    r"(?:会う|デート|会いたい|一緒に行く)"
+    r"(?!日(?:程|時|取り|を|で|が|の|に|は|なら)|曜日|候補日|場所|店|"
+    r"か.{0,4}(?:どこ|場所|店)|何を着|何を話|服装|話題|天気)"
+    r"(?:かどうか|べきか|こと自体|ことに|ことを|のを|のは|か).{0,8}"
+    r"(?:迷って|迷い|悩んで|悩み|考え|決め)|"
+    r"(?:一緒に行き|行きたい|会いたい|会いましょう|デート|会う)"
+    r"(?!日(?:程|時|取り|を|で|が|の|に|は|なら)|曜日|候補日|場所|店|"
+    r"か.{0,4}(?:どこ|場所|店)|何を着|何を話|服装|話題|天気).{0,12}"
+    r"(?:けど|けれど|でも|ものの|ですが|だが|が、|が,)、?"
+    r"(?:(?:少し|ちょっと|まだ).{0,2})?"
+    r"(?:迷って|迷い|悩んで|悩み|考えさせて|考えたい|決めかね)"
+)
+_TAPPLE_LOGISTICS_HESITATION_RE = re.compile(
+    r"(?:会う日|日程|候補|曜日|どこで会う|会う場所|場所|お店|店|"
+    r"何を着|何着|服装|何を話|話題)"
+    r"[^。.!！?？\n]{0,8}(?:迷って|迷い|悩んで|悩み|考え)"
+)
+_TAPPLE_LATER_HESITATION_RE = re.compile(
+    r"(?:(?:正直|実は|私は|私も|本当は|ぶっちゃけ|でも|それでも|まだ|少し|ちょっと)"
+    r".{0,8})?(?:迷って|迷い|迷う|悩んで|悩み|悩む|考えさせて|決めかね)"
+)
+_TAPPLE_HESITATION_QUALIFIED_NEGATION_RE = re.compile(
+    r"(?:迷って|悩んで)(?:い)?(?:は|が)?(?:い)?(?:ません|ないです|ない|おりません)"
+    r"(?:とは言え|とは言い切れ|とは限ら|わけでは|わけじゃ|かもしれ)"
+)
+_TAPPLE_HESITATION_NEGATION_RE = re.compile(
+    r"抵抗(?:感)?(?:は|が|を)?(?:ありません|ないです|ない|ございません)|"
+    r"抵抗(?:感)?(?:を)?感じて(?:い)?ません|抵抗(?:感)?(?:を)?感じて(?:い)?ない(?:です)?|"
+    r"緊張(?:は|が|を)?(?:ありません|ないです|ない|ございません|しません|しない(?:です)?)|"
+    r"(?:迷って|悩んで)(?:い)?(?:は|が|と)?(?:い)?"
+    r"(?:ません|ないです|ない|おりません)|"
+    r"(?:は|が)?(?:迷い|悩み)(?:ません|ありません|ないです|ない|ございません)|"
+    r"(?:迷い|悩み)(?:は|が)?(?:ありません|ないです|ない|ございません)|"
+    r"(?:迷って|悩んで)いるとは言えません"
+)
+_TAPPLE_DIRECT_MEETING_HESITATION_RE = re.compile(
+    r"(?<!どこで)(?:会う|会うこと|会うの)(?!日(?:程|時|取り|を|で|が|の|に|は|なら)|"
+    r"場所|曜日|候補日|前に何を話)[^、,。.!！?？\n]{0,12}"
+    r"(?:迷って|迷い|迷う|悩んで|悩み|悩む|ためら|気が進みません?)|"
+    r"(?:会いたい|一緒に行きたい).{0,8}"
+    r"(?:けど|けれど|でも|ものの|ですが|だが|が、|が,)、?"
+    r"(?:(?:少し|ちょっと|まだ).{0,2})?"
+    r"(?:迷って|迷い|迷う|悩んで|悩み|悩む|考えさせて|決めかね|気が進みません?)|"
+    r"(?:会う|直接会う).{0,8}(?:ちょっと|少し)\s*(?:…|\.\.\.|．．．)$"
+)
+_TAPPLE_UNRELATED_HESITATION_TOPIC_RE = re.compile(
+    r"(?:仕事|家族|友達|友人|同僚|職場|会社|勉強|転職先|転職|資格|進路|就職|"
+    r"引っ越し|引越し|将来|健康|天気)"
+    r"(?:が|は|も|に|を|のこと(?:で|を|に|が)?|について|に関して|で|から)"
+    r"(?:(?!会う|会える|デート|対面|直接)[^。.!！?？\n、,，]){0,18}"
+    r"(?:迷って|迷い|迷う|悩んで|悩み|悩む|考え)"
+)
+_TAPPLE_UNRELATED_SAFETY_TOPIC_RE = re.compile(
+    r"(?:仕事|職場|会社|家庭|家族|勉強|転職)"
+    r"(?:の|に関する|について(?:は|の|が|も)?|からの)?$"
+)
+_TAPPLE_SAFETY_CONTEXT_RE = re.compile(
+    r"(?:会う|会える|デート|対面|直接|安全|信頼|信用|身元|素性)"
+)
+_TAPPLE_UNRELATED_SAFETY_CLAUSE_RE = re.compile(
+    r"(?:仕事|職場|会社|現場|工場)"
+    r"(?:(?!会う|会える|デート|対面|直接)[^。.!！?？\n、,，]){0,20}"
+    r"(?:安全|不安|心配|怖|こわ|恐)"
+)
+_TAPPLE_UNRELATED_CONCERN_RE = re.compile(
+    r"(?:(?:母|父|親|家族|友達|友人|同僚|明日|今日|来週|今週|週末)(?:の|について)?)?"
+    r"(?:(?:仕事の)?面接|試験勉強|試験|テスト|体調|健康|予定|天気|雨|雪|気温|台風|風|暑さ|寒さ|予報)"
+    r"[^。.!！?？\n、,]{0,12}(?:不安|心配|気になる|気掛かり|緊張)"
+)
+_TAPPLE_MEETING_REFERENCE_RE = re.compile(r"(?:会う|会える|デート|対面|直接)")
+_TAPPLE_MEETING_LOGISTICS_CONCERN_RE = re.compile(
+    r"(?:会う|デート)(?:の)?日程[^。.!！?？\n、,]{0,8}(?:不安|心配|気になる)|"
+    r"(?:会う|デート)(?:の)?日[^。.!！?？\n、,]{0,8}"
+    r"(?:雨|天気|予定|時間|都合|交通)[^。.!！?？\n、,]{0,8}"
+    r"(?:不安|心配|気になる)"
+)
+_TAPPLE_UNRELATED_FEAR_OBJECT_RE = re.compile(
+    r"(?:怖い|こわい|恐い)(?:映画|ホラー|話|夢|小説|作品|映像|ドラマ|ゲーム|漫画|マンガ)"
+)
+_TAPPLE_DECISION_TIME_REQUEST_RE = re.compile(
+    r"(?:考える|考えさせて|決める|判断する).{0,8}(?:時間|猶予).{0,8}"
+    r"(?:ほしい|ください|もらえ|いただけ|もらってもいい|いただいてもいい|"
+    r"もらってもよい|いただいてもよい)|"
+    r"(?:決める|判断する)前に.{0,8}(?:時間|猶予).{0,8}(?:ほしい|ください|もらえ|いただけ)|"
+    r"(?:考えてから|考えた上で).{0,8}(?:返事|返信|回答).{0,8}(?:したい|させて)|"
+    r"(?:少し|もう少し|ちょっと)?考えたい(?:です)?|"
+    r"(?:返事|返信|回答).{0,8}(?:時間|猶予).{0,8}(?:ほしい|ください|もらえ|いただけ)|"
+    r"(?:返事|返信|回答).{0,12}(?:もう少し|少し)?考えてから.{0,8}(?:したい|させて)|"
+    r"(?:返事|返信).{0,16}待って.{0,8}"
+    r"(?:もらえ|もらってもいい|いただけ|ください|ほしい|ほしいです)|"
+    r"(?:返事|返信|回答).{0,8}(?:明日|明後日|今日の後|あとで|後で|後ほど|後日|来週)"
+    r".{0,8}(?:します|する|しますね|するね|返します|返す|答えます|答える)|"
+    r"(?:明日|明後日|今日の後|あとで|後で|後ほど|後日|来週)"
+    r"(?:まで(?:には|に)?|には|は)?(?:返事|返信|回答).{0,8}"
+    r"(?:します|する|しますね|するね|返します|返す|答えます|答える)|"
+    r"(?:明日|明後日|今日の後|あとで|後で|後ほど|後日|来週)"
+    r"(?:まで(?:には|に)?|には|まで)?待って.{0,8}"
+    r"(?:もらえ|もらってもいい|いただけ|ください|ほしい|ほしいです)"
+)
+_TAPPLE_MEETING_DEFERRAL_RE = re.compile(
+    r"(?:もう少し|もうちょっと|まずは|しばらく).{0,12}"
+    r"(?:メッセージ|やり取り|話).{0,16}(?:してから|続けてから)|"
+    r"(?:会う|会うのは|会うことは|デート).{0,8}(?:まだ早い|早いと思|抵抗|ためら)|"
+    r"(?:先に|まずは).{0,8}(?:メッセージ|やり取り).{0,12}(?:して|続け)"
+)
+_TAPPLE_SAFETY_CONCERN_RE = re.compile(
+    r"(?:会う|会える|デート|直接会う|会いに行く)[^。.!！?？]{0,20}"
+    r"(?:不安|怖|こわ|恐|心配|抵抗|ためら|気が進まない|緊張|"
+    r"ハードル(?:が)?高|勇気(?:が)?(?:出ない|出ません|ありません|ない|いります|いる))|"
+    r"(?:会いたい|一緒に行きたい)[^。.!！?？]{0,12}[。.!！?？][^。.!！?？]{0,8}"
+    r"(?:少し|ちょっと|まだ)?(?:不安|怖い|こわい|恐い|心配|抵抗|ためら|緊張)|"
+    r"(?:会いたい|一緒に行きたい)[^。.!！?？]{0,4}(?:けど|けれど|が|ものの|でも)(?:、|,)?"
+    r"[^。.!！?？、,]{0,10}(?:少し|ちょっと|まだ)?"
+    r"(?:不安|怖|こわ|恐|心配|抵抗|ためら|緊張|ハードル(?:が)?高|"
+    r"勇気(?:が)?(?:出ない|出ません|ありません|ない|いります|いる))|"
+    r"(?:初対面|初めて会う|会ったことがない).{0,16}"
+    r"(?:警戒|不安|怖|こわ|恐|心配|抵抗|ためら|慎重|用心|勇気(?:が)?(?:ない|いります|いる))|"
+    r"(?:初めて|初対面).{0,10}(?:不安|怖|こわ|恐|心配|抵抗|ためら|慎重|用心)|"
+    r"警戒しないと(?:いけない|ならない|だめ|危ない|危険|まずい|"
+    r"ですよね|ですね|だよね|だね|ね|な|[。.!！?？、,]|$)|"
+    r"(?:安全|安全性).{0,12}(?:かどうか|か).{0,12}(?:分から|わから|不明|判断できない)|"
+    r"(?:安全面|安全性|安全).{0,10}(?:不安|心配|怖|こわ|恐)|"
+    r"(?:安全面|安全性|安全).{0,12}(?:気にな|確認したい|気掛かり)|"
+    r"(?:初対面|初めて会う|会ったことがない).{0,16}警戒|"
+    r"警戒.{0,12}(?:初対面|初めて会う|会ったことがない|会う|デート|相手|あなた)|"
+    r"(?:相手|あなた).{0,8}警戒|"
+    r"(?:不安|怖|こわ|恐|心配).{0,20}(?:安全|信頼|信用|身元|素性)|"
+    r"(?:信頼|信用|信じられ).{0,12}(?:できるか|まだ|難し|不安|心配|わから|分から|怖|こわ|恐)|"
+    r"(?:信頼|信用|信じられ)(?:できない|できるか不安)|"
+    r"(?:信じて(?:いい|よい)か|信じても大丈夫か).{0,12}"
+    r"(?:不安|心配|怖|こわ|恐|迷|分から|わから)|"
+    r"(?:安全|信頼|信用|あなた).{0,12}"
+    r"(?:信じきれない|信じ切れない|信じきれません|信じ切れません|信じられない|信じられません)|"
+    r"(?:身元|素性|相手のこと|相手について|相手がどんな人|どんな方|どんな人).{0,18}"
+    r"(?:分から|わから|知ら|不安|心配|怖|こわ|恐)|"
+    r"会ったことが(?:ない|なくて|なかった).{0,10}(?:不安|心配|怖|こわ|恐)"
+)
+_TAPPLE_SAFETY_CONCERN_NEGATION_RE = re.compile(
+    r"抵抗(?:感)?(?:は|が|を)?(?:ありません|ないです|ない|ございません)|"
+    r"抵抗(?:感)?(?:を)?感じて(?:い)?ません|抵抗(?:感)?(?:を)?感じて(?:い)?ない(?:です)?|"
+    r"緊張(?:は|が|を)?(?:ありません|ないです|ない|ございません|しません|しない(?:です)?)|"
+    r"ためらい?(?:は|が)?(?:ありません|ないです|ない|ございません|しません|しない(?:です)?)|"
+    r"警戒(?:心)?(?:する)?(?:必要|こと|理由|必要性)(?:は|が)?"
+    r"(?:ありません|ないです|ない|ございません)|"
+    r"警戒(?:心)?(?:を)?しなくて(?:も)?"
+    r"(?:大丈夫|いい|よい|問題ない|平気)(?:です)?|"
+    r"(?:不安|怖|こわ|恐|心配)(?:い|く|さ)?(?:だと)?(?:では|じゃ|とは|は|を|に)?"
+    r"(?:ありません|ないです|ない|ございません|して(?:い)?ません|して(?:い)?ない(?:です)?|"
+    r"感じて(?:い)?ません|感じて(?:い)?ない(?:です)?|感じません|感じない(?:です)?|"
+    r"思いません|思わない(?:です)?)|"
+    r"警戒(?:心)?(?:を|は|が)?(?:しません|"
+    r"しない(?:です)?(?!と(?:いけない|ならない|だめ|危ない|危険|まずい|"
+    r"ですよね|ですね|だよね|だね|ね|な|[。.!！?？、,]|$))|"
+    r"して(?:い)?ません|して(?:い)?ない(?:です)?|"
+    r"(?:ありません|ないです|ない)"
+    r"(?!と(?:危ない|危険|まずい|いけない|ならない))"
+    r")"
+)
+_TAPPLE_SAFETY_CONCERN_QUALIFIED_NEGATION_RE = re.compile(
+    r"(?:(?:不安|怖|こわ|恐|心配)(?:く)?(?:だと)?(?:では|じゃ|とは|は|を)?"
+    r"(?:ありません|ないです|ない|ございません|して(?:い)?ません|して(?:い)?ない(?:です)?|"
+    r"感じて(?:い)?ません|感じて(?:い)?ない(?:です)?)|"
+    r"(?:抵抗(?:感)?|緊張|ためらい?)(?:は|が|を)?"
+    r"(?:ありません|ないです|ない|ございません|しません|しない(?:です)?)|"
+    r"警戒(?:心)?(?:を)?しなくて(?:も)?"
+    r"(?:大丈夫|いい|よい|問題ない|平気)(?:です)?|"
+    r"警戒(?:心)?(?:する)?(?:必要|こと|理由|必要性)(?:は|が)?"
+    r"(?:ありません|ないです|ない|ございません)|"
+    r"警戒(?:心)?(?:を|は|が)?(?:しません|"
+    r"しない(?:です)?(?!と(?:いけない|ならない|だめ|危ない|危険|まずい))|"
+    r"して(?:い)?ません|して(?:い)?ない(?:です)?|ありません|ないです|ない))"
+    r"(?:"
+    r"(?:とは|と)(?:言え|いえ|言い切れ|いいきれ)(?:ない|ません)|"
+    r"とは限らない|とは限りません|わけではない|わけじゃない|"
+    r"かも(?:しれない|しれません)|"
+    r"(?:とは|と)?思え(?:ない|ません)|(?:とは|と)?思わ(?:ない|ないです|ないかも)"
+    r")"
+)
+
+
+def _has_tapple_safety_concern(text: str) -> bool:
+    unrelated_concerns = list(_TAPPLE_UNRELATED_CONCERN_RE.finditer(text))
+    for match in _TAPPLE_SAFETY_CONCERN_QUALIFIED_NEGATION_RE.finditer(text):
+        overlaps_unrelated_concern = any(
+            unrelated.start() < match.end() and match.start() < unrelated.end()
+            and not _TAPPLE_MEETING_REFERENCE_RE.search(
+                re.split(
+                    r"[。.!！?？、,，]|ですが|だけど|けれど|けど|ものの|でも",
+                    text[: unrelated.start()],
+                )[-1]
+            )
+            for unrelated in unrelated_concerns
+        )
+        if overlaps_unrelated_concern:
+            continue
+        nearby_context = text[max(0, match.start() - 16) : match.start()]
+        if _TAPPLE_UNRELATED_SAFETY_TOPIC_RE.search(nearby_context) and not (
+            _TAPPLE_SAFETY_CONTEXT_RE.search(nearby_context)
+        ):
+            continue
+        return True
+    without_denied_concerns = _TAPPLE_SAFETY_CONCERN_NEGATION_RE.sub("", text)
+    without_unrelated_safety = _TAPPLE_UNRELATED_SAFETY_CLAUSE_RE.sub("", without_denied_concerns)
+    without_unrelated_safety = _TAPPLE_MEETING_LOGISTICS_CONCERN_RE.sub(
+        "", without_unrelated_safety
+    )
+
+    def remove_unrelated_concern(match: re.Match[str]) -> str:
+        clause_prefix = re.split(
+            r"[。.!！?？、,，]|ですが|だけど|けれど|けど|ものの|でも",
+            match.string[: match.start()],
+        )[-1]
+        if _TAPPLE_MEETING_REFERENCE_RE.search(clause_prefix):
+            return match.group(0)
+        return ""
+
+    without_unrelated_safety = _TAPPLE_UNRELATED_CONCERN_RE.sub(
+        remove_unrelated_concern, without_unrelated_safety
+    )
+    without_unrelated_safety = _TAPPLE_UNRELATED_FEAR_OBJECT_RE.sub("", without_unrelated_safety)
+    return _TAPPLE_SAFETY_CONCERN_RE.search(without_unrelated_safety) is not None
+
+
+def _has_tapple_explicit_hesitation(text: str) -> bool:
+    text_without_unrelated_hesitation = _TAPPLE_UNRELATED_HESITATION_TOPIC_RE.sub("", text)
+    if _TAPPLE_HESITATION_QUALIFIED_NEGATION_RE.search(text_without_unrelated_hesitation):
+        return True
+
+    text_without_denied_hesitation = _TAPPLE_HESITATION_NEGATION_RE.sub(
+        "", text_without_unrelated_hesitation
+    )
+    if _TAPPLE_DIRECT_MEETING_HESITATION_RE.search(text_without_denied_hesitation):
+        return True
+
+    accepted = _TAPPLE_ACCEPTED_INVITATION_RE.search(text_without_denied_hesitation)
+    text_without_logistics_hesitation = _TAPPLE_LOGISTICS_HESITATION_RE.sub(
+        "", text_without_denied_hesitation
+    )
+    sentences = re.split(r"[。.!！?？\n]+", text_without_logistics_hesitation)
+    accepted_sentence_index = next(
+        (
+            index
+            for index, sentence in enumerate(sentences)
+            if _TAPPLE_ACCEPTED_INVITATION_RE.search(sentence)
+        ),
+        None,
+    )
+    standalone_hesitation = accepted_sentence_index is not None and any(
+        _TAPPLE_LATER_HESITATION_RE.search(sentence)
+        and not _TAPPLE_UNRELATED_HESITATION_TOPIC_RE.search(sentence)
+        for sentence in sentences
+    )
+    return (
+        _TAPPLE_EXPLICIT_HESITATION_RE.search(text_without_logistics_hesitation) is not None
+        or standalone_hesitation
+        or bool(
+            accepted
+            and _TAPPLE_DECISION_TIME_REQUEST_RE.search(text_without_denied_hesitation)
+        )
+        or _TAPPLE_MEETING_DEFERRAL_RE.search(text_without_logistics_hesitation)
+        is not None
+    )
+
+
+_TAPPLE_SAFETY_RESOLUTION_RE = re.compile(
+    r"(?:(?:会うこと|会うの|初対面|対面|安全面|安全).{0,16}"
+    r"(?:不安(?:は|が)?(?:なくなりました|なくなった|消えました|消えた|"
+    r"和らぎました|和らいだ|解消しました|解消した)|"
+    r"心配(?:は|が)?(?:なくなりました|なくなった|消えました|消えた|解消しました|解消した)|"
+    r"安心(?:しました|した)|大丈夫です|問題ありません|問題ないです|心配ありません)|"
+    r"(?:不安(?:は|が)?(?:なくなりました|なくなった|消えました|消えた|"
+    r"和らぎました|和らいだ|解消しました|解消した)|安心(?:しました|した))"
+    r".{0,16}(?:会うこと|会うの|初対面|対面|安全面|安全))|"
+    r"(?:(?:会うこと|会うの|直接会う|初対面|対面|安全面|安全).{0,12})"
+    r"(?:不安|心配|怖|こわ|恐)(?:く)?(?:は|が)?"
+    r"(?:ありません|ないです|ない|ございません)"
+)
+_TAPPLE_SAFETY_RESOLUTION_QUALIFIER_RE = re.compile(
+    r"(?:とは言え|わけでは|わけじゃ|かもしれ|かも|かな|みたい|気がし(?:ます|た)?|そうにない|ていません|ていない|"
+    r"ないとは|と思(?:う|います|った|いました)|ですか|でしょう|？|\?|まだ.{0,8}(?:不安|心配|安心)|"
+    r"(?:不安|心配).{0,8}(?:残|続|ある))"
+)
+_TAPPLE_SAFETY_CONTRADICTORY_TAIL_RE = re.compile(
+    r"(?:が|けど|けれど|でも|ものの).{0,20}(?:不安|心配|怖|恐|抵抗|迷|難し)|"
+    r"(?:[。.!！?？\n]|^).{0,10}(?:まだ|やっぱり|少し|ちょっと).{0,6}"
+    r"(?:不安|心配|怖|恐|抵抗|迷|難し)"
+)
+
+
+def _has_unresolved_tapple_safety_or_hesitation(
+    conversation_messages: list[dict[str, Any]], last_contact_index: int
+) -> bool:
+    unresolved_safety = False
+    unresolved_hesitation = False
+    for message in conversation_messages[: last_contact_index + 1]:
+        if message.get("sender") != "contact":
+            continue
+        text = prompt.clean_chat_message_content(str(message.get("content") or ""))
+        resolution_match = _TAPPLE_SAFETY_RESOLUTION_RE.search(text)
+        text_without_resolution = (
+            text[: resolution_match.start()] + text[resolution_match.end() :]
+            if resolution_match
+            else text
+        )
+        concern_after_resolution = bool(
+            resolution_match
+            and (
+                _has_tapple_safety_concern(text_without_resolution)
+                or _TAPPLE_SAFETY_CONTRADICTORY_TAIL_RE.search(text_without_resolution)
+            )
+        )
+        if concern_after_resolution:
+            unresolved_safety = True
+        elif resolution_match:
+            clause_start = max(
+                (text.rfind(boundary, 0, resolution_match.start()) + 1
+                 for boundary in "。.!！?？\n"),
+                default=0,
+            )
+            clause_ends = [
+                text.find(boundary, resolution_match.end())
+                for boundary in "。.!！?？\n"
+                if text.find(boundary, resolution_match.end()) >= 0
+            ]
+            clause_end = min(clause_ends, default=len(text))
+            resolution_clause = text[clause_start:clause_end]
+            if not _TAPPLE_SAFETY_RESOLUTION_QUALIFIER_RE.search(resolution_clause):
+                unresolved_safety = False
+        elif _has_tapple_safety_concern(text):
+            unresolved_safety = True
+
+        has_first_person_invite_positive = any(
+            not any(
+                third_party.start() < positive.end()
+                and positive.start() < third_party.end()
+                for third_party in _TAPPLE_THIRD_PARTY_INTEREST_RE.finditer(text)
+            )
+            for positive in _TAPPLE_INVITE_POSITIVE_RE.finditer(text)
+        )
+        if _has_tapple_explicit_hesitation(text):
+            unresolved_hesitation = True
+        elif has_first_person_invite_positive:
+            unresolved_hesitation = False
+
+    return unresolved_safety or unresolved_hesitation
+
+
+def _has_tapple_post_acceptance_hedge(text: str) -> bool:
+    accepted = _TAPPLE_ACCEPTED_INVITATION_RE.search(text)
+    return bool(accepted and _TAPPLE_INVITE_HEDGE_RE.search(text[accepted.end() :]))
+
+
+_TAPPLE_THIRD_PARTY_PERSON_PATTERN = (
+    r"(?:友達|友人|同僚|家族|兄弟|兄|姉|弟|妹|父|母|両親|親戚|"
+    r"いとこ|従兄弟|従姉妹|甥|姪|祖父|祖母|先輩|後輩|知人|別の人|他の人|ほかの人|"
+    r"彼氏|彼女)"
+)
+_TAPPLE_REPORTED_THIRD_PARTY_QUOTE_RE = re.compile(
+    _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"(?:が|は).{0,12}[「『][^」』]{0,120}[」』](?:と|って)?"
+    + r"(?:言って|話して|聞いて|伝えて)"
+)
+
+
+_TAPPLE_THIRD_PARTY_INTEREST_RE = re.compile(
+    _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"(?:が|は).{0,20}(?:会いたい|会ってみたい|一緒に行きたい|行きたい).{0,12}"
+    + r"(?:と言って|って言って|と話して|って話して|と聞|って聞|と言われ|って言われ)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"から.{0,16}"
+    + r"(?:会いたい|会ってみたい|一緒に行きたい|行きたい).{0,12}"
+    + r"(?:と言われ|って言われ|と聞|って聞|と伝えられ|と言って|って言って|と話して|って話して)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"(?:に|と)(?:あなた)?(?:会いたい|会ってみたい)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"(?:が|は|も)(?:(?:あなた|私)(?:に|と)(?:一緒に)?|一緒に|ぜひ)?"
+    + r"(?:会いたい|会ってみたい|会いたがって|行きたい|行きたがって|行こう|会おう)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"と(?:一緒に)?(?:行きたい|行こう|会いたい|会おう)|"
+    + _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r"を.{0,6}誘って(?:ください|ね)|"
+    + r"(?:行きたい|会いたい).{0,16}(?:って|と)(?:言って(?:た|いた|います)|聞いて(?:た|いた|います))"
+)
+
+
+def _has_first_person_tapple_intent_evidence(
+    text: str, evidence: str, intent_pattern: re.Pattern[str]
+) -> bool:
+    third_party_matches = list(_TAPPLE_THIRD_PARTY_INTEREST_RE.finditer(text))
+    evidence_start = 0
+    while (evidence_start := text.find(evidence, evidence_start)) >= 0:
+        for intent_match in intent_pattern.finditer(evidence):
+            match_start = evidence_start + intent_match.start()
+            match_end = evidence_start + intent_match.end()
+            if not any(
+                third_party.start() < match_end
+                and match_start < third_party.end()
+                for third_party in third_party_matches
+            ):
+                return True
+        evidence_start += 1
+    return False
+
+
+def _has_first_person_tapple_invite_positive(text: str) -> bool:
+    return _has_first_person_tapple_intent_evidence(
+        text, text, _TAPPLE_INVITE_POSITIVE_RE
+    )
+
+
+_TAPPLE_THIRD_PARTY_COUNTERPROPOSAL_RE = re.compile(
+    _TAPPLE_THIRD_PARTY_PERSON_PATTERN
+    + r".{0,40}"
+    r"(?P<date>土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日).{0,16}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)"
+)
+_TAPPLE_FIRST_PERSON_COUNTERPROPOSAL_RE = re.compile(
+    r"(?:私|自分)(?:は|なら|も).{0,12}"
+    r"(?P<date>土曜|土曜日|日曜|日曜日|平日|週末|来週|今週|今月|来月|再来月|別の日|別日).{0,8}"
+    r"(?:なら|は).{0,8}"
+    r"(?:大丈夫|会え(?:ます|る)|行け(?:ます|る)|空いて(?:います|ます|る)|"
+    r"都合がつきます|都合がつく|都合が合います|都合が合う)"
+)
+_TAPPLE_DATE_UNAVAILABILITY_RE = re.compile(
+    r"(?:今日|明日|前回|前は|先日|土曜|土曜日|日曜|日曜日|平日|週末|"
+    r"来週|今週|今月|来月|再来月|別の日|別日)"
+    r".{0,12}(?:難し|無理|会えない|会えません|行けない|行けません|"
+    r"予定があって|予定があり|予定が合わな|都合が悪|空いていない|空いてません|厳し)"
+)
+_TAPPLE_REINVITATION_RE = re.compile(
+    r"(?:(?:今度|また|次|来週|今週(?:末)?|週末|今日|明日|いつか|改めて|"
+    r"落ち着いたら|都合が合えば|タイミングが合えば|よかったら|もしよければ).{0,20})?"
+    r"(?:一緒に|二人で|カフェ|喫茶店|ご飯|ごはん|食事|デート|お出かけ|お茶|映画|"
+    r"会(?:う|えたら|いたら|いたい|わない|える)|行けたら|行きたい)"
+    r".{0,16}(?:行きませんか|行きましょう|行こう(?:よ)?|会いませんか|会いましょう|"
+    r"会おう(?:よ)?|会わない|しませんか|しましょう|しよう(?:よ)?|どう(?:ですか|かな)?|"
+    r"嬉しい|うれしい|楽しみ|いいね|良ければ|よければ|たいな|できたら|できれば)"
+    r"|(?:(?:今度|また|次|来週|週末|今日|明日|よかったら|もしよければ).{0,12})?"
+    r"(?:会わない|行かない|デートしない|遊びに行かない|"
+    r"(?:映画|カフェ|ご飯|ごはん|食事|デート|お茶|飲み|遊び)(?:を|に)?"
+    r"(?:見ない|行かない|食べない|しない|飲まない)|"
+    r"(?:お茶|飲み|ご飯|ごはん|食事)しない)(?:[？?]|$)"
+    r"|(?:ぜひ|よかったら|もしよければ)?(?:一緒に)?"
+    r"(?:お会いしましょう|お会いしませんか|会いましょう|会いませんか|会おう(?:よ)?|"
+    r"行きましょう|行きませんか|行ってみましょう|行ってみませんか|行こう(?:よ)?)"
+    r"(?:[。！!？?]|$)"
+)
+_TAPPLE_SOLO_ACTIVITY_ADVICE_RE = re.compile(
+    r"(?:ぜひ|よかったら|もし機会があれば)?\s*(?:一度|今度)?\s*"
+    r"(?:行ってみてください|行ってみるといい(?:ですよ)?|行ってみるのもいい(?:ですよ)?|"
+    r"行くといい(?:ですよ)?)"
+)
+_TAPPLE_SELF_ACTIVITY_PLAN_RE = re.compile(
+    r"(?:(?:(?:僕|私|俺|自分)(?:も|は)?|今度|近いうち|また|いつか).{0,16})?"
+    r"(?:行ってみよう|行ってみるつもり|行くつもり|行く予定|行こうと思|行けたら)"
+)
+_TAPPLE_RECONSIDERATION_PRESSURE_RE = re.compile(
+    r"(?:考え直|考えなお|もう一度.{0,8}考え).{0,12}"
+    r"(?:ほしい|もらえ|くれ|うれしい|嬉しい|ください|ませんか|どう)"
+    r"|(?:一度|一回)だけでも.{0,8}(?:会|会って|会えば)"
+    r"|(?:一度|一回)(?:だけ|だけでも)[、,\s]*"
+    r"(?:会(?:う|って|えば)|会う(?:こと|の).{0,8}(?:考え|検討))"
+    r"|(?:少し|今回|一度|一回|最後|もう一度|もう一回)だけ.{0,8}"
+    r"(?:会って|会うことを).{0,8}(?:ほしい|ください|くれ|もらえ)"
+    r"|(?:ちょっと|少し).{0,4}だけ.{0,8}(?:会って|会うことを).{0,8}"
+    r"(?:考え|検討).{0,12}(?:ください|くれ|もらえ|ほしい)"
+    r"|そう言わずに.{0,12}(?:会って|会うこと).{0,8}(?:ください|くれ|もらえ|ほしい)"
+    r"|もう少し.{0,8}(?:考え|検討).{0,12}(?:ください|くれ|もらえ|ほしい|ませんか)"
+    r"|考え直.{0,12}(?:いただけると|いただけますか|いただけませんか).{0,8}"
+    r"(?:幸い|嬉しい|うれしい)"
+    r"|(?:(?:もう一度|もう一回|最後に|一度|一回).{0,8}"
+    r"(?:チャンス|お願い).{0,8}(?:ください|くれ|もらえ|お願いします)?)"
+    r"|(?:チャンス|お願い).{0,8}(?:ください|くれませんか|お願いします)"
+)
+_TAPPLE_INVITATION_EXAMPLE_PRESSURE_RE = re.compile(
+    r"(?:断る(?:なんて|わけ(?:が)?)?ない|断れない)"
+    r"|(?:絶対|必ず|当然|もう決まり).{0,12}(?:来て|来る|会おう|行こう|参加)"
+    r"|(?:来る|来て(?:くれる|くださる)?|会う|会って|行く|行って|参加する)"
+    r".{0,8}(?:よね|でしょう|だよね|でしょ)"
+    r"|考え直(?:して|してよ|してください|してくれ)"
+    r"|(?:" + _TAPPLE_RECONSIDERATION_PRESSURE_RE.pattern + r")"
+)
+_TAPPLE_SCHEDULING_PROPOSAL_RE = re.compile(
+    r"(?:今度|また|次|来月|再来月|今月|来年|来週|今週(?:末)?|週末|今日|明日|土曜(?:日)?|日曜(?:日)?|"
+    r"平日|いつか|改めて|落ち着いたら|都合が合えば).{0,16}"
+    r"(?:そこ|一緒|会う|会え|会いましょう|会いませんか|行く|行け|行きましょう|"
+    r"行きませんか|カフェ|ご飯|お茶|予定|都合|空いて|どう(?:ですか|かな)?|"
+    r"大丈夫|行こう|会おう|しませんか|しよう)"
+    r"|(?:都合|空き|予定).{0,12}(?:ありますか|どうですか|つきますか|合いますか)"
+)
+_TAPPLE_SCHEDULING_NEXT_STEP_RE = re.compile(
+    r"(?:いつ(?:頃|ごろ)?|何曜日|何日|何時|日程).{0,16}"
+    r"(?:都合|空いて|予定|教えて|聞かせて|合わせ|決め|相談|よさそう|良さそう|いいですか|どうですか)"
+    r"|(?:都合|予定|日程).{0,12}(?:教えて|聞かせて|どう|よさそう|良さそう|合わせ|決め|相談|空いて)"
+    r"|(?:平日|週末|土曜(?:日)?|日曜(?:日)?).{0,12}(?:都合|予定|空いて|どう|合わせ|いい|よさそう|良さそう)"
+)
+
+
+def _has_prior_self_tapple_invitation(
+    conversation_messages: list[dict[str, Any]], last_contact_index: int
+) -> bool:
+    """受諾らしい相手発言の前に、本人からの誘いがあったか確認する。"""
+    if last_contact_index <= 0:
+        return False
+    previous_contact_index = next(
+        (
+            index
+            for index in range(last_contact_index - 1, -1, -1)
+            if conversation_messages[index].get("sender") == "contact"
+        ),
+        -1,
+    )
+    latest_self_before_reply = next(
+        (
+            message
+            for message in reversed(
+                conversation_messages[previous_contact_index + 1:last_contact_index]
+            )
+            if message.get("sender") == "self"
+        ),
+        None,
+    )
+    if latest_self_before_reply is None:
+        return False
+    content = str(latest_self_before_reply.get("content") or "")
+    return bool(
+        _TAPPLE_REINVITATION_RE.search(content)
+        or _TAPPLE_SCHEDULING_PROPOSAL_RE.search(content)
+    )
+
+
+_TAPPLE_PUBLIC_PLACE_RE = re.compile(r"(?:カフェ|喫茶店|レストラン|飲食店|ホテルのロビー|ボルダリングジム|スポーツジム|スポーツ施設|体育館|ボウリング場|公共の場所|人通りのある場所|人の多い場所|商業施設|フードコート|駅前|公園)")
+_TAPPLE_PRIVATE_PLACE_RE = re.compile(
+    r"(?:自宅|お?うち(?:で|に|へ|集合|待ち合わせ|飲み)|お?家(?:で|に|へ|集合|待ち合わせ|飲み)|ホテル|客室|個室|スイートルーム|スイート|ルーム)"
+)
+
+
+def _is_tapple_invitation_example_safe(example: object) -> bool:
+    """Require a public, non-coercive invitation example with no contact exchange."""
+    if not isinstance(example, str) or not example.strip():
+        return False
+    return not (
+        not _TAPPLE_PUBLIC_PLACE_RE.search(example)
+        or _is_tapple_private_place_proposal(example)
+        or _TAPPLE_CONTACT_EXCHANGE_RE.search(example)
+        or _TAPPLE_INVITATION_EXAMPLE_PRESSURE_RE.search(example)
+    )
+_TAPPLE_NEGATED_PRIVATE_PLACE_RE = re.compile(
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|民泊|貸別荘|ゲストハウス|レンタルルーム|旅館|客室|個室|スイートルーム|スイート|ルーム)(?:には|は)行かない(?![？?])|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|民泊|貸別荘|ゲストハウス|レンタルルーム|旅館|客室|個室|スイートルーム|スイート|ルーム)(?:では|には)会わない(?![？?])|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|民泊|貸別荘|ゲストハウス|レンタルルーム|旅館|客室|個室|スイートルーム|スイート|ルーム)"
+    r"(?:には|では|に|で|へ|は)?(?:.{0,12}(?:会うのは|会うのを|行くのは|行くのを))?"
+    r"(?:行かず|行かないで|行きません(?!か)|泊まらず|泊まらないで|泊まらなくて|"
+    r"会わず|会わないで|会いません(?!か)|使わず|使わないで|やめて|避けて|ではなく|じゃなく)"
+)
+_TAPPLE_SAFE_PRIVATE_REFERENCE_RE = re.compile(
+    r"(?:家|お?うち|お?家|自宅)(?:の)?(?:近く|近所|付近)(?:の)?"
+    r"(?:カフェ|喫茶店|レストラン|飲食店)|"
+    r"ホテルの(?:カフェ|喫茶店|レストラン|飲食店|ロビー|フロント|エントランス|ラウンジ|バー)"
+)
+_TAPPLE_PRIVATE_PLACE_PROPOSAL_RE = re.compile(
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|客室|個室|スイートルーム|スイート|ルーム)(?:に|で|へ)?"
+    r"(?:泊まりませんか|泊まりましょう|泊まろう|泊まりたい|泊まってください|"
+    r"泊まっていきませんか|泊まっていかない|泊まっていきましょう|泊まっていこう|"
+    r"泊まっていきたい|泊まっていく|泊まってく|"
+    r"泊まらない|一泊しませんか|一泊しましょう|一泊しよう)|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事))(?:に|へ|で)?"
+    r"(?:来て|来ませんか|来ない(?!で|ね)|遊びに来|おいで(?:よ)?|お越し)|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事))(?:の中|のなか)(?:で|に|へ).{0,8}"
+    r"(?:会いませんか|会いましょう|会おう|行きませんか|行きましょう|行こう)|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事))(?:で|に|へ).{0,16}"
+    r"(?:映画を見|ご飯を食べ|食事し|飲み|会って|寄っ|過ご|遊びに来).{0,20}"
+    r"(?:しませんか|ませんか|しよう|よう(?:よ)?|行こう|行きましょう|どう(?:ですか|かな))|"
+    r"ホテル(?:に)?(?:行きませんか|行きましょう|行こう(?:よ)?|行きたい)|"
+    r"ホテル.{0,10}(?:泊まり|泊まって|泊まりませんか|泊まろう).{0,8}"
+    r"(?:会おう|会い|過ご|デート)|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|客室|個室|スイートルーム|スイート|ルーム)(?:を.{0,8}待ち合わせ場所に|"
+    r"(?:で|に|へ)?(?:集合|待ち合わせ|落ち合|合流))|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|客室|個室|スイートルーム|スイート|ルーム)(?:で|に|へ)"
+    r".{0,8}(?:会いませんか|会いましょう|会おう|行きませんか|行きましょう|行こう|"
+    r"飲みませんか|飲みましょう|映画を見ませんか|過ごしませんか|話しませんか|"
+    r"待ち合わせしませんか|待ち合わせしよう|待ち合わせしよ|どう(?:ですか|かな))|"
+    r"ホテル.{0,8}(?:ラウンジ|客室|部屋)に(?:行きませんか|行きましょう|行こう)|"
+    r"(?:家飲み|うち飲み|宅飲み)(?:しませんか|しない(?:？|\?)|しよ(?:う)?|しようよ)|"
+    r"(?:宅飲み)(?:しませんか|しよう(?:よ)?|しない(?:？|\?)|しよ(?:う)?|どう(?:ですか|かな|[？?]))|"
+    r"(?:自宅|部屋|お?うち|お?家(?!族|事)|家(?!族|事)|ホテル|ラブホテル|ラブホ|客室|個室|"
+    r"スイートルーム|スイート|ルーム)(?:に|で|へ|の中で|の中に|のバーで)?"
+    r".{0,36}(?:泊まろ|泊まっていく|お泊まり(?:しない|しませんか|しよう)|"
+    r"映画でも?見ませんか|映画見ない(?:？|\?|$)|料理しませんか|"
+    r"ご飯食べよ|ご飯食べない(?:？|\?|$)|食べよ|飲も(?:う)?|飲まない(?:？|\?|$)|"
+    r"ゆっくりしよう|休もう|休まない(?:？|\?)|過ごそう|"
+    r"寄っていかない|寄っていこう|寄ってよ|寄らない(?:？|\?|$)|"
+    r"行きませんか|行きましょう|行こう|行かない(?:？|\?|$)|"
+    r"会いませんか|会いましょう|会おう|会わない(?:？|\?)|"
+    r"見ませんか|食べませんか|飲みませんか|しませんか|しよう(?:よ)?|よう(?:よ)?|"
+    r"しない(?:？|\?|$)|どう(?:ですか|かな|[？?]))|"
+    r"(?:民泊|貸別荘|ゲストハウス|レンタルルーム|旅館)(?:で|に|へ)"
+    r".{0,36}(?:泊まろ|泊まって|会いませんか|会いましょう|会おう|行こう|"
+    r"行きましょう|過ごそう|休もう|どう(?:ですか|かな|[？?]))|"
+    r"(?:泊まっていく|泊まっていかない|泊まろ(?:う)?|お泊まり(?:しない|しませんか|しよう))"
+    r"(?:[？?！!。]|$)"
+)
+_TAPPLE_CONTACT_EXCHANGE_RE = re.compile(
+    r"(?:LINE|ライン|連絡先|電話番号|メールアドレス|メアド|SNS|インスタ|Instagram|"
+    r"(?<![A-Za-z0-9])(?:X|Twitter|Discord|DM)(?![A-Za-z0-9])|カカオ|ID|QR)",
+    re.IGNORECASE,
+)
+_TAPPLE_CONTACT_EXCHANGE_ACTION_RE = re.compile(
+    r"(?:交換|教え|送っ|追加|登録|つな|繋|ID|QR|"
+    r"やって(?:い)?(?:る|ます)|使って(?:い)?(?:る|ます)|やりとり|"
+    r"話(?:そ|しません|しましょう|したい|そう)|し(?:ない|ません|ましょう|たい)|"
+    r"連絡(?:を)?(?:取|と)り?(?:ません|ましょう|たい)|連絡しよ)"
+)
+
+
+def _is_tapple_contact_exchange_request(text: str) -> bool:
+    return bool(
+        _TAPPLE_CONTACT_EXCHANGE_RE.search(text)
+        and _TAPPLE_CONTACT_EXCHANGE_ACTION_RE.search(text)
+    )
+
+
+def _is_tapple_private_place_proposal(text: str) -> bool:
+    text_without_negated_mentions = _TAPPLE_NEGATED_PRIVATE_PLACE_RE.sub(" ", text)
+    text_without_contextual_public_places = _TAPPLE_SAFE_PRIVATE_REFERENCE_RE.sub(
+        " ", text_without_negated_mentions
+    )
+    return bool(_TAPPLE_PRIVATE_PLACE_PROPOSAL_RE.search(text_without_contextual_public_places))
+
+
+def _parse_tapple_strategy(
+    raw: str, conversation_messages: list[dict[str, Any]]
+) -> TappleStrategy | None:
+    """Parse only evidence-grounded strategy metadata; never gate reply generation."""
+    try:
+        payload = json.loads(_strip_code_fence(raw))
+        if not isinstance(payload, dict) or not isinstance(payload.get("strategy"), dict):
+            return None
+        proposed = TappleStrategy.model_validate(payload["strategy"])
+    except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+        return None
+
+    contact_messages = [
+        prompt.clean_chat_message_content(str(message.get("content") or ""))
+        for message in conversation_messages
+        if message.get("sender") == "contact"
+        and prompt.clean_chat_message_content(str(message.get("content") or ""))
+    ]
+    if not contact_messages:
+        return None
+    exact_evidence = [
+        evidence for evidence in proposed.evidence
+        if evidence and any(evidence in message for message in contact_messages)
+    ]
+    if len(exact_evidence) != len(proposed.evidence):
+        return None
+
+    last_contact = contact_messages[-1]
+    last_contact_index = next(
+        index
+        for index in range(len(conversation_messages) - 1, -1, -1)
+        if conversation_messages[index].get("sender") == "contact"
+        and prompt.clean_chat_message_content(
+            str(conversation_messages[index].get("content") or "")
+        )
+    )
+    decline_match = _unresolved_tapple_decline_match(
+        conversation_messages, last_contact_index
+    )
+    if decline_match:
+        return TappleStrategy(
+            action="stop",
+            rationale="相手が会うことに明確な難しさを示しているため、誘い直さずここで止めます。",
+            evidence=[decline_match.group(0)],
+            invite_example=None,
+        )
+
+    prior_invitation_accepted = (
+        _has_prior_self_tapple_invitation(conversation_messages, last_contact_index)
+        and bool(
+            _TAPPLE_ACCEPTED_INVITATION_RE.search(last_contact)
+            or _TAPPLE_SHORT_INVITATION_ACCEPTANCE_RE.fullmatch(last_contact.strip())
+        )
+        and not _has_tapple_post_acceptance_hedge(last_contact)
+        and not _has_tapple_explicit_hesitation(last_contact)
+        and not _has_tapple_safety_concern(last_contact)
+        and not _TAPPLE_DATE_UNAVAILABILITY_RE.search(last_contact)
+    )
+    if prior_invitation_accepted:
+        return TappleStrategy(
+            action="continue",
+            rationale="相手は直前の誘いを受け入れているため、再度誘わず具体的な日程や待ち合わせを調整します。",
+            evidence=[last_contact],
+            invite_example=None,
+        )
+
+    if proposed.action == "invite":
+        has_unresolved_safety_or_hesitation = _has_unresolved_tapple_safety_or_hesitation(
+            conversation_messages, last_contact_index
+        )
+        recent_activity_disinterest = any(
+            term in evidence
+            and _has_recent_self_disinterest_in_tapple_activity(
+                conversation_messages, last_contact_index, term
+            )
+            for evidence in exact_evidence
+            for term in _TAPPLE_SHARED_ACTIVITY_TERMS
+        )
+        has_current_invitation_readiness = any(
+            evidence in last_contact
+            and (
+                _has_first_person_tapple_intent_evidence(
+                    last_contact, evidence, _TAPPLE_INVITE_POSITIVE_RE
+                )
+                or (
+                    _has_first_person_tapple_intent_evidence(
+                        last_contact, evidence, _TAPPLE_ACTIVITY_INTEREST_RE
+                    )
+                    and _has_recent_shared_tapple_activity(
+                        conversation_messages, last_contact_index, last_contact
+                    )
+                )
+            )
+            and not _has_tapple_relevant_invite_hedge(
+                _tapple_text_without_superseded_historical_declines(last_contact)
+            )
+            and not _has_tapple_explicit_hesitation(last_contact)
+            and not _has_tapple_safety_concern(last_contact)
+            and not has_unresolved_safety_or_hesitation
+            for evidence in exact_evidence
+        )
+        if recent_activity_disinterest or not has_current_invitation_readiness:
+            has_unmatched_activity_interest = (
+                not recent_activity_disinterest
+                and any(
+                    evidence in last_contact
+                    and _has_first_person_tapple_intent_evidence(
+                        last_contact, evidence, _TAPPLE_ACTIVITY_INTEREST_RE
+                    )
+                    and not _has_first_person_tapple_intent_evidence(
+                        last_contact, evidence, _TAPPLE_INVITE_POSITIVE_RE
+                    )
+                    for evidence in exact_evidence
+                )
+            )
+            if has_unresolved_safety_or_hesitation:
+                wait_rationale = (
+                    "相手は活動に関心を示していますが、会うことへの迷いや安全面の懸念があるため、"
+                    "誘わず相手の不安を尊重します。"
+                )
+            elif has_unmatched_activity_interest:
+                wait_rationale = (
+                    "相手の活動への関心は見られますが、会う意思や一緒に行く提案は"
+                    "まだ確認できず、直近の会話の相互性も弱いため、今は誘わず反応を待ちます。"
+                )
+            else:
+                wait_rationale = (
+                    "会う提案につながる具体的な関心が確認できないため、今は誘わず会話を続けるか反応を待ちます。返信の速さや曖昧な相づちは誘う根拠にしません。"
+                )
+            return TappleStrategy(
+                action="wait",
+                rationale=wait_rationale,
+                evidence=exact_evidence,
+                invite_example=None,
+            )
+        safe_example = proposed.invite_example
+        if safe_example and not _is_tapple_invitation_example_safe(safe_example):
+            safe_example = None
+        safety_notice = (
+            "AIは相手の信頼性や実際の安全性を判断できません。"
+            "この提案は相手の同意を意味しません。相手が迷ったり断ったりしたら誘い直さないでください。"
+            "自分が信頼でき、安全に会えると感じる場合に限り、この案を検討してください。"
+        )
+        rationale_limit = max(0, 500 - len(safety_notice) - 1)
+        rationale = f"{proposed.rationale[:rationale_limit].rstrip()} {safety_notice}"
+        return proposed.model_copy(
+            update={"invite_example": safe_example, "rationale": rationale}
+        )
+
+    # Distinguish interest in an activity from willingness to meet. A wait action
+    # can be correct when reciprocity is weak, but its rationale must not deny
+    # explicit activity interest in the latest message.
+    rationale_denies_activity_interest = bool(
+        re.search(
+            r"(?:具体的な関心|活動への関心)(?:が|は)?(?:確認できない|確認されない|ない|見られない|ありません)",
+            proposed.rationale,
+        )
+    )
+    if (
+        proposed.action == "wait"
+        and rationale_denies_activity_interest
+        and not _has_unresolved_tapple_safety_or_hesitation(
+            conversation_messages, last_contact_index
+        )
+        and any(
+            evidence in last_contact
+            and _has_first_person_tapple_intent_evidence(
+                last_contact, evidence, _TAPPLE_ACTIVITY_INTEREST_RE
+            )
+            and not _has_first_person_tapple_intent_evidence(
+                last_contact, evidence, _TAPPLE_INVITE_POSITIVE_RE
+            )
+            for evidence in exact_evidence
+        )
+    ):
+        return proposed.model_copy(
+            update={
+                "rationale": (
+                    "相手の活動への関心は見られますが、会う意思や一緒に行く提案は"
+                    "まだ確認できないため、今は誘わず会話を続けるか反応を待ちます。"
+                ),
+                "invite_example": None,
+            }
+        )
+
+    # An invitation example is meaningful only when the guarded invite action passes.
+    return proposed.model_copy(update={"invite_example": None})
+
+
+def _build_safe_tapple_fallback_strategy(
+    conversation_messages: list[dict[str, Any]],
+) -> TappleStrategy | None:
+    """Derive a conservative strategy from known boundaries when model metadata is invalid."""
+    last_contact_index = next(
+        (
+            index
+            for index in range(len(conversation_messages) - 1, -1, -1)
+            if conversation_messages[index].get("sender") == "contact"
+            and prompt.clean_chat_message_content(
+                str(conversation_messages[index].get("content") or "")
+            )
+        ),
+        -1,
+    )
+    if last_contact_index < 0:
+        return None
+
+    last_contact = prompt.clean_chat_message_content(
+        str(conversation_messages[last_contact_index].get("content") or "")
+    )
+    decline_match = _unresolved_tapple_decline_match(
+        conversation_messages, last_contact_index
+    )
+    if decline_match:
+        return TappleStrategy(
+            action="stop",
+            rationale="相手が会うことに明確な難しさを示しているため、誘い直さずここで止めます。",
+            evidence=[decline_match.group(0)],
+            invite_example=None,
+        )
+
+    invitation_accepted = (
+        _has_prior_self_tapple_invitation(conversation_messages, last_contact_index)
+        and bool(
+            _TAPPLE_ACCEPTED_INVITATION_RE.search(last_contact)
+            or _TAPPLE_SHORT_INVITATION_ACCEPTANCE_RE.fullmatch(last_contact.strip())
+        )
+        and not _has_tapple_post_acceptance_hedge(last_contact)
+        and not _has_tapple_explicit_hesitation(last_contact)
+        and not _has_tapple_safety_concern(last_contact)
+        and not _TAPPLE_DATE_UNAVAILABILITY_RE.search(last_contact)
+    )
+    return TappleStrategy(
+        action="continue" if invitation_accepted else "wait",
+        rationale=(
+            "相手は直前の誘いを受け入れているため、再度誘わず日程調整へ進みます。"
+            if invitation_accepted
+            else "戦略判断を安全に確定できないため、会う提案はせず相手の反応を待ちます。"
+        ),
+        evidence=[last_contact],
+        invite_example=None,
+    )
+
+
+def _tapple_strategy_output_violations(
+    strategy: TappleStrategy | None,
+) -> list[str]:
+    """Require a usable strategy and actionable guidance for invitations."""
+    if strategy is None:
+        return [
+            "strategyは必須です。判断根拠が弱い場合も省略せず、evidenceに会話中の相手の発言を示してaction=waitを選んでください。"
+        ]
+    if (
+        strategy is not None
+        and strategy.action == "invite"
+        and not (strategy.invite_example or "").strip()
+    ):
+        return [
+            "inviteを選ぶ場合は、返信候補とは別に安全な公共の場所を使った低圧な誘い方の例をinvite_exampleへ入れてください。"
+            "会話にない店名や日時を作らず、例を出せない場合はinvite以外のactionを選んでください。"
+        ]
+    return []
+
+
+_EXPERIENCE_ACTIONS: dict[str, tuple[str, ...]] = {
+    "visit": ("行ってきました", "行ってきた", "訪れてきました", "訪れてきた", "行けた", "行けて", "行った", "行きました", "行って", "行く", "行きます", "訪れた", "訪れました", "訪れる"),
+    "eat": ("食べてきました", "食べてきた", "食べた", "食べました", "食べて", "食べる", "食べます"),
+    "drink": ("飲んできました", "飲んできた", "飲んだ", "飲みました", "飲んで", "飲む", "飲みます"),
+    "watch": ("見てきました", "見てきた", "見た", "見ました", "見て", "見る", "見ます"),
+    "use": ("使ってきました", "使ってきた", "使った", "使いました", "使って", "使う", "使います"),
+    "ride": ("乗ってきました", "乗ってきた", "乗った", "乗りました", "乗って", "乗る", "乗ります"),
+    "reside": ("暮らしてきました", "暮らしてきた", "住んできました", "住んできた", "暮らした", "暮らしました", "住んだ", "住みました", "暮らして", "住んで"),
+}
+def _experience_action(text: str) -> tuple[str, re.Match[str]] | None:
+    """Return the rightmost supported experience verb (the active clause)."""
+    matches: list[tuple[int, str, re.Match[str]]] = []
+    for action, forms in _EXPERIENCE_ACTIONS.items():
+        pattern = re.compile("|".join(map(re.escape, sorted(forms, key=len, reverse=True))))
+        matches.extend((match.start(), action, match) for match in pattern.finditer(text))
+    if matches:
+        _, action, match = max(matches, key=lambda item: item[0])
+        return action, match
+    generic = re.search(r"経験(?:が)?(?:ある|あります|ない|ありません)", text)
+    if generic:
+        return "experience", generic
+    return None
+
+
+def _topic_before(text: str, end: int) -> str:
+    """Extract a compact Japanese topic immediately before an experience verb."""
+    prefix = text[:end].strip()
+    prefix = re.split(r"[、。！？!?\s]", prefix)[-1]
+    # Protect common temporal expressions from the delimiter "で" below.
+    prefix = re.sub(r"(?:今まで|これまで)", "", prefix)
+    prefix = re.split(r"(?:で|けど|けれど|だけど|ので|から|そして)", prefix)[-1]
+    prefix = re.sub(
+        r"^(?:(?:[0-9]+|[一二三四五六七八九十]+)年間?|(?:学生|高校|大学|社会人)時代|"
+        r"子どもの頃|この前|今まで|昔|以前|前|今|最近|一度|何度か|昨日|先日|たまに|よく|時々|ときどき|しょっちゅう|いつも)(?:に|は|から|頃)?",
+        "",
+        prefix,
+    )
+    prefix = re.sub(r"^(?:自分|私|わたし|僕|ぼく|俺)(?:も|は|が|の)?", "", prefix)
+    prefix = re.sub(r"(?:食べ|飲み|見|観|買い)に$", "", prefix)
+    prefix = re.sub(r"(?:まだ|もう|すでに|今まで|学生時代|昔|以前|前|今|最近|先日|この前)(?:に|は|から|頃)?$", "", prefix)
+    prefix = re.sub(r"(?:って|は|が|を|に|で|なら|とか|の)+$", "", prefix)
+    return prefix[-12:]
+
+
+def _experience_claim(text: str, default_topic: str, default_action: str) -> dict[str, str] | None:
+    """Classify the first direct answer claim, without borrowing polarity from later clauses."""
+    normalized = unicodedata.normalize("NFKC", text)
+    # Standalone yes/no answers can inherit the question's action. Do not mistake
+    # existential observations such as "そういう店ありますよね" for a yes-answer.
+    generic_answer = re.match(
+        r"^\s*(?:(?:うん|はい|ううん|いいえ|いや|そう|一応|実は|確か|たしか|多分|たぶん|まあ|"
+        r"自分も|私も|わたしも|僕も|ぼくも|俺も)[、,]?\s*)?"
+        r"(?:あります|ある|ありません|ない)(?:よ|ね|です|ですよ|ですね|ですよね|！|!|。|$)",
+        normalized,
+    )
+    if generic_answer:
+        answer = generic_answer.group(0)
+        return {
+            "topic": default_topic,
+            "action": default_action,
+            "polarity": "negative" if _is_negative_experience(answer, allow_bare=True) else "positive",
+            "strength": "single",
+        }
+
+    # Inspect one sentence at a time so a later third-party mention cannot change
+    # the polarity or subject of the user's direct answer.
+    clauses = _split_experience_clauses(normalized)
+    past_action_forms = {
+        "行った", "行きました", "訪れた", "訪れました", "食べた", "食べました",
+        "飲んだ", "飲みました", "見た", "見ました", "使った", "使いました",
+        "乗った", "乗りました", "行ってきた", "行ってきました",
+        "訪れてきた", "訪れてきました", "食べてきた", "食べてきました",
+        "飲んできた", "飲んできました", "見てきた", "見てきました",
+        "使ってきた", "使ってきました", "乗ってきた", "乗ってきました",
+        "暮らした", "暮らしました", "住んだ", "住みました",
+    }
+    for clause in clauses:
+        action_match = _experience_action(clause)
+        if not action_match:
+            continue
+        prefix = clause[:action_match[1].start()]
+        suffix = clause[action_match[1].end():]
+        # Exclude a locally attributed third-party claim, not a separate later mention.
+        if re.search(
+            r"(?:(?:彼氏|彼女|恋人|友達|友人|家族|相手|あの人|その人|彼)(?:は|が|も|には|にも|なら|にとって)|人|方)$",
+            prefix,
+        ):
+            continue
+        if re.search(
+            r"こと(?:が)?(?:ある|あります|ない|ありません)人(?:は|が|も|には|にも|なら|に|多い)|"
+            r"(?:こと(?:が)?(?:ない|ありません)|て(?:い)?(?:ない|ません))人(?:は|が|も|には|にも|なら|に)?|"
+            r"人(?:は|が|も|には|にも|なら|に|多い)",
+            action_match[0] + suffix,
+        ):
+            continue
+
+        action_key = action_match[0]
+        topic = _topic_before(clause, action_match[1].start()) or default_topic
+        has_past = bool(
+            action_match[1].group() in past_action_forms
+            or (
+                action_key == "reside"
+                and re.search(r"(?:住んで(?:います|いる|る)|暮らして(?:います|いる|る))", clause)
+            )
+            or re.search(
+                r"(?:この前|前に|最近|一度|何度か|昨日|先日|こと(?:が)?ある|こと(?:が)?ない|こと(?:が)?ありません|"
+                r"てきた|てきました|てない|ていない|てません|ていません|てる|てます|ています|ている|てた|ていた|"
+                r"行けた|行けて|"
+                r"した|しました|んだ|たよ|たね|たんです)",
+                clause,
+            )
+        )
+        is_habit = _has_habit_frequency(clause) or bool(re.search(r"て(?:る|ます|います|いる)", clause))
+        if not (has_past or is_habit):
+            continue
+        if re.search(r"(?:こと(?:が)?なくはない|なくはない|ないわけではない|ないこともない)", clause):
+            polarity = "ambiguous"
+        else:
+            polarity = "negative" if _is_negative_experience(clause) else "positive"
+        return {
+            "topic": topic, "action": action_key, "polarity": polarity,
+            "strength": "habit" if is_habit else "single",
+        }
+    return None
+
+
+def _has_habit_frequency(text: str) -> bool:
+    return bool(re.search(
+        r"(?:よく|たまに|時々|ときどき|しょっちゅう|いつも|普段|"
+        r"月に(?:一|１|[1-9１-９])度|毎月|週に?(?:一|１|[1-9１-９])回|毎週|"
+        r"週[1-9１-９]回|年に(?:一|１|[1-9１-９])度|毎年|て(?:る|ます|います|いる|た|いた))",
+        text,
+    ))
+
+
+def _is_negative_experience(text: str, *, allow_bare: bool = False) -> bool:
+    action_negation = re.search(
+        r"(?:こと(?:が|は)?(?:ない|ありません)|"
+        r"(?:行っ|行け|食べ|飲ん|見|使っ|乗っ)?て(?:い)?(?:ない|ません)|"
+        r"行かない|行きません|食べない|食べません|飲まない|飲みません|"
+        r"見ない|見ません|使わない|使いません|乗らない|乗りません|なかった)",
+        text,
+    )
+    if action_negation:
+        return True
+    return allow_bare and bool(re.search(r"(?:ありません|ない)(?:よ|ね|です|ですよ|ですね|！|!|。|$)", text))
+
+
+def _split_experience_clauses(text: str) -> list[str]:
+    clauses = re.split(r"(?<=[。！？!?、,])|(?:けれど|けど|だけど|でも)|[\r\n]", text)
+    split_clauses: list[str] = []
+    for clause in clauses:
+        split_clauses.extend(re.split(r"が(?=(?:今|最近|現在|行|訪れ|食べ|飲み|見|使い|乗|詳しく))", clause))
+    return split_clauses
+
+
+def _experience_topic_matches(claim_topic: str, fact_topic: str, is_generic_experience: bool) -> bool:
+    if not claim_topic or not fact_topic:
+        return False
+    if claim_topic == fact_topic:
+        return True
+    if not is_generic_experience:
+        return claim_topic in fact_topic or fact_topic in claim_topic
+
+    # A broad experience label can match a concrete travel/activity subtype, but
+    # not an unrelated use of the same word (e.g. overseas dramas vs. overseas trips).
+    subtypes = ("旅行", "出張", "留学", "滞在", "観光", "訪問", "渡航", "生活", "居住", "移住", "駐在", "屋")
+    if fact_topic.startswith(claim_topic):
+        return fact_topic[len(claim_topic):].startswith(subtypes)
+    if fact_topic.endswith(claim_topic):
+        prefix = fact_topic[:-len(claim_topic)]
+        return prefix in ("海外", "国内", "一人", "家族", "短期", "長期")
+    return False
+
+
+def _fact_supports_experience_claim(fact: str, claim: dict[str, str]) -> bool:
+    normalized = unicodedata.normalize("NFKC", fact)
+    fact_clauses = _split_experience_clauses(normalized)
+    for fact_clause in fact_clauses:
+        action_match = _experience_action(fact_clause)
+        if not action_match:
+            continue
+        action = action_match[0]
+        is_generic_experience = claim["action"] == "experience"
+        if not is_generic_experience and action != claim["action"]:
+            continue
+
+        fact_topic = _topic_before(fact_clause, action_match[1].start())
+        if not _experience_topic_matches(claim["topic"], fact_topic, is_generic_experience):
+            continue
+        if re.search(r"(?:こと(?:が)?なくはない|なくはない|ないわけではない|ないこともない)", fact_clause):
+            continue
+        polarity = "negative" if _is_negative_experience(fact_clause) else "positive"
+        if polarity != claim["polarity"]:
+            continue
+        if claim["strength"] == "habit" and not _has_habit_frequency(fact_clause):
+            continue
+        return True
+    return False
+
+
+def _last_experience_question(text: str) -> tuple[str, re.Match[str], str] | None:
+    """Return the action/topic from the last explicit experience-question clause."""
+    normalized = unicodedata.normalize("NFKC", text)
+    clauses = re.split(r"(?<=[?？。！!])", normalized)
+    for clause in reversed(clauses):
+        if not re.search(r"[?？]", clause):
+            continue
+        # Require the experience wording or the action itself to close the question;
+        # this excludes quoted history such as "行ったことあるって話したよね？".
+        if not re.search(
+            r"(?:(?:こと(?:が|は)?(?:ある|あります|ない|ありません)(?:んです|の|んだっけ|だっけ|かな|かも)?|"
+            r"こと(?:が|は)?(?:とか)?ある|こと(?:が|は)?あったりする|"
+            r"経験(?:が)?(?:ある|あります|ない|ありません)(?:んです|の|んだっけ|だっけ|かな|かも)?)(?:か)?|"
+            r"(?:行った|行きました|食べた|食べました|飲んだ|飲みました|見た|見ました|使った|使いました|乗った|乗りました)(?:の|んだっけ|だっけ|かな)?)\?\s*$",
+            clause,
+        ):
+            continue
+        action_match = _experience_action(clause)
+        if action_match:
+            return action_match[0], action_match[1], clause
+    return None
+
+
+def _needs_private_experience_confirmation(
+    counterpart_message: str,
+    known_self_facts: list[str] | None,
+) -> bool:
+    """Whether an experience question in the latest message lacks any known answer."""
+    experience_question = _last_experience_question(counterpart_message)
+    if not experience_question:
+        return False
+
+    action, action_match, question_clause = experience_question
+    topic = _topic_before(question_clause, action_match.start())
+    for polarity in ("positive", "negative"):
+        possible_answer = {
+            "topic": topic,
+            "action": action,
+            "polarity": polarity,
+            "strength": "single",
+        }
+        if any(
+            _fact_supports_experience_claim(fact, possible_answer)
+            for fact in (known_self_facts or [])
+            if fact
+        ):
+            return False
+    return True
+
+
+_PREFERENCE_QUESTION_ENDING_RE = re.compile(
+    r"(?:[?？]|(?:なの|なん|だっけ|ですか|ますか|でしょうか|かな|か聞いてもいい|か教えて)[?？。！!]*)$"
+)
+
+
+def _is_preference_question_clause(clause: str) -> bool:
+    has_question_ending = bool(_PREFERENCE_QUESTION_ENDING_RE.search(clause.strip()))
+    has_preference_predicate = bool(
+        re.search(r"(?:派|好き|嫌い|苦手|得意|いける|食べられる|飲める)", clause)
+    )
+    has_tolerance_predicate = bool(re.search(r"(?:大丈夫|平気)", clause))
+    has_tolerance_topic = bool(
+        re.search(
+            r"(?:もの|食べ物|飲み物|食事|料理|味|お酒|アルコール|犬|猫|動物|ペット|虫|高所|ホラー|辛い|甘い)",
+            clause,
+        )
+    )
+    return has_question_ending and (
+        has_preference_predicate or (has_tolerance_predicate and has_tolerance_topic)
+    )
+
+
+def _preference_question_clause_topics(clause: str) -> list[str]:
+    topics: list[str] = []
+    choice = re.search(
+        r"([^\s、。！？?と]{1,10}?)と([^\s、。！？?]{1,10}?)(?:なら)?、?(?:どっち|どちら)(?:が|も)?(?:好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)",
+        clause,
+    )
+    if choice:
+        topics.extend(topic.rstrip("はがを") for topic in choice.groups())
+    match = re.search(
+        r"([^\s、。！？?]{1,10}?)(?:は)?(?:好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)",
+        clause,
+    )
+    if match:
+        topic = re.sub(r"(?:って|とは|っては|のことは|のは|は|が|を|も)$", "", match.group(1))
+        topic = topic.lstrip("おご")
+        if topic.endswith("の") and not topic.endswith("もの"):
+            topic = topic[:-1]
+        topic = topic.rstrip("はがを")
+        topic = re.sub(r"^(?:この|その|あの|どの)", "", topic)
+        if not re.search(r"(?:どっち|どちら|両方|どちらか)", topic):
+            topics.append(topic)
+    return topics
+
+
+def _personal_preference_question_topics(counterpart_message: str) -> list[str]:
+    """Return concrete topics in a direct question about the user's preference."""
+    normalized = unicodedata.normalize("NFKC", counterpart_message or "")
+    if not _PREFERENCE_QUESTION_ENDING_RE.search(normalized.strip()):
+        return []
+    if re.search(r"(?:犬と猫|犬か猫|犬猫)", normalized) or (
+        "犬派" in normalized and "猫派" in normalized
+    ):
+        topics = ["犬", "猫"]
+    elif "犬派" in normalized:
+        topics = ["犬"]
+    elif "猫派" in normalized:
+        topics = ["猫"]
+    else:
+        topics = []
+
+    for clause in reversed(re.split(r"(?<=[?？。！!])", normalized)):
+        if not _is_preference_question_clause(clause):
+            continue
+        for topic in _preference_question_clause_topics(clause):
+            if topic and topic not in topics:
+                topics.append(topic)
+    return topics
+
+
+def _fact_supports_preference(fact: str, topic: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", fact or "")
+    return bool(re.search(rf"{re.escape(topic)}.{{0,12}}(?:派|好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)", normalized))
+
+
+def _preference_polarity(
+    text: str, topic: str, *, allow_topicless_answer: bool = False
+) -> str | None:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    topical_pattern = (
+        rf"{re.escape(topic)}(?:[^\s。！？?！!,、]{{0,12}})"
+        r"(?:派|好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|食べられない|できます|できる|できない)"
+    )
+    matches = list(re.finditer(topical_pattern, normalized))
+    if allow_topicless_answer:
+        topicless_pattern = (
+            r"好き|嫌い|苦手|得意|大丈夫|平気|いける|無理|だめ|駄目|"
+            r"食べられる|食べられない|できます|できる|できない"
+        )
+        existing_spans = {(match.start(), match.end()) for match in matches}
+        for match in re.finditer(topicless_pattern, normalized):
+            if (match.start(), match.end()) in existing_spans:
+                continue
+            prefix = normalized[max(0, match.start() - 16):match.start()]
+            clause_prefix = re.split(r"[。！？?！!,、]", prefix)[-1]
+            # A separately named subject (e.g. 犬は苦手) is not an implicit
+            # answer about the single topic asked in the preceding turn.
+            named_subject = re.search(
+                r"([\u3040-\u30ff\u3400-\u9fffA-Za-z]{1,8})(?:は|が|なら|って)(?:[^。！？?]{0,8})$",
+                clause_prefix,
+            )
+            if named_subject and topic not in named_subject.group(1):
+                continue
+            matches.append(match)
+        matches.sort(key=lambda item: item.start())
+    if not matches:
+        return None
+
+    polarities = set()
+    for match in matches:
+        phrase = match.group(0)
+        suffix = normalized[match.end():match.end() + 8]
+        prefix = normalized[max(0, match.start() - 6):match.start()]
+        if re.search(r"(?:嫌い|苦手|無理|だめ|駄目|できない|食べられない)", phrase) or re.match(
+            r"(?:じゃない|ではない|じゃありません|ではありません|くない|くありません)", suffix
+        ) or re.search(r"(?:あまり|そんなに).{0,3}$", prefix):
+            polarities.add("negative")
+        elif re.search(r"(?:好き|得意|大丈夫|平気|いける|食べられる|できます|できる|派)", phrase):
+            polarities.add("positive")
+
+    if len(polarities) > 1:
+        return "conflict"
+    return next(iter(polarities), None)
+
+
+def _preference_claim_topics(reply: str, topics: list[str]) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", reply or "")
+    claims = set()
+    for topic in topics:
+        if re.search(
+            rf"{re.escape(topic)}(?:[^。！？?]{{0,12}})(?:派|好き|嫌い|苦手|得意|大丈夫|平気|いける|食べられる|できます|できる)",
+            normalized,
+        ):
+            claims.add(topic)
+    if len(topics) == 1 and re.search(
+        r"(?:好き|嫌い|苦手|得意|大丈夫|平気|いける|無理|だめ|駄目|食べられる|食べられない)",
+        normalized,
+    ):
+        claims.add(topics[0])
+    if len(topics) > 1 and re.search(r"(?:どっちも|どちらも|両方|どちらかといえば両方)", normalized):
+        if re.search(r"(?:好き|嫌い|苦手|得意|派|大丈夫|平気|いける|無理|だめ|駄目)", normalized):
+            claims.update(topics)
+    return claims
+
+
+def _personal_schedule_question_topic(counterpart_message: str) -> str:
+    """Classify direct questions about the user's availability or wake-up time."""
+    normalized = unicodedata.normalize("NFKC", counterpart_message or "")
+    looks_like_question = bool(re.search(r"[?？]|(?:空いてる|空いてます|空いています|行ける|行けます|いける|いけます|大丈夫)$", normalized))
+    if not looks_like_question:
+        return ""
+    date_or_availability = r"(?:(?:20\d{2}年)?\d{1,2}(?:月|/)\d{1,2}日?|来月(?:の)?\d{1,2}日?|今月(?:の)?\d{1,2}日?|(?:今度の|次の)?[月火水木金土日]曜(?:日)?|明後日|明日|今日|土日|週末|平日|来週|今週|いつ|何日|何曜日)"
+    if re.search(
+        rf"{date_or_availability}.{{0,10}}(?:どっち|どちら|空いて|予定|都合|行け|いけ|大丈夫)|"
+        rf"(?:空いて|予定|都合|行け|いけ|大丈夫).{{0,8}}{date_or_availability}",
+        normalized,
+    ):
+        return "availability"
+    if re.search(r"何時.{0,6}(?:起き|起床)|(?:起き|起床).{0,6}何時", normalized):
+        return "wake_time"
+    return ""
+
+
+_AVAILABILITY_PERIOD_RE = re.compile(
+    r"(?:20\d{2}/\d{1,2}/\d{1,2}|(?:20\d{2}年)?\d{1,2}(?:月|/)\d{1,2}日?)|"
+    r"来月(?:の)?\d{1,2}日?|今月(?:の)?\d{1,2}日?|"
+    r"(?:今度の|次の)?[月火水木金土日]曜(?:日)?|"
+    r"来週(?:末|土日)?|今週(?:末|土日)?|明後日|明日|今日|土日|週末|平日"
+)
+
+
+def _canonical_availability_period(period: str) -> str:
+    normalized = period.removeprefix("今度の").removeprefix("次の").replace("の", "")
+    slash_date = re.fullmatch(r"(?:(20\d{2})/)?(\d{1,2})/(\d{1,2})", normalized)
+    if slash_date:
+        year, month, day = slash_date.groups()
+        year_prefix = f"{year}年" if year else ""
+        return f"{year_prefix}{int(month)}月{int(day)}日"
+    if normalized.startswith("来週"):
+        return "来週末" if normalized != "来週" else "来週"
+    if normalized.startswith("今週"):
+        return "今週末" if normalized != "今週" else "今週"
+    if re.fullmatch(r"[月火水木金土日]曜日", normalized):
+        return normalized[:-1]
+    if re.fullmatch(r"(?:20\d{2}年)?\d{1,2}月\d{1,2}日?", normalized) and not normalized.endswith("日"):
+        return f"{normalized}日"
+    return normalized
+
+
+def _availability_periods(text: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    return {_canonical_availability_period(match.group()) for match in _AVAILABILITY_PERIOD_RE.finditer(normalized)}
+
+
+def _availability_claims_by_period(text: str) -> dict[str, str]:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    matches = list(_AVAILABILITY_PERIOD_RE.finditer(normalized))
+    segment_polarities = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        segment_polarities.append(_availability_polarity(normalized[match.start():end]))
+    if len(matches) > 1 and segment_polarities[-1]:
+        last_start = matches[-1].start()
+        for index, match in enumerate(matches[:-1]):
+            connector = normalized[match.end():last_start]
+            if (
+                not segment_polarities[index]
+                and re.search(r"(?:と|も|や|、|及び|および)", connector)
+                and not re.search(r"(?:けど|けれど|でも|一方)", connector)
+            ):
+                segment_polarities[index] = segment_polarities[-1]
+    claims = {
+        _canonical_availability_period(match.group()): polarity
+        for match, polarity in zip(matches, segment_polarities)
+        if polarity
+    }
+    return claims
+
+
+def _availability_period_matches(requested: str, known: str) -> bool:
+    if requested == known:
+        return True
+    if requested in {"週末", "土日"}:
+        return known in {"週末", "土日", "今週末", "来週末", "土曜", "日曜"}
+    if requested in {"土曜", "日曜"}:
+        return known in {requested, "土日", "週末"}
+    if requested in {"今週", "来週"}:
+        return known in {requested, f"{requested}末"}
+    return False
+
+
+def _availability_polarity(text: str) -> str | None:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    if re.search(
+        r"(?:わけ(?:では|じゃ)ない|(?:とは|と|って)(?:言|い)って(?:い)?ない|"
+        r"(?:とは|って)(?:言|い)えない|とは(?:限|かぎ)ら(?:ない|ず)|言い切れない|断定できない|"
+        r"(?:聞いた|聞いて(?:い)?(?:る|た|ない|なかった)|聞かされ(?:た|て(?:い)?(?:る|た|ない|なかった))|"
+        r"(?:とは|と|って)(?:言|い)われ(?:た|て(?:い)?(?:る|た|ない|なかった))|言ってた|言っていた|らしい|そうだ|と思う|と思います|可能性(?:が)?(?:ある|あります)|たぶん|多分|おそらく)|"
+        r"かも(?:しれない)?|かな|気がする|無理じゃない)",
+        normalized,
+    ):
+        return None
+    polarity_patterns = (
+        ("unavailable", re.compile(r"(?:空いてい(?:ない|ません)|空いて(?:ない|ません)|空いておらず|予定.{0,8}(?:あります|ある|入って(?:いる|ます|る)|埋まって(?:いる|ます|る))|都合.{0,5}悪い|行け(?:ない|ません)|暇(?:ではない|じゃない)|大丈夫(?:ではない|じゃない)|無理)")),
+        ("available", re.compile(r"(?:空いて(?:います|いる|いて|ます|る)|予定.{0,8}(?:ありません|ない|なし|入っていない|入ってません)|都合.{0,5}(?:いい|よい|つく)|行け(?:ます|る)|大丈夫|暇)")),
+    )
+    matches = [
+        (match.start(), polarity)
+        for polarity, pattern in polarity_patterns
+        for match in pattern.finditer(normalized)
+    ]
+    return max(matches)[1] if matches else None
+
+
+def _fact_supports_schedule_question(fact: str, topic: str, counterpart_message: str = "") -> bool:
+    normalized = unicodedata.normalize("NFKC", fact or "")
+    if topic == "availability":
+        question = unicodedata.normalize("NFKC", counterpart_message or "")
+        requested_periods = _availability_periods(question)
+        fact_periods = _availability_periods(normalized)
+        if any(_is_specific_availability_period(period) for period in requested_periods) and not any(
+            _availability_period_matches(requested, known)
+            for requested in requested_periods for known in fact_periods
+        ):
+            return False
+        return _availability_polarity(normalized) is not None
+    if topic == "wake_time":
+        return bool(re.search(r"(?:何時.{0,4}起き|[0-2]?[0-9]時.{0,4}起き|早起き|起床.{0,6}時間)", normalized))
+    return False
+
+
+def _is_recurring_weekday_claim(text: str, match: re.Match[str]) -> bool:
+    recurrence = r"(?:毎週|週ごと|定期的(?:に)?|いつも|毎回|基本的(?:に)?)"
+    prefix = text[max(0, match.start() - 8):match.start()]
+    suffix = text[match.end():match.end() + 8]
+    return bool(
+        re.search(rf"{recurrence}(?:の|に|は)?$", prefix)
+        or re.match(rf"^(?:は|も|が|なら)?{recurrence}", suffix)
+    )
+
+
+def _current_relative_schedule_fact(
+    fact: str,
+    created_at: str | None,
+    reference_datetime: datetime,
+) -> str:
+    """Keep only schedule clauses whose relative dates still have a time anchor."""
+    normalized = unicodedata.normalize("NFKC", fact or "")
+    fact_date = None
+    if created_at:
+        try:
+            fact_date = datetime.fromisoformat(created_at.replace("Z", "+00:00")).date()
+        except (TypeError, ValueError):
+            fact_date = None
+
+    clauses = re.split(r"(?:[。！？!?;；\n]+|けど|けれど|でも|一方で?|ただし)", normalized)
+    current_clauses = []
+    for clause in clauses:
+        if not clause.strip():
+            continue
+        stale = False
+        for match in _AVAILABILITY_PERIOD_RE.finditer(clause):
+            period = _canonical_availability_period(match.group())
+            is_relative = period in {"今日", "明日", "明後日", "今週", "今週末", "来週", "来週末"}
+            is_weekday = bool(re.fullmatch(r"[月火水木金土日]曜", period))
+            if not is_relative and not is_weekday:
+                continue
+            if is_weekday and _is_recurring_weekday_claim(clause, match):
+                if fact_date is None:
+                    stale = True
+                    break
+                continue
+            if fact_date is None or fact_date != reference_datetime.date():
+                stale = True
+                break
+        if not stale:
+            current_clauses.append(clause.strip())
+    return "。".join(current_clauses)
+
+
+def _is_specific_availability_period(period: str) -> bool:
+    return bool(
+        period in {"来週末", "今週末", "来週", "今週", "明後日", "明日", "今日"}
+        or re.fullmatch(r"[月火水木金土日]曜", period)
+        or re.fullmatch(r"(?:20\d{2}年)?\d{1,2}月\d{1,2}日", period)
+    )
+
+
+def _is_bare_state_echo(counterpart_message: str, reply: str) -> bool:
+    """Reject a short state restatement that substitutes for a direct response."""
+    incoming = unicodedata.normalize("NFKC", counterpart_message or "")
+    outgoing = unicodedata.normalize("NFKC", reply or "")
+    state_terms = ("眠い", "疲れた", "へとへと", "だるい", "忙しい")
+    for state in state_terms:
+        if state not in incoming or state not in outgoing:
+            continue
+        remainder = re.sub(r"^(?:わかります|わかる|そうだよね|そうですね|ほんと|それは)[、,\s笑ｗw]*", "", outgoing)
+        remainder = re.sub(r"(?:ですよね|だよね|だね|ですね|よね|よ|ね)?[笑ｗw！!。…‥]*$", "", remainder)
+        remainder = re.sub(r"[\s、。！？!?,笑ｗw]+", "", remainder)
+        if remainder == state:
+            return True
+    return False
+
+
+_CLOSURE_PERIOD_RE = re.compile(r"明後日|明日|来週|来月|次回|今度|いつか|タイミング")
+_CLOSURE_FUTURE_ACTION_RE = re.compile(
+    r"(?:また|今度|いつか|次(?:回|は)|タイミングが合ったら|都合が合ったら)?"
+    r"[^。！？?\n]{0,8}(?:連絡(?:する|します|しよう|しましょう)|"
+    r"お?話(?:そう|しましょう|しよう|できたら)|"
+    r"会(?:おう|いましょう|えたら)|やりとり(?:しよう|しましょう)|相談(?:しよう|しましょう))"
+)
+
+
+def _has_unprompted_closure_commitment(counterpart_message: str, reply: str) -> bool:
+    """Detect new timing/contact promises after the counterpart explicitly closes."""
+    if prompt.classify_counterpart_intent(counterpart_message) != "closing":
+        return False
+    incoming = unicodedata.normalize("NFKC", counterpart_message or "")
+    outgoing = unicodedata.normalize("NFKC", reply or "")
+    if naturalness.count_meaningful_questions(outgoing)["informative"] > 0:
+        return True
+
+    added_periods = set(_CLOSURE_PERIOD_RE.findall(outgoing)) - set(
+        _CLOSURE_PERIOD_RE.findall(incoming)
+    )
+    incoming_future_actions = {
+        action for action in ("連絡", "話", "会", "やりとり", "相談") if action in incoming
+    }
+    outgoing_has_future_action = bool(_CLOSURE_FUTURE_ACTION_RE.search(outgoing))
+    outgoing_actions = {
+        action for action in ("連絡", "話", "会", "やりとり", "相談") if action in outgoing
+    }
+    added_actions = outgoing_actions - incoming_future_actions
+    # A conventional generic sign-off like "またね" / "また今度ね" is not a
+    # concrete promise. Timing is only considered an added commitment when
+    # the reply also proposes a future contact/activity.
+    return bool(
+        outgoing_has_future_action
+        and (added_periods or added_actions)
+    )
+
+
+_PERSONAL_DESIRE_PATTERN = (
+        r"(?:行ってみたく|行ってみたい|食べてみたく|食べてみたい|飲んでみたく|飲んでみたい|"
+        r"見てみたく|見てみたい|観てみたく|観てみたい|試してみたく|試してみたい|"
+        r"行きたく|行きたい|見たく|見たい|観たく|観たい|食べたく|食べたい|飲みたく|飲みたい|"
+        r"したく|したい|欲しく|欲しい|羨まし(?:い|くて)|うらやまし(?:い|くて)|好き|嫌い|苦手|得意|興味(?:が)?(?:ある|あります))"
+)
+
+
+def _personal_desire_matches(text: str) -> list[re.Match[str]]:
+    normalized = unicodedata.normalize("NFKC", text or "")
+
+    def is_question_about_desire(match: re.Match[str]) -> bool:
+        tail = re.split(r"[、,。.!！\n]", normalized[match.end() :], maxsplit=1)[0]
+        if "?" in tail or "？" in tail:
+            return True
+        return bool(
+            re.fullmatch(
+                r"(?:(?:だったり(?:する|します))|(?:なの|なん|だっけ|だったっけ|(?:なん)?(?:です|ます)?か|かな|でしょうか)|(?:か(?:聞いてもいい|教えて(?:もいい)?|質問してもいい)(?:ですか)?))",
+                tail,
+            )
+        )
+
+    return [
+        match
+        for match in re.finditer(_PERSONAL_DESIRE_PATTERN, normalized)
+        if not is_question_about_desire(match)
+        and not (
+            match.group(0) in {"したく", "したい"}
+            and not any(
+                activity in normalized[: match.start()]
+                for activity in (*_TAPPLE_SHARED_ACTIVITY_TERMS, "お茶")
+            )
+        )
+    ]
+
+
+def _personal_desire_topic(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    desire = next(
+        (
+            match
+            for match in _personal_desire_matches(normalized)
+        ),
+        None,
+    )
+    if not desire:
+        return ""
+    prefix = normalized[:desire.start()]
+    if desire.group(0) in {"したく", "したい"} and not any(
+        activity in prefix for activity in (*_TAPPLE_SHARED_ACTIVITY_TERMS, "お茶")
+    ):
+        return ""
+    prefix = re.sub(r"^(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)?", "", prefix)
+    prefix = re.sub(r"(?:ゆっくり|久しぶりに|久々に|今度|また)$", "", prefix)
+    prefix = re.sub(r"(?:行ってきた|行ってきました|行った|見てきた|見てきました|観てきた|食べてきた|してきた|してきました|してた|していました|しました|した).*$", "", prefix)
+    prefix = re.sub(r"^(?:昨日|今日|最近|この前|先日|今週|来週|週末|土日)+", "", prefix)
+    return prefix.strip(" 、。はがをにへでとの")[-10:]
+
+
+def _topic_ngrams(text: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    runs = re.findall(r"[ぁ-んァ-ヶー一-龯々]{2,}", normalized)
+    ignored = {"です", "ます", "した", "して", "ある", "いる", "こと", "ところ", "もの"}
+    return {
+        run[index : index + 2]
+        for run in runs
+        for index in range(len(run) - 1)
+        if run[index : index + 2] not in ignored
+    }
+
+
+def _topics_overlap(topic: str, context: str) -> bool:
+    normalized_topic = unicodedata.normalize("NFKC", topic or "")
+    normalized_context = unicodedata.normalize("NFKC", context or "")
+    if not normalized_topic or not normalized_context:
+        return False
+    if normalized_topic in normalized_context or normalized_context in normalized_topic:
+        return True
+    return len(_topic_ngrams(normalized_topic) & _topic_ngrams(normalized_context)) >= 2
+
+
+def _contact_activity_topic(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    prefix = re.split(
+        r"(?:行ってきた|行ってきました|行った|行きました|見てきた|見てきました|観てきた|観てきました|"
+        r"食べてきた|食べてきました|食べました|食べた|してきた|してきました|してた|していました|しました|した|好き)",
+        normalized,
+    )[0]
+    prefix = re.sub(r"^(?:昨日|今日|最近|この前|先日|今週|来週|週末|土日)+", "", prefix)
+    return prefix.strip(" 、。はがをにへでとの")[-10:]
+
+
+def _without_counterpart_preference_attribution(reply: str) -> str:
+    """Remove a clause-end preference attributed to the counterpart."""
+    normalized_reply = unicodedata.normalize("NFKC", reply or "")
+    attribution = re.search(
+        r"(?:好き|嫌い|苦手|得意)(?:なんだ|なん|な)?(?:ですね|だね|ですよね|だよね)"
+        r"|(?:好き|嫌い|苦手|得意)そう(?:ですね|だね|ですよね|だよね)",
+        normalized_reply,
+    )
+    if not attribution:
+        return normalized_reply
+    clause_start = max(
+        normalized_reply.rfind(mark, 0, attribution.start())
+        for mark in "。.!！?？\n"
+    ) + 1
+    attribution_prefix = normalized_reply[clause_start : attribution.start()]
+    if re.search(r"(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)", attribution_prefix):
+        return normalized_reply
+    return (
+        normalized_reply[: attribution.start()]
+        + normalized_reply[attribution.end() :]
+    )
+
+
+def _has_matching_personal_desire_fact(
+    reply_topics: set[str], reply_text: str, known_self_facts: list[str] | None
+) -> bool:
+    fact_terms = r"(?:好き|嫌い|苦手|得意|興味|羨まし|うらやまし|行きたい|行ってみたい|見たい|観たい|食べたい|食べてみたい|飲みたい|飲んでみたい|欲しい|飼いたい)"
+    for fact in (known_self_facts or []):
+        normalized_fact = unicodedata.normalize("NFKC", fact or "")
+        if not fact or not re.search(fact_terms, normalized_fact):
+            continue
+        for topic in reply_topics:
+            if not _topics_overlap(topic, normalized_fact):
+                continue
+            reply_kind = _personal_desire_fact_kind(topic, reply_text)
+            fact_kind = _personal_desire_fact_kind(topic, normalized_fact)
+            compatible_kinds = {
+                reply_kind,
+                fact_kind,
+            } <= {"interest:positive", "activity_desire:positive"}
+            if reply_kind and (reply_kind == fact_kind or compatible_kinds):
+                return True
+    return False
+
+
+def _personal_desire_fact_kind(topic: str, text: str) -> str | None:
+    """Return the kind and polarity of a topic-linked personal desire claim."""
+    preference_polarity = _preference_polarity(text, topic)
+    if preference_polarity:
+        return f"preference:{preference_polarity}"
+    normalized = unicodedata.normalize("NFKC", text or "")
+    if re.search(r"(?:羨まし|うらやまし)", normalized):
+        polarity = "negative" if re.search(r"(?:羨ましくない|うらやましくない)", normalized) else "positive"
+        return f"envy:{polarity}"
+    desire_pattern = (
+        r"(?:興味(?:が)?(?:あります|ある|ない|ありません)|羨まし|うらやまし|"
+        r"行きたい|行ってみたい|見たい|観たい|食べたい|食べてみたい|"
+        r"飲みたい|飲んでみたい|欲しい|飼いたい)"
+    )
+    topic_variants = {topic, _contact_activity_topic(topic).strip(" 、。はがをにへでとの")}
+    match = next(
+        (
+            candidate
+            for topic_variant in topic_variants
+            if topic_variant
+            for candidate in [
+                re.search(
+                    rf"{re.escape(topic_variant)}[^。！？?\n]{{0,18}}{desire_pattern}",
+                    normalized,
+                )
+            ]
+            if candidate
+        ),
+        None,
+    )
+    if not match:
+        return None
+    phrase = match.group()
+    if re.search(
+        r"(?:興味(?:が)?(?:ない|ありません)|羨ましくない|行きたくない|見たくない|"
+        r"食べたくない|飲みたくない|欲しくない|飼いたくない)",
+        phrase,
+    ):
+        polarity = "negative"
+    else:
+        polarity = "positive"
+    kind = "interest" if re.search(r"興味", phrase) else "activity_desire"
+    return f"{kind}:{polarity}"
+
+
+def _has_unverified_personal_desire(
+    counterpart_message: str,
+    reply: str,
+    known_self_facts: list[str] | None,
+) -> bool:
+    desire_text = _without_counterpart_preference_attribution(reply)
+    has_explicit_self = bool(
+        re.search(r"(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)", desire_text)
+        or re.search(r"(?:羨まし|うらやまし)", desire_text)
+    )
+    incoming_topic = _contact_activity_topic(counterpart_message)
+    reply_topic = _personal_desire_topic(desire_text)
+    original_reply_topic = reply_topic
+    if re.search(r"(?:羨まし|うらやまし)", desire_text) and incoming_topic:
+        reply_topic = incoming_topic
+    # For implied-subject expressions (e.g. 「キャンプ行きたい」), only guard
+    # when the desire concerns the current contact's topic. Explicit self-subjects
+    # are guarded regardless of topic overlap.
+    has_explicit_desire = bool(_personal_desire_matches(desire_text))
+    if has_explicit_desire and not reply_topic:
+        reply_topic = incoming_topic
+    elif incoming_topic and reply_topic and _topics_overlap(
+        reply_topic, counterpart_message
+    ):
+        reply_topic = incoming_topic
+    if not (has_explicit_self and has_explicit_desire) and not (
+        incoming_topic and reply_topic and (incoming_topic in reply_topic or reply_topic in incoming_topic)
+    ):
+        return False
+    if not reply_topic:
+        return False
+    verified_topics = {reply_topic}
+    if original_reply_topic:
+        verified_topics.add(original_reply_topic)
+    return not _has_matching_personal_desire_fact(
+        verified_topics, desire_text, known_self_facts
+    )
+
+
+def _habit_assertion_text(reply: str) -> str:
+    clauses = re.split(r"(?<=[。！？!?])", unicodedata.normalize("NFKC", reply or ""))
+    empathy = re.compile(
+        r"(?:僕|ぼく|私|わたし|俺|自分)?(?:も|は|が)?(?:よく|よくは)?"
+        r"(?:わかります|わかる|分かります|分かる)(?:よ|ね)?"
+    )
+    return "".join(
+        clause
+        for clause in clauses
+        if not _is_question_line(clause)
+        and not empathy.fullmatch(clause.strip().strip("。！？!?"))
+    )
+
+
+def _has_unverified_implicit_experience(text: str, known_facts: list[str] | None) -> bool:
+    match = re.search(
+        r"(?:行くたび(?:に)?|訪れるたび(?:に)?|食べるたび(?:に)?|見るたび(?:に)?|"
+        r"行くと(?:毎回|いつも)|見ると(?:毎回|いつも))[^。！？!?\n]{0,24}"
+        r"(?:ワクワク|楽しく|嬉しく|うれしく|テンションが上が|気分が上が|楽しみになります)",
+        text,
+    )
+    if not match:
+        return False
+    claim = re.sub(r"[\s、。はがをにへでとも]", "", match.group(0))
+    return not any(
+        claim in re.sub(r"[\s、。はがをにへでとも]", "", unicodedata.normalize("NFKC", fact or ""))
+        for fact in (known_facts or [])
+        if fact
+    )
+
+
+def _recent_activity_is_grounded_by_positive_experience(
+    text: str, incoming_topic: str, known_facts: list[str] | None
+) -> bool:
+    if not incoming_topic or not re.search(r"行ったこと(?:が)?(?:あります|ある)", text):
+        return False
+    normalized_topic = re.sub(r"(?:って|とは|のことは|は|が)$", "", incoming_topic)
+    for fact in known_facts or []:
+        normalized_fact = unicodedata.normalize("NFKC", fact or "")
+        topic_matches = (
+            normalized_topic and normalized_topic in normalized_fact
+        ) or _topics_overlap(incoming_topic, normalized_fact)
+        if topic_matches and re.search(r"行ったこと(?:が)?(?:あります|ある)", normalized_fact):
+            return True
+    return False
+
+
+def _recent_activity_fact_matches(
+    activity_form: str, uses_vague_reference: bool, counterpart_message: str, fact: str
+) -> bool:
+    normalized_fact = unicodedata.normalize("NFKC", fact or "")
+    normalized_form = re.sub(r"(?:いない|ません)$", "ない", activity_form)
+    normalized_fact = re.sub(
+        r"(?:行って(?:いない|ません)|食べて(?:いない|ません)|飲んで(?:いない|ません)|"
+        r"見て(?:いない|ません)|使って(?:いない|ません))",
+        lambda match: re.sub(r"(?:いない|ません)$", "ない", match.group(0)),
+        normalized_fact,
+    )
+    if normalized_form not in normalized_fact:
+        return False
+    if not uses_vague_reference:
+        return True
+    hints = re.findall(r"[ァ-ヶー]{2,}|[一-龥]{2,}|[ぁ-ん]{3,}", counterpart_message or "")
+    ignored = {"友達", "最近", "昨日", "今日", "この前", "駅前", "季節限定"}
+    return any(hint not in ignored and hint in normalized_fact for hint in hints)
+
+
+def _has_unverified_recent_activity(
+    text: str, known_facts: list[str] | None, counterpart_message: str
+) -> bool:
+    match = re.search(
+        r"(?:最近|普段|いつも|よく|たまに|時々|ときどき|全然|あまり)"
+        r"[^。！？!?\n]{0,24}"
+        r"(?:行って(?:いない|ない|ません)|行ったこと(?:が)?ない|行かない|"
+        r"食べて(?:いない|ない|ません)|飲んで(?:いない|ません)|"
+        r"見て(?:いない|ない|ません)|使って(?:いない|ない|ません))",
+        text,
+    )
+    if not match:
+        return False
+    activity_form = re.search(
+        r"(?:行って(?:いない|ない|ません)|行ったこと(?:が)?ない|行かない|"
+        r"食べて(?:いない|ない|ません)|飲んで(?:いない|ません)|"
+        r"見て(?:いない|ない|ません)|使って(?:いない|ません))",
+        match.group(0),
+    )
+    if not activity_form:
+        return True
+    incoming_topic = _contact_activity_topic(counterpart_message)
+    if _recent_activity_is_grounded_by_positive_experience(text, incoming_topic, known_facts):
+        return False
+    vague_reference = bool(re.search(r"(?:そういう|そんな|ああいう)(?:ところ|お店|店|場所|の)", match.group(0)))
+    return not any(
+        _recent_activity_fact_matches(activity_form.group(0), vague_reference, counterpart_message, fact)
+        for fact in (known_facts or [])
+        if fact
+    )
+
+
+def _has_unverified_explicit_habit(text: str, known_facts: list[str] | None) -> bool:
+    claim = re.search(r"(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)?[^。！？!?]{0,35}", text)
+    habit_signal = (
+        r"(?:よく|普段|いつも|たまに|時々|ときどき|つい|ふとした時|"
+        r"こと(?:が)?あります|こと(?:が)?ある|時(?:が)?あります|時(?:が)?ある|考えちゃ|なくすこと)"
+    )
+    if not claim or not re.search(habit_signal, claim.group(0)):
+        return False
+    claim_core = re.sub(r"^(?:僕|ぼく|私|わたし|俺|自分)(?:も|は|が)?", "", claim.group(0))
+    claim_core = re.sub(r"(?:よく|普段|いつも|たまに|時々|ときどき|つい|ふとした時)", "", claim_core)
+    claim_core = re.sub(r"(?:こと(?:が)?あります|こと(?:が)?ある|時(?:が)?あります|時(?:が)?ある)", "", claim_core)
+    claim_core = re.sub(r"(?:ます|ました|です|でした|よ|ね|笑|ｗ|w|！|!|。|…|‥|\.)+$", "", claim_core)
+    claim_core = re.sub(r"[\s、。はがをにへでとも]", "", claim_core)
+    if not claim_core:
+        return False
+    return not any(
+        claim_core in re.sub(r"[\s、。はがをにへでとも]", "", unicodedata.normalize("NFKC", fact or ""))
+        for fact in (known_facts or [])
+        if fact
+    )
+
+
+def _has_unverified_personal_habit(
+    reply: str,
+    known_self_facts: list[str] | None,
+    counterpart_message: str = "",
+) -> bool:
+    text = _habit_assertion_text(reply)
+    return bool(
+        text.strip()
+        and (
+            _has_unverified_implicit_experience(text, known_self_facts)
+            or _has_unverified_recent_activity(text, known_self_facts, counterpart_message)
+            or _has_unverified_explicit_habit(text, known_self_facts)
+        )
+    )
+
+
+def _asks_about_already_shared_cafe_ambience(
+    counterpart_message: str, reply: str
+) -> bool:
+    incoming = unicodedata.normalize("NFKC", counterpart_message or "")
+    candidate = unicodedata.normalize("NFKC", reply or "")
+    already_shared_ambience = (
+        "雰囲気" in incoming and "落ち着" in incoming
+    )
+    asks_about_same_ambience = (
+        "雰囲気" in candidate
+        and "落ち着" in candidate
+        and bool(re.search(r"(?:ですか|なの|なんですか|どんな|どう)[?？]?$", candidate))
+    )
+    return already_shared_ambience and asks_about_same_ambience
+
+
+def _is_private_question_for_unknown_experience(
+    question_text: str,
+    counterpart_message: str,
+    known_self_facts: list[str] | None,
+) -> bool:
+    """Check that a private question actually asks about the unknown experience."""
+    if not _needs_private_experience_confirmation(counterpart_message, known_self_facts):
+        return False
+    experience_question = _last_experience_question(counterpart_message)
+    private_action = _experience_action(question_text)
+    if not experience_question or not private_action:
+        return False
+
+    expected_action, question_match, question_clause = experience_question
+    actual_action, private_match = private_action
+    if expected_action != actual_action:
+        return False
+
+    expected_topic = _topic_before(question_clause, question_match.start())
+    private_topic = _topic_before(question_text, private_match.start())
+    if not _experience_topic_matches(
+        expected_topic,
+        private_topic,
+        expected_action == "experience",
+    ):
+        return False
+
+    return bool(re.search(
+        r"(?:こと(?:が|は)?(?:ある|あります|ない|ありません)|経験(?:が)?(?:ある|あります|ない|ありません))",
+        unicodedata.normalize("NFKC", question_text),
+    ))
+
+
+_UNRESOLVED_STATUS_QUERY = re.compile(
+    r"(?:あれ|それ|その件|例の(?:話|件|やつ)?|あの件).{0,12}"
+    r"(?:どうな(?:った|りました|ってる|ってます|っている)|どう(?:してる|なってる)|進捗|状況)",
+)
+_STATUS_ASSERTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("progress", re.compile(r"(?:順調に進んで|順調に進行|進行中|進んで(?:い)?(?:る|ます|います|るよ|ますよ)|進んでる)")),
+    ("undecided", re.compile(r"(?:まだ|全然)?決まって(?:い)?(?:ない|なくて|ません|なかった)|未定")),
+    ("deciding", re.compile(r"(?:これから|今から|これから先)?決める(?:感じ|予定|ところ)?|検討中")),
+    ("decided", re.compile(r"(?:もう)?決ま(?:った|りました|ってる|っています)|決定した")),
+    ("completed", re.compile(r"(?:もう)?(?:終わった|終わりました|完了した|完了しました|済んだ|済みました)")),
+)
+
+
+def _unresolved_status_query(message: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", message or "")
+    return bool(_UNRESOLVED_STATUS_QUERY.search(normalized))
+
+
+def _status_claims(text: str) -> tuple[list[str], list[str]]:
+    """Return asserted statuses and status questions, preserving every claim.
+
+    Japanese questions such as 「まだ決まってないんですか？」 contain the
+    same lexical status pattern as an assertion, so classify them by the
+    clause ending instead of treating the first matching word as a claim.
+    """
+    normalized = unicodedata.normalize("NFKC", text or "")
+    assertions: list[str] = []
+    questions: list[str] = []
+    clauses = re.split(r"(?<=[。！？!?、,，])|(?:けれど|けど|だけど|でも)|[\r\n]", normalized)
+    for clause in clauses:
+        is_question = bool(re.search(
+            r"(?:ですか|ますか|でしょうか|ですかね|ますかね|かな|かも|んだっけ|だっけ|の)?\s*[?？]$|"
+            r"(?:ですかね|ますかね|ですか|ますか|でしょうか|かな|んだっけ|だっけ|の)\s*$",
+            clause.strip(),
+        ))
+        for status, pattern in _STATUS_ASSERTION_PATTERNS:
+            for _match in pattern.finditer(clause):
+                (questions if is_question else assertions).append(status)
+    return assertions, questions
+
+
+_HARMLESS_STATUS_PREFACES = {
+    "", "え、", "あ、", "うん、", "うーん、", "んー、", "そう、",
+    "今のところ", "今のところ、", "たぶん", "たぶん、", "おそらく", "おそらく、",
+}
+_STATUS_REPLY_ENDING = re.compile(
+    r"(?:かもしれないですね|かもしれないね|かもしれないですよ|かもしれないよ|かもしれないです|かもしれない|"
+    r"と思いますよね|と思いますよ|と思うよね|と思うよ|と思います|と思う|"
+    r"んですよね|んだよね|んですね|んですよ|んだよ|んだ|ですね|ですよ|です|ます|だよね|だよ|だね|よね|よ|ね|かな|かもね|かもよ|かも)?"
+    r"(?:笑|w|W|😊|😂|😅|🙂|！|!|。|〜|~)*"
+)
+
+
+def _is_single_supported_status_reply(text: str, supported_status: str) -> bool:
+    """既知の状態を一つだけ返す短文かを、候補全体で保守的に判定する。"""
+    normalized = unicodedata.normalize("NFKC", text or "").strip()
+    status_pattern = next(
+        (pattern for status, pattern in _STATUS_ASSERTION_PATTERNS if status == supported_status),
+        None,
+    )
+    if status_pattern is None:
+        return False
+    matches = list(status_pattern.finditer(normalized))
+    if len(matches) != 1:
+        return False
+    match = matches[0]
+    prefix = normalized[:match.start()].strip()
+    suffix = normalized[match.end():].strip()
+    return prefix in _HARMLESS_STATUS_PREFACES and bool(_STATUS_REPLY_ENDING.fullmatch(suffix))
+
+
+def _latest_prior_self_status(chat_history_text: str, counterpart_message: str) -> str | None:
+    """Only use one explicit status in the immediately preceding self turn.
+
+    Older status mentions may belong to another topic or have been superseded.
+    Requiring the last pre-query turn to be self-authored prevents stale facts
+    from grounding an ambiguous 「あれどうなった？」.
+    """
+    prior = _prior_history_before_latest_counterpart(chat_history_text, counterpart_message)
+    lines = [line.strip() for line in prior.splitlines() if line.strip()]
+    if not lines:
+        return None
+    match = re.match(r"^自分\s*:\s*(.*)$", lines[-1])
+    if not match:
+        return None
+    assertions, questions = _status_claims(match.group(1))
+    if questions or len(assertions) != 1:
+        return None
+    return assertions[0]
+
+
+_COUNTERPART_CLARIFICATION = re.compile(
+    r"(?:(?:え|あ)[、,]\s*|(?:あれ|それ)(?:って)?[、,]?\s*)?"
+    r"(?:何のこと|何の話(?:のこと)?|どの話(?:のこと)?|どの件(?:のこと)?|何の件(?:のこと)?|何について|どれのこと)"
+    r"(?:だった)?(?:ですか|ますか|でしたっけ|だったっけ|だっけ|かな)?[?？]?"
+    r"(?:笑|w|W|😊|😂|😅|🙂)*"
+)
+
+
+def _is_short_counterpart_clarification(text: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", text or "").strip()
+    return (
+        len(normalized) <= 45
+        and bool(_COUNTERPART_CLARIFICATION.fullmatch(normalized))
+        and bool(re.search(
+            r"(?:[?？]|(?:ですか|ますか|でしたっけ|だったっけ|だっけ|かな))"
+            r"(?:笑|w|W|😊|😂|😅|🙂)*$",
+            normalized,
+        ))
+    )
+
+
+def _prior_history_before_latest_counterpart(chat_history_text: str, counterpart_message: str) -> str:
+    """Return transcript text before the latest matching counterpart message."""
+    lines = (chat_history_text or "").splitlines()
+    target = unicodedata.normalize("NFKC", counterpart_message or "").strip()
+    matching_line = None
+    for index, line in enumerate(lines):
+        match = re.match(r"^\s*相手:\s*(.*)$", line)
+        if match and unicodedata.normalize("NFKC", match.group(1)).strip() == target:
+            matching_line = index
+    if matching_line is None:
+        return "\n".join(lines)
+    return "\n".join(lines[:matching_line])
+
+
+def _is_unresolved_reference_clarification_set(
+    replies: list[str], mode: str, counterpart_message: str, chat_history_text: str
+) -> bool:
+    return (
+        mode == "normal"
+        and _unresolved_status_query(counterpart_message)
+        and _latest_prior_self_status(chat_history_text, counterpart_message) is None
+        and _last_experience_question(counterpart_message) is None
+        and bool(replies)
+        and all(_is_short_counterpart_clarification(reply) for reply in replies)
+    )
+
+
 # 許可する顔・表情系絵文字のパターン
 _EMOJI_OR_PUNCT_ONLY_LINE = re.compile(r"^[\s😊😂🤣😳😆🥹😌🤔🙌🙂🙄😅😋🤤🥳😎😭🥺😴🤩🤐🤫👍✨笑wW!！?？、。・…〜~]+$")
-
-# 禁止する大げさな抽象表現
-_UNNATURAL_PHRASES = [
-    "贅沢な時間",
-    "非日常感",
-    "世界観に深く入り込む",
-    "日々の忙しさを忘れる",
-    "充電です",
-    "心の栄養",
-    "心がリセット",
-    "リフレッシュ",
-    "モチベーション",
-    "ルーティン",
-    "マインドを",
-]
-
 
 # 許可する顔・表情系絵文字のセット
 _ALLOWED_EMOJIS = set("😊😂🤣😳😆🥹😌🤔🙌🙂🙄😅😋🤤🥳😎😭🥺😴🤩🤐🤫👍✨")
@@ -134,8 +2949,8 @@ def _is_question_line(line: str) -> bool:
     """行が質問・疑問文であるか判定する。"""
     if "？" in line or "?" in line:
         return True
-    clean = line.strip()
-    return bool(re.search(r"(?:ですか|ますか|でしょうか|のかな|のかい|のか)$", clean))
+    clean = line.strip().rstrip("、,")
+    return bool(re.search(r"(?:ですかね|ますかね|ですか|ますか|でしょうか|のかな|のかい|のか)$", clean))
 
 
 def _jaccard_similarity(s1: str, s2: str) -> float:
@@ -149,12 +2964,34 @@ def _jaccard_similarity(s1: str, s2: str) -> float:
     return len(ngrams1 & ngrams2) / len(ngrams1 | ngrams2)
 
 
-def _is_fragmented_split(replies: list[str]) -> bool:
-    """3案が1つの返信を3分割（反応→自己開示→質問）した誤分割であるか判定する。
+def _normalize_style_reference_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "").casefold()
+    return "".join(
+        char for char in normalized
+        if not char.isspace() and not unicodedata.category(char).startswith(("P", "S"))
+    )
 
-    判定は構造シグネチャに基づく（全案が短い断片＋質問締め/自己開示始め）。
-    記号・絵文字のみの候補（例: 笑）は、それ自体では誤分割とみなさない。
-    Step 2 以降、短い独立候補は正式な正常系のため。
+
+def _matches_gold_reply_copy(reply: str, references: list[str] | None) -> bool:
+    candidate = _normalize_style_reference_text(reply)
+    if len(candidate) < 20:
+        return False
+    for reference_text in references or []:
+        reference = _normalize_style_reference_text(reference_text)
+        if len(reference) < 20:
+            continue
+        if candidate in reference or reference in candidate:
+            return True
+        shorter, longer = sorted((len(candidate), len(reference)))
+        if shorter / longer >= 0.85 and _jaccard_similarity(candidate, reference) >= 0.90:
+            return True
+    return False
+
+
+def _is_fragmented_split(replies: list[str]) -> bool:
+    """3案のうち複数が文法的に未完の断片である場合だけ検出する。
+
+    質問や自己開示の位置、文量、候補間の話題一致だけでは分割と判定しない。
     """
     if len(replies) != 3:
         return False
@@ -163,16 +3000,15 @@ def _is_fragmented_split(replies: list[str]) -> bool:
     if not (all(length < 25 for length in lengths) and sum(lengths) < 70):
         return False
 
-    # 案3だけが質問、または案2が自己開示始めの場合に誤分割とみなす。
-    # ただし案1と案3が同内容のバリエーション（並列候補）の場合は分割ではない。
-    # Step 8: 短文化により並列短候補が増えるため、誤検出を抑止する。
-    has_q3 = bool(re.search(r"(?:？|\?|ですか|ある？|行こ)$", replies[2].strip()))
-    has_self2 = bool(re.search(r"^(?:僕も|私も|俺も|自分も|最近|実は)", replies[1].strip()))
-    if has_q3 or has_self2:
-        if _jaccard_similarity(replies[0], replies[2]) >= 0.4:
-            return False
-        return True
-    return False
+    # 「〜て／〜で」は依頼・提案として自然に文が終わる形も多いため、
+    # 単独では未完判定に使わない（例:「ゆっくり休んで」「楽しんできて」）。
+    incomplete_end = re.compile(r"(?:から|けど|だけど|ので|のに|し|が|は|を|に)$")
+    standalone_fragment = re.compile(r"^(?:ね|よ|かな|かも|ということ|なので)$")
+    incomplete_count = sum(
+        bool(incomplete_end.search(reply.strip()) or standalone_fragment.fullmatch(reply.strip()))
+        for reply in replies
+    )
+    return incomplete_count >= 2
 
 
 def validate_tone_strict(replies: list[str], tone: str) -> list[str]:
@@ -181,7 +3017,8 @@ def validate_tone_strict(replies: list[str], tone: str) -> list[str]:
     if tone == "tame":
         # 丁寧語終止パターンの検査
         keigo_end_pattern = re.compile(
-            r"(?:です|ます|でした|ました|でしょう|ません|なんですね|ありますか|ですか|でしょうか|ですね)(?:[！!？?\s]|$)"
+            r"(?:です|ます|でした|ました|でしょう|ません|なんですね|ありますか|ですか|でしょうか|ですね)"
+            r"(?:[。！!？?、\s笑ｗw]|$)"
         )
         for i, r in enumerate(replies, start=1):
             if keigo_end_pattern.search(r):
@@ -189,7 +3026,8 @@ def validate_tone_strict(replies: list[str], tone: str) -> list[str]:
     elif tone == "keigo":
         # タメ口終止パターンの検査
         tame_end_pattern = re.compile(
-            r"(?:だね|だよ|でしょ|じゃん|っけ|ない？|行こ|ね！|よ！)(?:[！!？?\s]|$)"
+            r"(?:だね|だよ|でしょ|じゃん|っけ|ない？|行こ)(?:[！!？?\s]|$)"
+            r"|(?<!ですよ)(?<!ますよ)(?<!です)(?<!ます)(?:ね|よ)[！!？?]"
         )
         for i, r in enumerate(replies, start=1):
             if tame_end_pattern.search(r):
@@ -210,88 +3048,18 @@ def sanitize_reply_text(
     current_datetime: datetime | None = None,
     contact_name: str = "",
 ) -> str:
-    """生成された返信テキストの季節矛盾・禁止ワード・不自然な表現を自動置換・無害化する。"""
+    """Remove only explicit pressure boilerplate; preserve reply meaning and wording."""
     if not text:
         return text
 
     t = text
-    dt = current_datetime or datetime.now()
-    cur_month = dt.month
-
-    # 1. 季節の自動修正（夏なのに冬表現、冬なのに夏表現を自動補正）
-    if cur_month in (6, 7, 8):  # 夏
-        replacements = [
-            (r"急に寒くなってき(た|て|ます)?", r"毎日かなり暑いですが"),
-            (r"寒くなってき(た|て|ます)?", r"暑い日が続いています"),
-            (r"寒さで(やられて|体調)?", r"暑さで\1"),
-            (r"寒さ", r"暑さ"),
-            (r"寒いですね", r"暑いですね"),
-            (r"寒くないですか", r"体調崩してないですか"),
-            (r"暖かくして", r"涼しくして"),
-            (r"温かいもの", r"冷たいもの"),
-            (r"暖房", r"冷房"),
-            (r"こたつ", r"エアコン"),
-        ]
-        for pattern, repl in replacements:
-            t = re.sub(pattern, repl, t)
-    elif cur_month in (12, 1, 2):  # 冬
-        replacements = [
-            (r"暑くなってき(た|て|ます)?", r"寒くなってき\1"),
-            (r"猛暑", r"寒さ"),
-            (r"夏バテ", r"体調管理"),
-            (r"冷房", r"暖房"),
-            (r"冷たいもの", r"温かいもの"),
-        ]
-        for pattern, repl in replacements:
-            t = re.sub(pattern, repl, t)
-
-    # 2. 禁止カタカナ語の自動置換
-    t = re.sub(r"リフレッシュ(する|される|になり|できます)?", r"気分転換\1", t)
-    t = re.sub(r"リフレッシュ", r"気分転換", t)
-
-    # 3. 催促キーワードの自動除去・マイルド化
+    # 2. 催促キーワードの自動除去・マイルド化
     pressure_patterns = [
         (r"(返信|返事)(まだ|待ってます|ないですか|ないです)[？?]?\s*", r""),
         (r"(既読|未読)スルー[^\n]*\n?", r""),
     ]
     for pattern, repl in pressure_patterns:
         t = re.sub(pattern, repl, t)
-
-    # 4. AI特有の他人行儀・不自然構文の自動口語化
-    ai_cliches = [
-        (r"思わず共有です(笑)?", r"めっちゃ美味しかったんですよね笑"),
-        (r"を求めて、?今日", r"気になって今日"),
-        (r"を求めて", r"食べたくて"),
-        (r"最高の楽しみですね", r"いいですよね！"),
-        (r"最高ですね！", r"いいですよね！"),
-    ]
-    for pattern, repl in ai_cliches:
-        t = re.sub(pattern, repl, t)
-
-    # 5. 形式名詞の自然な平仮名化
-    t = re.sub(r"何か", "なにか", t)
-
-    # 6. 不自然な話題切り替えフレーズ（『ほかにも』『ほかに』『〇〇もいいですけど』『〇〇以外だと』等）の自動除去
-    awkward_transitions = [
-        (r"[^、\n]+もいいですけど[、,\s]*", ""),
-        (r"[^、\n]+も気になりますけど[、,\s]*", ""),
-        (r"[^、\n]+以外だと[、,\s]*", ""),
-        (r"[^、\n]+以外で(は)?[、,\s]*", ""),
-        (r"[^、\n]+以外に(は)?[、,\s]*", ""),
-        (r"[^、\n]+以外は[、,\s]*", ""),
-        (r"ほかにも\s*", ""),
-        (r"ほかに\s*", ""),
-        (r"他にも\s*", ""),
-        (r"他に\s*", ""),
-    ]
-    for pattern, repl in awkward_transitions:
-        t = re.sub(pattern, repl, t)
-
-    # 7. 「〜とのこと」「〜と拝見」等の機械的AI表現の自動口語化
-    t = re.sub(r"([^、\n]+)とのことですが[、,\s]*", r"\1なんですね！\n", t)
-    t = re.sub(r"([^、\n]+)とのこと[、。\s]*", r"\1なんですね！\n", t)
-    t = re.sub(r"と拝見(しました|して|致しました)[、。\s]*", r"見て", t)
-    t = re.sub(r"と書かれて(いて|おり|ありましたので|いたので)[、。\s]*", r"見て", t)
 
     return t.strip()
 
@@ -305,6 +3073,328 @@ def ensure_has_question(text: str, condition: str = "", contact_name: str = "") 
     return text
 
 
+_RECURRING_COUNTERPART_CLAIM_RE = re.compile(
+    r"(?:毎日|日々|いつも|よく)[^。！？!?\n]{0,40}"
+    r"(?:頑張|がんば|大変|バタバタ|忙し|疲れ|お?仕事|働いて|勤務|おつかれ|お疲れ)"
+)
+_TIMEBOUND_RECURRING_WORK_GREETING_RE = re.compile(
+    r"(?:今日|きょう|昨日|昨夜|今夜|今週|先週)も[^。！？!?\n]{0,18}"
+    r"(?:お?仕事|働|勤務|おつかれ|お疲れ|頑張|がんば|大変|忙し|疲れ)"
+)
+_TIMEBOUND_RECURRENCE_MARKER_RE = re.compile(
+    r"(?:(?:今日|きょう|昨日|昨夜|今夜)も|(?:今週|先週)も)"
+)
+_TIME_REFERENCE_GROUPS = {
+    "today": re.compile(r"今日|きょう|本日|今夜"),
+    "yesterday": re.compile(r"昨日|昨夜"),
+}
+_SPECIFIC_WORK_CIRCUMSTANCE_RE = re.compile(r"残業|休日出勤|夜勤|徹夜|泊まり込み")
+_WORK_SCHEDULE_QUESTION_RE = re.compile(
+    r"(?:(?:明日|あした|今日|明後日|今週|来週|週末|いつ|何時|何日|何曜日)"
+    r"[^。！？!?\n]{0,16}(?:お?仕事|勤務|出勤|職場)|"
+    r"(?:お?仕事|勤務|出勤|職場)[^。！？!?\n]{0,16}"
+    r"(?:いつ|何時|何日|何曜日|何時から|何時まで|いつから|いつまで))"
+)
+_NEGATED_WORK_CIRCUMSTANCE_RE = re.compile(
+    r"^(?:には|は|が|を|も|に)?(?:ではなくて?|じゃなくて?|でなく|"
+    r"ではありません(?:でした)?|じゃありません(?:でした)?|ではない|ではなかった|"
+    r"じゃない|じゃなかった|しておりません(?:でした)?|"
+    r"(?:には|は|が|を|も|に)?行って(?:いない|いません(?:でした)?|いなかった|おらず|なくて)|"
+    r"(?:には|は|が|を|も|に)?行(?:かない|きません(?:でした)?|かなかった|かなくて)|"
+    r"(?:して|いて)?(?:いない|いません(?:でした)?|いなかった|"
+    r"いなくて|なくて|ない|ません(?:でした)?)|"
+    r"^(?:は|が|を|も|に)?しない|^(?:は|が|を|も|に)?しません(?:でした)?|"
+    r"(?:して|いて|し)?なかった|すること(?:は)?なく|しないで|"
+    r"(?:する|した)(?:つもり|予定)(?:は|が)?(?:ない|なかった|ありません(?:でした)?)|"
+    r"(?:する|した)わけ(?:では|じゃ|は|が)?(?:ない|なかった|ありません(?:でした)?)|"
+    r"(?:を|は|が)?(?:している|してる|していた|してた)わけ(?:では|じゃ)(?:ない|なかった|ありません(?:でした)?)|"
+    r"(?:する|した)こと(?:は|が)?(?:ない|なかった|ありません(?:でした)?)|"
+    r"(?:くわけ(?:では|じゃ)(?:ない|なかった|ありません(?:でした)?)|"
+    r"か(?:ない|なかった|ず)|きません(?:でした)?|けません(?:でした)?)|"
+    r"(?:の)?予定(?:は|が)?(?:ない|なかった|ありません(?:でした)?)|"
+    r"したわけ(?:では|じゃ)?(?:ない|なかった|ありません(?:でした)?)|"
+    r"ありません(?:でした)?|"
+    r"せず|行かず|いかず|なし)"
+    r"|^(?:には|は|が|を|も|に)?(?:休み(?!(?:じゃ|では)(?:ない|ありません|なかった|ありませんでした))(?:で|です|だった|でした|だ)?|休暇|休日)"
+)
+
+
+def _has_grounded_timebound_work_recurrence(
+    context: str, *, require_work_context: bool
+) -> bool:
+    """Require a recurrence marker and its work/fatigue evidence in one clause."""
+    for clause in re.split(
+        r"[。！？!?、,\n]|だけれど|だけど|けれども?|けど|ですが|でも|のに|一方で",
+        unicodedata.normalize("NFKC", context),
+    ):
+        if not _TIMEBOUND_RECURRENCE_MARKER_RE.search(clause):
+            continue
+        for work_match in re.finditer(r"(?:仕事|勤務|働)", clause):
+            suffix = clause[work_match.end():work_match.end() + 14]
+            if not _NEGATED_WORK_CIRCUMSTANCE_RE.search(suffix):
+                return True
+        if not require_work_context and re.search(
+            r"(?:疲れ|忙し|大変|頑張|がんば)", clause
+        ):
+            return True
+    return False
+
+
+def _has_positive_work_circumstance(context: str, circumstance: str) -> bool:
+    """A circumstance token in a negated clause is not evidence for the claim."""
+    normalized_context = unicodedata.normalize("NFKC", context)
+    for clause in re.split(r"[。！？!?、,\n]|だけれど|だけど|けれども?|けど|ですが|でも|のに|一方で", normalized_context):
+        for match in re.finditer(re.escape(circumstance), clause):
+            suffix = clause[match.end():match.end() + 14]
+            if not _NEGATED_WORK_CIRCUMSTANCE_RE.search(suffix):
+                return True
+    return False
+
+
+def _has_positive_work_context(context: str) -> bool:
+    """Require a non-negated current work reference before acknowledging work."""
+    normalized_context = unicodedata.normalize("NFKC", context)
+    for clause in re.split(
+        r"[。！？!?、,\n]|だけれど|だけど|けれども?|けど|ですが|でも|のに|一方で",
+        normalized_context,
+    ):
+        for match in re.finditer(r"(?:お?仕事|出勤|勤務|職場|残業|働)", clause):
+            suffix = clause[match.end():match.end() + 24]
+            if not _NEGATED_WORK_CIRCUMSTANCE_RE.search(suffix):
+                return True
+    return False
+
+
+def _has_positive_time_off_context(context: str) -> bool:
+    """A negated leave-status mention must not ground a holiday assertion."""
+    normalized_context = unicodedata.normalize("NFKC", context)
+    negated_time_off_suffix = re.compile(
+        r"^(?:(?:は|が|も|を|に)?(?:ない|なかった|ありません(?:でした)?|"
+        r"ではない|ではなかった|ではありません(?:でした)?|じゃない|じゃなかった|"
+        r"じゃありません(?:でした)?|(?:取れ|とれ)(?:ない|なかった|ません(?:でした)?|なくて|ず)|"
+        r"(?:を)?取(?:らない|らなかった|りません(?:でした)?|らなくて|らず)|"
+        r"(?:を)?取る(?:予定|つもり|こと)(?:は|が)?(?:ない|なかった|ありません(?:でした)?|なく|なくて)|"
+        r"(?:を)?(?:取|と)って(?:ない|いない|いません|いませんでした|いなかった|おらず|なくて)|"
+        r"(?:が)?(?:取れて|とれて)(?:ない|いない|いません|いませんでした|いなかった|なくて)|"
+        r"なくて))"
+    )
+    for clause in re.split(
+        r"[。！？!?、,\n]|だけれど|だけど|けれども?|けど|ですが|でも|のに|一方で",
+        normalized_context,
+    ):
+        for match in re.finditer(r"(?:お?休み|休日|休暇)", clause):
+            if re.match(r"休日(?:(?:に|の|は|も|で)?(?:出勤|勤務|仕事|働))", clause[match.start():]):
+                continue
+            suffix = clause[match.end():match.end() + 24]
+            if (
+                not _NEGATED_WORK_CIRCUMSTANCE_RE.search(suffix)
+                and not negated_time_off_suffix.search(suffix)
+            ):
+                return True
+    return False
+
+
+def _has_unverified_time_reference(reply: str, counterpart_message: str) -> bool:
+    normalized_reply = _counterpart_assertion_text(
+        reply, include_questions=True
+    )
+    reply_groups = {
+        label
+        for label, pattern in _TIME_REFERENCE_GROUPS.items()
+        if pattern.search(normalized_reply)
+    }
+    grounded_groups = {
+        label
+        for label, pattern in _TIME_REFERENCE_GROUPS.items()
+        if pattern.search(unicodedata.normalize("NFKC", counterpart_message))
+    }
+    return bool(reply_groups - grounded_groups)
+_UNVERIFIED_EFFORT_INTENSITY_RE = re.compile(
+    r"(?:そんなに|そこまで|それほど)[^。！？!?\n]{0,16}(?:疲れ|頑張|がんば|働|勤務|大変)|"
+    r"(?:疲れ(?:る|た|て|てる)|疲労)[^。！？!?\n]{0,12}(?:まで|ほど)[^。！？!?\n]{0,12}(?:頑張|がんば|働|勤務|大変)|"
+    r"(?:たくさん|いっぱい|一生懸命|かなり|すごく|めちゃくちゃ)[^。！？!?\n]{0,12}(?:頑張|がんば|働|勤務|大変)|"
+    r"(?:頑張|がんば|働|勤務)[^。！？!?\n]{0,12}(?:たくさん|いっぱい|一生懸命|かなり|すごく|めちゃくちゃ)|"
+    r"遅くまで[^。！？!?\n]{0,12}(?:仕事|働|勤務|お?疲れ|お?つかれ|頑張|がんば)|"
+    r"(?:今日|きょう|昨日|昨夜)も?[^。！？!?\n]{0,12}(?:大変|忙し|頑張|がんば|働|勤務)|"
+    r"ヘトヘト[^。！？!?\n]{0,12}(?:頑張|がんば|働|勤務|仕事)|"
+    r"(?:頑張|がんば|働|勤務|仕事)[^。！？!?\n]{0,12}ヘトヘト|"
+    r"忙し(?:かった|そう|くて|い)|"
+    r"バタバタ(?:して(?!い?(?:ない|ません|なかった|おらず|なくて))|だった)|"
+    r"気を張(?:って|り)|緊張して|気疲れ|"
+    r"疲れ(?:が|も)?溜ま|疲労が溜ま|お疲れが溜ま|"
+    r"(?:一日中|一日じゅう|一日|ずっと|朝から|長時間)[^。！？!?\n]{0,16}"
+    r"(?:仕事|働|勤務|頑張|がんば|忙し|大変|気を張|緊張)"
+)
+_GROUNDED_CONCRETE_WORKLOAD_RE = re.compile(
+    r"(?:会議|ミーティング)[^。！？!?\n]{0,10}(?:[2-9２-９]つ|複数|連続|続き|立て続け)|"
+    r"(?:昼食?|ご飯|食事)[^。！？!?\n]{0,10}(?:食べ損ね|食べられな|食べれな|抜い|取れな|とれな)|"
+    r"(?:朝から|一日中|長時間)[^。！？!?\n]{0,12}(?:会議|ミーティング|勤務|仕事)"
+)
+_NEGATED_CONCRETE_WORKLOAD_RE = re.compile(
+    r"(?:会議|ミーティング)(?:が|は|を)?\s*[2-9２-９]つ(?:も)?[^。！？!?\n]{0,12}"
+    r"(?:なかった|ありません|ない|わけ(?:では|じゃ)(?:ない|なかった|ありません))|"
+    r"(?:昼食?|ご飯|食事)(?:を|は|も)?(?:食べ損ね(?:て)?(?:ない|なかった|ていない|てません)|"
+    r"食べ損ねたわけ(?:では|じゃ)(?:ない|なかった)|"
+    r"食べられなかったわけ(?:では|じゃ)(?:ない|なかった)|"
+    r"食べれなかったわけ(?:では|じゃ)(?:ない|なかった)|"
+    r"食べられた|食べれた|取れた|とれた)"
+)
+_GROUNDED_BUSINESS_CLAIM_RE = re.compile(
+    r"忙し(?:かった|そう|くて|い)|大変(?:だった|そう|で)|"
+    r"バタバタして|慌ただし"
+)
+_UNSUPPORTED_STRONG_BUSINESS_CLAIM_RE = re.compile(
+    r"(?:かなり|すごく|とても|めちゃ(?:くちゃ)?|めっちゃ|ものすごく|死ぬほど|相当(?:に)?|本当に)"
+    r"[^。！？!?\n]{0,8}(?:忙し|大変|バタバタ|慌ただし)|"
+    r"(?:忙し|大変|バタバタ|慌ただし)すぎ(?:る|た|て)"
+)
+_EXTREME_OR_CUMULATIVE_EFFORT_RE = re.compile(
+    r"(?:疲れ|疲労|お疲れ).{0,12}溜ま|ヘトヘト|限界まで|頑張りすぎ"
+)
+_CURRENT_WORKLOAD_CONTRAST_RE = re.compile(
+    r"(?:前回|前は|前には|以前|昨日|先週|先月|最近|去年|昨年|昔|この前|この間)[^。！？!?\n]{0,16}"
+    r"(?:けど|けれど(?:も)?|ですが|でも|ただ)[^。！？!?\n]{0,16}"
+    r"(?P<current>今(?:も|は|朝|夜)?|今日|本日|朝から|現在)"
+)
+_NEGATED_WORKLOAD_ASSESSMENT_RE = re.compile(
+    r"(?:忙し(?:く(?:は)?(?:ない|なかった)|(?:い|かった)(?:"
+    r"わけ(?:では|じゃ)(?:ない|なかった|ありません)|ほど(?:では|じゃ)?(?:ない|なかった)))|"
+    r"忙し(?:い|かった)?(?:って|という)(?:ほど|感じ)(?:では|じゃ)(?:ない|なかった)|"
+    r"忙し(?:い|かった)?とは言え(?:ない|なかった|ません)|"
+    r"大変(?:だった|で)?わけ(?:では|じゃ)(?:ない|なかった|ありません)|"
+    r"大変(?:では|じゃ)?(?:ない|なかった)|(?:全然|まだ|かなり)?余裕(?:だった|があった|ある)|"
+    r"バタバタして(?:い)?ない|疲れて(?:い)?ない|疲れなかった)"
+)
+
+
+def _assertion_text_without_questions(
+    reply: str, *, include_questions: bool = False
+) -> str:
+    return "".join(
+        clause
+        for clause in re.split(r"(?<=[。！？!?、,])", unicodedata.normalize("NFKC", reply))
+        if include_questions or not _is_question_line(clause)
+    )
+
+
+def _counterpart_assertion_text(
+    reply: str, *, include_questions: bool = False
+) -> str:
+    assertion_text = _assertion_text_without_questions(
+        reply, include_questions=include_questions
+    )
+    clauses = re.split(
+        r"(?<=[。！？!?、,])|"
+        r"(?<=[たらるいだねよす])し|"
+        # A causal clause can begin with self-disclosure while its unmarked
+        # continuation attributes a fact to the counterpart (e.g. 「私も昨日
+        # 忙しかったから今日は一日中忙しかったんだね」). Split only when
+        # the continuation ends in a counterpart-oriented inference; splitting
+        # every 「から」 would misclassify ordinary self-disclosures such as
+        # 「私も忙しかったから今日は家でゆっくりしたよ」.
+        r"(?<=て)(?=、?[^。！？!?\n]{0,48}(?:んですね|んだね|でしたね|ですね|だね|よね)(?:[。！？!?\n]|$))|"
+        r"(?<=から)(?=、?[^。！？!?\n]{0,48}(?:んですね|んだね|でしたね|ですね|だね|よね)(?:[。！？!?\n]|$))|"
+        r"だけど|だけれど|けれども?|ですが|けども?|のに",
+        assertion_text,
+    )
+    if include_questions:
+        filtered_clauses: list[str] = []
+        follows_self_disclosure = False
+        for clause in clauses:
+            if not clause.strip():
+                continue
+            if re.search(r"(?:僕|私|自分|俺)", clause):
+                follows_self_disclosure = True
+                continue
+            if follows_self_disclosure:
+                counterpart_inference = re.search(
+                    r"(?:んですね|んだね|でしたね|ですね|だね|よね)(?:[。！？!?]|$)",
+                    clause.strip(),
+                )
+                if _is_question_line(clause) or counterpart_inference:
+                    filtered_clauses.append(clause)
+                follows_self_disclosure = False
+                continue
+            filtered_clauses.append(clause)
+        return "".join(filtered_clauses)
+    return "".join(
+        clause
+        for clause in clauses
+        if not re.search(r"(?:僕|私|自分|俺)", clause)
+    )
+
+
+def _has_unverified_recurring_counterpart_claim(
+    reply: str, counterpart_context: str
+) -> bool:
+    assertion_text = _counterpart_assertion_text(reply)
+    temporal_work_greeting = _TIMEBOUND_RECURRING_WORK_GREETING_RE.search(
+        assertion_text
+    )
+    if temporal_work_greeting and not _has_grounded_timebound_work_recurrence(
+        counterpart_context,
+        require_work_context=bool(re.search(r"(?:お?仕事|勤務|働)", assertion_text)),
+    ):
+        return True
+    return bool(
+        _RECURRING_COUNTERPART_CLAIM_RE.search(assertion_text)
+        and not _RECURRING_COUNTERPART_CLAIM_RE.search(counterpart_context)
+    )
+
+
+def _has_unverified_effort_intensity_claim(
+    reply: str, counterpart_context: str
+) -> bool:
+    assertion_text = _counterpart_assertion_text(reply)
+    normalized_context = unicodedata.normalize("NFKC", counterpart_context)
+    if not (
+        _UNVERIFIED_EFFORT_INTENSITY_RE.search(assertion_text)
+        or _UNSUPPORTED_STRONG_BUSINESS_CLAIM_RE.search(assertion_text)
+    ):
+        return False
+    current_periods = list(
+        re.finditer(r"(?:今日|本日|今(?:も|は|朝|夜)?|現在|朝から)", normalized_context)
+    )
+    for period_index, current_period in enumerate(current_periods):
+        end = current_periods[period_index + 1].start() if period_index + 1 < len(current_periods) else len(normalized_context)
+        current_period_text = normalized_context[current_period.start() : end]
+        if _NEGATED_WORKLOAD_ASSESSMENT_RE.search(current_period_text):
+            return True
+    if current_periods and re.search(
+        r"(?:前回|前は|前には|以前|昨日|先週|先月|最近|去年|昨年|昔|この前|この間)",
+        normalized_context[: current_periods[0].start()],
+    ):
+        normalized_context = normalized_context[current_periods[0].start() :]
+    current_contrast = _CURRENT_WORKLOAD_CONTRAST_RE.search(normalized_context)
+    if current_contrast:
+        normalized_context = normalized_context[current_contrast.start("current") :]
+    has_negated_assessment = bool(
+        _NEGATED_WORKLOAD_ASSESSMENT_RE.search(normalized_context)
+    )
+    if has_negated_assessment:
+        return True
+    if _UNVERIFIED_EFFORT_INTENSITY_RE.search(normalized_context):
+        return False
+    evidence_clauses = re.split(
+        r"[。！？!?\n]|(?:けど|けれど(?:も)?|ですが|でも|ただ)|"
+        r"(?<=ない)し|(?<=なかった)し|(?<=ありません)し",
+        normalized_context,
+    )
+    has_concrete_workload_evidence = any(
+        _GROUNDED_CONCRETE_WORKLOAD_RE.search(clause)
+        and not _NEGATED_CONCRETE_WORKLOAD_RE.search(clause)
+        for clause in evidence_clauses
+    )
+    if (
+        has_concrete_workload_evidence
+        and _GROUNDED_BUSINESS_CLAIM_RE.search(assertion_text)
+        and not _UNSUPPORTED_STRONG_BUSINESS_CLAIM_RE.search(assertion_text)
+        and not _EXTREME_OR_CUMULATIVE_EFFORT_RE.search(assertion_text)
+    ):
+        return False
+    return True
+
+
 def validate_candidate_replies(
     replies: list[str],
     expected_candidates: int = 3,
@@ -312,6 +3402,15 @@ def validate_candidate_replies(
     condition: str = "",
     mode: str = "normal",
     current_datetime: datetime | None = None,
+    last_self_message: str = "",
+    counterpart_message: str = "",
+    known_self_facts: list[str] | None = None,
+    known_self_fact_timestamps: list[str | None] | None = None,
+    chat_history_text: str = "",
+    strategy_mode: str = "none",
+    tapple_action: str | None = None,
+    conversation_messages: list[dict[str, Any]] | None = None,
+    style_reference_replies: list[str] | None = None,
 ) -> list[str]:
     """返信案のHardバリデーションを行い、違反内容のリストを返す。空リストなら合格。
 
@@ -320,10 +3419,8 @@ def validate_candidate_replies(
     - [AI_QUESTION] の混入・不正形式
     - 1つの返信の3分割（fragmentation）
     - トーン指定との重大矛盾（tame時の敬語混入等）
-    - 「〜とのこと」「〜と拝見」等の機械的AI表現の禁止
-    - 「ほかにも」「ほかに」「〜以外」等の話題逃げ・並列質問の禁止
+    - 定型的・機械的な報告表現の確認（個別語句だけで判定しない）
     - 追いメッセージ時の催促表現禁止
-    - 季節の矛盾（現在の月に合わない表現）
     - 候補案同士の過度な重複（類似度0.85以上）
 
     Step 2 仕様変更: 質問なしは正常系のため、質問必須バリデーションは撤廃した。
@@ -339,6 +3436,221 @@ def validate_candidate_replies(
     for i, rep in enumerate(replies, start=1):
         if not rep.strip():
             violations.append(f"案{i}が空文字です。")
+        elif _matches_gold_reply_copy(rep, style_reference_replies):
+            violations.append(
+                f"案{i}が過去のGold返信をコピーしています。内容は引き継ぎつつ、今回の会話に合わせて独立した文面にしてください。"
+            )
+
+    if strategy_mode == "tapple":
+        counterpart_text = counterpart_message or ""
+        boundary_messages = conversation_messages or (
+            [{"sender": "contact", "content": counterpart_text}]
+            if counterpart_text
+            else []
+        )
+        last_boundary_contact_index = next(
+            (
+                index
+                for index in range(len(boundary_messages) - 1, -1, -1)
+                if boundary_messages[index].get("sender") == "contact"
+            ),
+            -1,
+        )
+        has_unqualified_decline = bool(
+            last_boundary_contact_index >= 0
+            and _unresolved_tapple_decline_match(
+                boundary_messages, last_boundary_contact_index
+            )
+        )
+        counterproposal_match = _TAPPLE_COUNTERPROPOSAL_RE.search(counterpart_text)
+        reported_third_party_text = re.split(
+            r"(?:って|と)(?:言って|聞いて|言われ)", counterpart_text, maxsplit=1
+        )[0]
+        third_party_counterproposal = _TAPPLE_THIRD_PARTY_COUNTERPROPOSAL_RE.search(
+            reported_third_party_text
+        )
+        first_person_counterproposal = _TAPPLE_FIRST_PERSON_COUNTERPROPOSAL_RE.search(
+            counterpart_text
+        )
+        later_date_unavailability = bool(
+            counterproposal_match
+            and any(
+                unavailable.start() >= counterproposal_match.end()
+                for unavailable in _TAPPLE_DATE_UNAVAILABILITY_RE.finditer(counterpart_text)
+            )
+        )
+        has_counterproposal = bool(
+            counterproposal_match
+            and not later_date_unavailability
+            and not _has_tapple_explicit_hesitation(counterpart_text)
+            and not _has_tapple_safety_concern(counterpart_text)
+        )
+        has_date_unavailability = bool(
+            _TAPPLE_DATE_UNAVAILABILITY_RE.search(counterpart_text)
+        )
+        mentioned_activity_terms = [
+            term for term in _TAPPLE_SHARED_ACTIVITY_TERMS if term in counterpart_text
+        ]
+        prior_self_messages = [
+            prompt.clean_chat_message_content(str(message.get("content") or ""))
+            for message in boundary_messages
+            if message.get("sender") == "self"
+        ]
+        accepted_invitation_allows_scheduling = bool(
+            last_boundary_contact_index >= 0
+            and (
+                _TAPPLE_ACCEPTED_INVITATION_RE.search(counterpart_text)
+                or (
+                    (
+                        conversation_messages is None
+                        or _has_prior_self_tapple_invitation(
+                            boundary_messages, last_boundary_contact_index
+                        )
+                    )
+                    and (
+                        _TAPPLE_ACTIVITY_INTEREST_ACCEPTANCE_RE.search(counterpart_text)
+                        or _TAPPLE_SHORT_INVITATION_ACCEPTANCE_RE.fullmatch(
+                            counterpart_text.strip()
+                        )
+                    )
+                )
+            )
+            and not _has_tapple_post_acceptance_hedge(counterpart_text)
+            and not _has_tapple_explicit_hesitation(counterpart_text)
+            and not _has_tapple_safety_concern(counterpart_text)
+            and not _TAPPLE_THIRD_PARTY_INTEREST_RE.search(counterpart_text)
+            and not has_date_unavailability
+        )
+        for i, rep in enumerate(replies, start=1):
+            if _TAPPLE_UNVERIFIABLE_SAFETY_ASSURANCE_RE.search(rep):
+                violations.append(
+                    f"案{i}に実際の安全性を保証する表現があります。"
+                    "安全を断定せず、相手の不安を受け止めてください。"
+                )
+            if (
+                tapple_action in {"wait", "continue"}
+                and _TAPPLE_ACTIVITY_INTEREST_RE.search(counterpart_text)
+                and _TAPPLE_SOLO_ACTIVITY_ADVICE_RE.search(rep)
+            ):
+                violations.append(
+                    f"案{i}が相手の活動への関心に対して一人で行くよう勧めています。関心を受け止める自然な反応にしてください。"
+                )
+            if _TAPPLE_SELF_ACTIVITY_PLAN_RE.search(rep) and mentioned_activity_terms:
+                has_grounded_prior_plan = any(
+                    _TAPPLE_SELF_ACTIVITY_PLAN_RE.search(message)
+                    and any(term in message for term in mentioned_activity_terms)
+                    for message in prior_self_messages
+                )
+                if not has_grounded_prior_plan:
+                    violations.append(
+                        f"案{i}に、会話にない本人の活動予定があります。本人の関心を予定や訪問計画に変えず、確認済みの内容だけで返してください。"
+                    )
+            self_proposed_date = (
+                first_person_counterproposal.group("date")
+                if first_person_counterproposal
+                else None
+            )
+            if self_proposed_date:
+                self_proposed_date = self_proposed_date.replace("曜日", "曜").replace(
+                    "別の日", "別日"
+                )
+            reply_uses_self_proposed_date = bool(
+                self_proposed_date and self_proposed_date in rep
+            )
+            unresolved_hesitation_or_safety = (
+                last_boundary_contact_index >= 0
+                and _has_unresolved_tapple_safety_or_hesitation(
+                    boundary_messages, last_boundary_contact_index
+                )
+            )
+            scheduling_is_expected = (
+                tapple_action == "continue"
+                and not has_unqualified_decline
+                and not unresolved_hesitation_or_safety
+                and (
+                    accepted_invitation_allows_scheduling
+                    or (
+                        has_counterproposal
+                        and (
+                            third_party_counterproposal is None
+                            or reply_uses_self_proposed_date
+                        )
+                    )
+                )
+            )
+            if _is_tapple_private_place_proposal(rep):
+                violations.append(
+                    f"案{i}に自宅・ホテル・個室などで会う提案があります。"
+                    "初回の待ち合わせは人目のある公共の場所にしてください。"
+                )
+            if _TAPPLE_DISRESPECTFUL_REPLY_RE.search(rep):
+                violations.append(
+                    f"案{i}に相手を侮辱する表現があります。断りには敬意を保って返してください。"
+                )
+            if _is_tapple_contact_exchange_request(rep):
+                violations.append(
+                    f"案{i}に外部連絡先の交換や移動を促す表現があります。"
+                    "連絡先交換を提案せず、タップル上で会話を続ける文面にしてください。"
+            )
+            has_reinvitation = bool(_TAPPLE_REINVITATION_RE.search(rep))
+            has_scheduling_proposal = bool(_TAPPLE_SCHEDULING_PROPOSAL_RE.search(rep))
+            has_scheduling_next_step = bool(
+                _TAPPLE_SCHEDULING_NEXT_STEP_RE.search(rep)
+                or (
+                    scheduling_is_expected
+                    and _TAPPLE_PUBLIC_PLACE_RE.search(rep)
+                    and re.search(
+                        r"(?:に|で)(?:しましょう|しよう|会いましょう|会おう)", rep
+                    )
+                )
+            )
+            has_unresolved_meeting_boundary = (
+                has_unqualified_decline or unresolved_hesitation_or_safety
+            )
+            invite_is_allowed = (
+                tapple_action == "invite"
+                and not has_unqualified_decline
+                and not unresolved_hesitation_or_safety
+            )
+            if (
+                has_unresolved_meeting_boundary
+                and _TAPPLE_RECONSIDERATION_PRESSURE_RE.search(rep)
+            ):
+                violations.append(
+                    f"案{i}が会うことへの断り・迷い・安全面の懸念に対して考え直すよう求めています。"
+                    "相手の意思を尊重し、説得せずに返してください。"
+                )
+            if has_reinvitation and not (
+                invite_is_allowed or scheduling_is_expected
+            ):
+                violations.append(
+                    f"案{i}に、会う誘いを返信文へ混ぜています。"
+                    "誘い方は返信候補ではなく戦略欄で提案してください。"
+                    "相手が断っている場合は、誘い直しや説得をせずに返してください。"
+                )
+            elif (
+                has_reinvitation
+                and scheduling_is_expected
+                and not has_scheduling_next_step
+            ):
+                violations.append(
+                    f"案{i}が、受け入れられた誘いを繰り返しています。改めて誘わず、日程や都合を自然に確認してください。"
+                )
+            if (
+                scheduling_is_expected
+                and not has_scheduling_next_step
+            ):
+                violations.append(
+                    f"案{i}が受け入れ後の日程調整へ進んでいません。新しい日付を作らず、いつ頃・どの曜日が都合よいかを自然に確認してください。"
+                )
+            elif has_scheduling_proposal and not (
+                invite_is_allowed or scheduling_is_expected
+            ):
+                violations.append(
+                    f"案{i}に、会う誘いを返信文へ混ぜています。"
+                    "誘い方は返信候補ではなく戦略欄で提案してください。"
+                    "相手が断っている場合は、誘い直しや説得をせずに返してください。"
+                )
 
     # [AI_QUESTION] タグの混入チェック
     for i, rep in enumerate(replies, start=1):
@@ -346,7 +3658,10 @@ def validate_candidate_replies(
             violations.append(f"案{i}にAI_QUESTIONタグ [AI_QUESTION] が混入しています。")
 
     # 1つの返信の3分割（fragmentation）チェック
-    if _is_fragmented_split(replies):
+    clarification_only_set = _is_unresolved_reference_clarification_set(
+        replies, mode, counterpart_message, chat_history_text
+    )
+    if _is_fragmented_split(replies) and not clarification_only_set:
         violations.append("1つの返信が3分割されて出力されています。3案それぞれが単体で送信できる独立した完成品となるよう作成してください。")
 
     # トーン検査
@@ -355,55 +3670,685 @@ def validate_candidate_replies(
 
     # 追いメッセージ時の催促表現禁止チェック
     if mode == "followup":
+        def normalize_for_echo_check(text: str) -> str:
+            normalized = unicodedata.normalize("NFKC", text).casefold()
+            return "".join(
+                char for char in normalized
+                if not char.isspace() and not unicodedata.category(char).startswith("P")
+            )
+
+        last_self_normalized = normalize_for_echo_check(last_self_message)
+        if last_self_normalized:
+            for i, rep in enumerate(replies, start=1):
+                if normalize_for_echo_check(rep) == last_self_normalized:
+                    violations.append(
+                        f"案{i}が直近の自分のメッセージをそのまま繰り返しています。"
+                        "話題の単なる再掲ではなく、新しい自然な反応にしてください。"
+                    )
+
         pressure_keywords = ["返信まだ", "返事まだ", "返事待って", "返信待って", "既読スルー", "未読スルー", "返信ない", "返事ない", "無視", "忙しいですか？", "忙しい？"]
         for i, rep in enumerate(replies, start=1):
             if any(pk in rep for pk in pressure_keywords):
                 violations.append(f"案{i}に催促や返信を問い詰める表現が含まれています。追いメッセージでは催促を避け、自然な口実や軽い話題で作成してください。")
 
-    # 「〜とのこと」「〜と拝見」等の機械的AI表現の禁止チェック
-    robotic_keywords = ["とのこと", "と拝見", "と書かれてい", "とありました"]
+    # Normal mode: verify claims against the last direct personal-experience question.
+    if mode == "normal":
+        preference_topics = _personal_preference_question_topics(counterpart_message)
+        supported_preferences = {
+            topic for topic in preference_topics
+            if any(_fact_supports_preference(fact, topic) for fact in (known_self_facts or []) if fact)
+        }
+        unanswered_preferences = set(preference_topics) - supported_preferences
+        if {"犬", "猫"}.issubset(preference_topics) and supported_preferences.intersection({"犬", "猫"}):
+            unanswered_preferences.difference_update({"犬", "猫"})
+        if preference_topics and unanswered_preferences:
+            for i in range(1, len(replies) + 1):
+                violations.append(
+                    f"案{i}に本人の好みを確認できる情報がありません。"
+                    "相手の直接質問に、未確認の嗜好を事実として答えないでください。"
+                    "アプリ利用者に [AI_QUESTION] で確認してください。"
+                )
+        elif supported_preferences:
+            for i, rep in enumerate(replies, start=1):
+                claimed_preferences = _preference_claim_topics(rep, preference_topics)
+                unsupported_preferences = {
+                    topic for topic in claimed_preferences
+                    if topic not in supported_preferences
+                    or (
+                        _preference_polarity(
+                            rep,
+                            topic,
+                            allow_topicless_answer=len(preference_topics) == 1,
+                        )
+                        and not any(
+                            _preference_polarity(fact, topic)
+                            == _preference_polarity(
+                                rep,
+                                topic,
+                                allow_topicless_answer=len(preference_topics) == 1,
+                            )
+                            for fact in (known_self_facts or []) if fact
+                        )
+                    )
+                }
+                if unsupported_preferences:
+                    violations.append(
+                        f"案{i}に本人の好みを確認できる情報がありません。"
+                        "確認済みの好みと異なる嗜好を本人の事実として答えないでください。"
+                    )
+
+        schedule_topic = _personal_schedule_question_topic(counterpart_message)
+        schedule_reference_datetime = current_datetime or datetime.now(timezone.utc)
+        schedule_fact_items = []
+        for index, fact in enumerate(known_self_facts or []):
+            if not fact:
+                continue
+            if known_self_fact_timestamps is None:
+                # Backward-compatible callers provide facts as current assertions.
+                created_at = schedule_reference_datetime.isoformat()
+            else:
+                created_at = (
+                    known_self_fact_timestamps[index]
+                    if index < len(known_self_fact_timestamps) else None
+                )
+            current_fact = _current_relative_schedule_fact(fact, created_at, schedule_reference_datetime)
+            if current_fact:
+                schedule_fact_items.append((current_fact, created_at))
+        schedule_facts = [
+            fact for fact, _created_at in schedule_fact_items
+            if _fact_supports_schedule_question(fact, schedule_topic, counterpart_message)
+        ] if schedule_topic else []
+        requested_periods = _availability_periods(counterpart_message) if schedule_topic == "availability" else set()
+        supported_periods = {
+            period for period in requested_periods
+            if any(
+                _availability_period_matches(period, known_period)
+                for fact, _created_at in schedule_fact_items
+                for known_period in _availability_periods(fact)
+            )
+        }
+        missing_requested_period = bool(requested_periods and supported_periods != requested_periods)
+        weekend_question = bool(requested_periods.intersection({"週末", "土日"}))
+        weekend_polarities = {
+            polarity
+            for fact in schedule_facts
+            for fact_period, polarity in _availability_claims_by_period(fact).items()
+            if any(_availability_period_matches(period, fact_period) for period in requested_periods)
+        }
+        ambiguous_weekend_facts = weekend_question and len(weekend_polarities) > 1
+        if schedule_topic and (not schedule_facts or missing_requested_period or ambiguous_weekend_facts):
+            for i in range(1, len(replies) + 1):
+                violations.append(
+                    f"案{i}に本人の予定・生活習慣を確認できる情報がありません。"
+                    "予定や起床習慣を作らず、アプリ利用者に [AI_QUESTION] で確認してください。"
+                )
+        elif schedule_topic == "availability":
+            known_polarities_by_period = {}
+            for fact in schedule_facts:
+                fact_claims = _availability_claims_by_period(fact)
+                for requested_period in requested_periods:
+                    for fact_period, polarity in fact_claims.items():
+                        if _availability_period_matches(requested_period, fact_period):
+                            known_polarities_by_period[requested_period] = polarity
+            for i, rep in enumerate(replies, start=1):
+                reply_claims = _availability_claims_by_period(rep)
+                reply_polarity = _availability_polarity(rep)
+                if (
+                    len(requested_periods) > 1
+                    and reply_polarity
+                    and re.search(r"(?:どっちも|どちらも|両方)", unicodedata.normalize("NFKC", rep))
+                ):
+                    reply_claims.update({period: reply_polarity for period in requested_periods})
+                contradicts_period = any(
+                    known_polarities_by_period.get(period) != polarity
+                    for period, polarity in reply_claims.items()
+                    if period in requested_periods and period in known_polarities_by_period
+                )
+                if len(requested_periods) <= 1 and reply_polarity and known_polarities_by_period and set(known_polarities_by_period.values()) != {reply_polarity}:
+                    contradicts_period = True
+                if contradicts_period:
+                    violations.append(
+                        f"案{i}が確認済みの予定と逆の空き状況を答えています。本人の予定と矛盾する断定をせず、情報が不十分なら利用者に確認してください。"
+                    )
+                reply_periods = _availability_periods(rep)
+                if (
+                    any(_is_specific_availability_period(period) for period in requested_periods)
+                    and reply_periods and not reply_periods.issubset(requested_periods)
+                ):
+                    violations.append(
+                        f"案{i}が相手の質問と異なる日程について答えています。確認済みの予定にない別の日付を混ぜず、質問された日程だけに答えてください。"
+                    )
+
+        for i, rep in enumerate(replies, start=1):
+            question_counts = naturalness.count_meaningful_questions(rep)
+            emotionally_sensitive_share = bool(re.search(
+                r"(?:落ち込|つら|辛い|悲し|不安|しんど|悩ん|自信なく|疲れた|へとへと)",
+                unicodedata.normalize("NFKC", counterpart_message or ""),
+            ))
+            if counterpart_message and emotionally_sensitive_share and question_counts["informative"] > 1:
+                violations.append(
+                    f"案{i}は質問を重ねすぎています。質問は会話上必要なものを一つだけにし、相手の発言にまず自然に反応してください。"
+                )
+            if (
+                mode == "normal"
+                and strategy_mode != "tapple"
+                and _has_unprompted_closure_commitment(counterpart_message, rep)
+            ):
+                violations.append(
+                    f"案{i}が会話終了後に新しい連絡時期や約束を追加しています。"
+                    "短く受け止め、相手が示していない時期・再連絡・質問を足さずに終えてください。"
+                )
+            if _is_bare_state_echo(counterpart_message, rep):
+                violations.append(
+                    f"案{i}は相手の状態を言い換えただけで新しい反応がありません。"
+                    "状態を繰り返さず、本人Goldと会話の文脈に合う自然な反応を選んでください。"
+                )
+            if counterpart_message and _asks_about_already_shared_cafe_ambience(
+                counterpart_message, rep
+            ):
+                violations.append(
+                    f"案{i}はすでに伝えられた内容を聞き返しています。"
+                    "確認済みの情報をもう一度尋ねず、その話題への自然な反応にしてください。"
+                )
+            direct_preference_topics = _personal_preference_question_topics(counterpart_message)
+            direct_preference_claims = _preference_claim_topics(rep, direct_preference_topics)
+            is_direct_preference_answer = bool(
+                direct_preference_topics
+                and direct_preference_claims
+                and direct_preference_claims.issubset(direct_preference_topics)
+            )
+            if (
+                counterpart_message
+                and not is_direct_preference_answer
+                and _has_unverified_personal_desire(counterpart_message, rep, known_self_facts)
+            ):
+                violations.append(
+                    f"案{i}に本人の未確認の希望を追加しています。"
+                    "相手の話題をきっかけに本人の好みや希望を作らず、確認できる話題への自然な反応に直してください。"
+                )
+            if counterpart_message and _has_unverified_personal_habit(
+                rep, known_self_facts, counterpart_message
+            ):
+                violations.append(
+                    f"案{i}に本人の未確認の習慣・傾向を追加しています。"
+                    "本人の確認済み情報にない一人称の習慣や心理傾向を作らず、相手への共感に直してください。"
+                )
+
+        counterpart_current_factual_context = unicodedata.normalize(
+            "NFKC", counterpart_message or ""
+        )
+        work_terms = ("仕事", "お仕事", "出勤", "勤務", "職場", "残業", "働")
+        work_is_grounded = _has_positive_work_context(
+            counterpart_current_factual_context
+        )
+        time_off_is_grounded = _has_positive_time_off_context(
+            counterpart_current_factual_context
+        )
+        # chat_history_text contains both speakers; only explicitly collected SELF facts
+        # can ground a first-person claim.
+        self_fact_context = unicodedata.normalize("NFKC", "\n".join(known_self_facts or []))
+        for i, rep in enumerate(replies, start=1):
+            counterpart_assertion = _counterpart_assertion_text(rep)
+            if (
+                counterpart_message
+                and not work_is_grounded
+                and _is_question_line(rep)
+                and _WORK_SCHEDULE_QUESTION_RE.search(
+                    unicodedata.normalize("NFKC", rep)
+                )
+            ):
+                violations.append(
+                    f"案{i}の勤務予定を確認できる情報がありません。"
+                    "勤務や日時を尋ねる質問は、会話に仕事の話題が出ている場合だけにしてください。"
+                )
+            if (
+                counterpart_message
+                and
+                _has_unverified_time_reference(
+                    rep,
+                    counterpart_current_factual_context,
+                )
+            ):
+                violations.append(
+                    f"案{i}に相手の時間情報を確認できる情報がありません。"
+                    "現在の会話で今日と確認できない場合、今日の仕事や過ごし方を前提にしないでください。"
+                )
+            if (
+                counterpart_message
+                and not work_is_grounded
+                and any(term in counterpart_assertion for term in work_terms)
+            ):
+                violations.append(
+                    f"案{i}に仕事の状況を確認できる情報がありません。"
+                    "会話にない勤務・職場の事情を相手の眠気や疲れから推測しないでください。"
+                )
+
+            if (
+                counterpart_message
+                and any(
+                    not _has_positive_work_circumstance(
+                        counterpart_current_factual_context, circumstance
+                    )
+                    for circumstance in _SPECIFIC_WORK_CIRCUMSTANCE_RE.findall(
+                        counterpart_assertion
+                    )
+                )
+            ):
+                violations.append(
+                    f"案{i}に勤務状況を確認できる情報がありません。"
+                    "仕事で疲れたという発言だけで、残業・夜勤など具体的な勤務事情を推測しないでください。"
+                )
+
+            if (
+                counterpart_message
+                and _has_unverified_recurring_counterpart_claim(
+                    rep, counterpart_current_factual_context
+                )
+            ):
+                violations.append(
+                    f"案{i}に相手の継続的な状況を確認できる情報がありません。"
+                    "一度の疲れや忙しさから、毎日・いつも頑張っていると決めつけないでください。"
+                )
+
+            if (
+                counterpart_message
+                and _has_unverified_effort_intensity_claim(
+                    rep, counterpart_current_factual_context
+                )
+            ):
+                violations.append(
+                    f"案{i}に相手の負荷や疲れの理由を確認できる情報がありません。"
+                    "疲れたという発言だけで、相手の負荷や疲れの理由を決めつけないでください。"
+                )
+
+            if counterpart_message and not time_off_is_grounded and re.search(
+                r"(?:お?休み|休日|休暇)(?:だった|なんですね|ですね|でしたね|なんですか)",
+                counterpart_assertion,
+            ):
+                violations.append(
+                    f"案{i}に休日・休暇を確認できる情報がありません。"
+                    "自由時間があったことから勤務状況や休日を推測しないでください。"
+                )
+
+            transient_self_claim = re.search(
+                r"(?:僕|私|自分)(?:は|も|が)?[^。！!？?]{0,16}(?:今日|昨日|最近|さっき|今|この前)"
+                r"[^。！!？?]{0,16}(?:バタバタ|忙し|仕事|出かけ|寝て|体調|疲れ|予定|行って|食べ|見て|買って)",
+                unicodedata.normalize("NFKC", rep),
+            )
+            if counterpart_message and transient_self_claim:
+                claim_terms = re.findall(r"バタバタ|忙し|仕事|出かけ|寝て|体調|疲れ|予定|行って|食べ|見て|買って", rep)
+                if not any(term in self_fact_context for term in claim_terms):
+                    violations.append(
+                        f"案{i}に本人の近況を確認できる情報がありません。"
+                        "会話履歴や本人情報にない今日の行動・状態を自己開示として追加しないでください。"
+                    )
+
+        if _unresolved_status_query(counterpart_message):
+            supported_status = _latest_prior_self_status(chat_history_text, counterpart_message)
+            for i, rep in enumerate(replies, start=1):
+                asserted_statuses, _question_statuses = _status_claims(rep)
+                unsupported_statuses = [
+                    status for status in asserted_statuses if status != supported_status
+                ]
+                if (
+                    unsupported_statuses
+                    or len(asserted_statuses) > 1
+                    or (
+                        asserted_statuses
+                        and not _is_single_supported_status_reply(rep, supported_status or "")
+                    )
+                ):
+                    violations.append(
+                        f"案{i}に状況を確認できる情報がありません。"
+                        "直前の関連する会話から状態を確認できないため、"
+                        "推測で断定せず、相手に短く確認してください。"
+                    )
+                elif not asserted_statuses and not _is_short_counterpart_clarification(rep):
+                    violations.append(
+                        f"案{i}は不明な参照先への確認になっていません。"
+                        "相手に短く確認する質問だけを返信候補にしてください。"
+                    )
+
+        experience_question = _last_experience_question(counterpart_message)
+        if experience_question:
+            default_action, question_match, question_clause = experience_question
+            topic = _topic_before(question_clause, question_match.start())
+            for i, rep in enumerate(replies, start=1):
+                claim = _experience_claim(rep, topic, default_action)
+                if claim and not any(
+                    _fact_supports_experience_claim(fact, claim)
+                    for fact in (known_self_facts or [])
+                    if fact
+                ):
+                    violations.append(
+                        f"案{i}に本人の経験を確認できる情報がありません。"
+                        "事実を作った返信をせず、アプリ利用者への確認を [AI_QUESTION]質問内容[/AI_QUESTION] で返してください。"
+                    )
+
+    # 固定語だけで広く弾かず、文頭から始まる不自然な報告句だけを修正候補にする。
+    robotic_opening = re.compile(r"^\s*(?:とのことですが|と拝見(?:しました|致しました))")
     for i, rep in enumerate(replies, start=1):
-        if any(rk in rep for rk in robotic_keywords):
+        if robotic_opening.search(rep):
             violations.append(
-                f"案{i}に「〜とのこと」「〜と拝見」等の機械的で不自然なAI表現が含まれています。"
-                f"自然な口語（『〜なんですね！』『〜いいですね！』等）に修正してください。"
+                f"案{i}が形式的な報告表現で始まっています。会話の流れに合う自然な返信になっているか見直してください。"
+            )
+        if re.search(r"(?:こと|の)誰かに(?:共有|話し)", rep):
+            violations.append(
+                f"案{i}に助詞が抜けた不自然な表現があります。"
+                "『ことを誰かに共有する』のように助詞を補い、自然な日本語に直してください。"
+            )
+        if re.search(r"(に|を|が)\1", rep):
+            violations.append(
+                f"案{i}に助詞が連続して重複しています。重複を直し、自然な日本語にしてください。"
             )
 
-    # 「ほかにも」「ほかに」「〜以外」による話題逃げ・並列質問の禁止チェック
-    side_switch_keywords = [
-        "ほかにも", "ほかに", "他に", "他にも", "以外の", "以外だと", "以外で", "以外は", "以外に", "以外も", "もいいですけど", "も気になりますけど"
-    ]
-    for i, rep in enumerate(replies, start=1):
-        if any(sw in rep for sw in side_switch_keywords):
+    if (
+        mode == "normal"
+        and strategy_mode != "tapple"
+        and counterpart_message
+        and len(replies) >= 2
+        and prompt.classify_counterpart_intent(counterpart_message) == "report"
+    ):
+        echo_results = [
+            naturalness.detect_echo(reply or "", counterpart_message)
+            for reply in replies
+        ]
+        echo_count = sum(
+            score <= 0.25
+            and detail is not None
+            and detail.get("type") in {"paraphrase_echo", "subset_echo"}
+            and naturalness.count_meaningful_questions(reply or "")["informative"] == 0
+            for reply, (score, detail) in zip(replies, echo_results)
+        )
+        if echo_count >= max(2, len(replies) // 2 + 1):
             violations.append(
-                f"案{i}に「ほかにも」「ほかに」「〜以外」「〇〇もいいですけど」等の話題切り替え・並列質問が含まれています。"
-                f"話題を横スライドさせず、相手が出した話題そのものを深掘りする質問に修正してください。"
+                "返信案の過半数が相手の発言の言い換えで、新しい反応がありません。"
+                "言い換えではない自然な反応を複数案に含めてください。"
             )
 
     # Step 2 仕様変更: 質問なしは正常系。質問の有無はバリデーション対象外とする。
     # （相手からの質問への回答は Prompt の CONVERSATION STATE で指示する）
 
-    # 季節の矛盾（季節外れの嘘）チェック
-    cur_month = (current_datetime or datetime.now()).month
-    if cur_month in (6, 7, 8):
-        winter_words = ["寒くなって", "寒さ", "急に寒く", "冷え込ん", "肌寒く", "暖房", "こたつ", "マフラー", "雪が"]
-        for i, rep in enumerate(replies, start=1):
-            if any(w in rep for w in winter_words):
-                violations.append(f"案{i}に季節外れの表現（夏なのに寒さ・寒くなってきた等）が含まれています。現在の季節（夏・{cur_month}月）に合わせた表現に修正してください。")
-    elif cur_month in (12, 1, 2):
-        summer_words = ["暑くなって", "猛暑", "夏バテ", "熱中症", "冷房", "海開き", "プール", "花火大会"]
-        for i, rep in enumerate(replies, start=1):
-            if any(w in rep for w in summer_words):
-                violations.append(f"案{i}に季節外れの表現（冬なのに暑さ・猛暑等）が含まれています。現在の季節（冬・{cur_month}月）に合わせた表現に修正してください。")
-
+    # 参照先が曖昧な場合は確認文の意味が必然的に近くなるため、
+    # すべてが安全な相手向け確認質問なら、重複率だけで候補を落とさない。
     # 候補間の重複・極端な高類似の検知
     for j in range(len(replies)):
         for k in range(j + 1, len(replies)):
             sim = _jaccard_similarity(replies[j], replies[k])
-            if sim >= 0.85:
+            if sim >= 0.85 and not clarification_only_set:
                 violations.append(f"案{j+1}と案{k+1}の内容・表現が重複しています（類似度 {sim:.2f}）。異なる会話ルートを作成してください。")
 
     return violations
+
+
+_SAFE_REFERENCE_CLARIFICATION_FALLBACKS = (
+    "え、どの件だっけ？",
+    "何の話だったっけ？",
+    "あれって何のこと？",
+)
+
+
+def _is_reference_clarification_only_failure(violations: list[str]) -> bool:
+    allowed_markers = (
+        "状況を確認できる情報がありません",
+        "不明な参照先への確認になっていません",
+        "内容・表現が重複しています",
+    )
+    return bool(violations) and all(any(marker in violation for marker in allowed_markers) for violation in violations)
+
+
+def _build_safe_reference_clarification_candidates(
+    replies: list[str],
+    expected_candidates: int,
+    *,
+    counterpart_message: str,
+    known_self_facts: list[str] | None,
+    chat_history_text: str,
+    tone: str,
+    condition: str,
+    current_datetime: datetime | None,
+    mode: str = "normal",
+) -> list[str] | None:
+    """曖昧なstatus照会に限り、安全な相手向け確認文で不足案を埋める。"""
+    if (
+        expected_candidates < 1
+        or mode != "normal"
+        or not _unresolved_status_query(counterpart_message)
+        or _latest_prior_self_status(chat_history_text, counterpart_message) is not None
+        or _last_experience_question(counterpart_message) is not None
+    ):
+        return None
+
+    def is_safe_clarification(candidate: str) -> bool:
+        normalized = unicodedata.normalize("NFKC", candidate).strip()
+        if not _is_short_counterpart_clarification(normalized) or normalized in safe:
+            return False
+        if validate_candidate_replies(
+            [normalized],
+            expected_candidates=1,
+            tone=tone,
+            condition=condition,
+            mode="normal",
+            current_datetime=current_datetime,
+            counterpart_message=counterpart_message,
+            known_self_facts=known_self_facts,
+            chat_history_text=chat_history_text,
+        ):
+            return False
+        return True
+
+    safe: list[str] = []
+    for candidate in replies:
+        normalized = unicodedata.normalize("NFKC", candidate).strip()
+        if is_safe_clarification(normalized):
+            safe.append(normalized)
+    # 生成側から最低1案の安全な確認質問が出ている場合にだけ補う。
+    # 1案もない完全な失敗では、通常の502/no-history動作を維持する。
+    if not safe:
+        return None
+    if len(safe) >= expected_candidates:
+        return safe[:expected_candidates]
+
+    for candidate in _SAFE_REFERENCE_CLARIFICATION_FALLBACKS:
+        normalized = unicodedata.normalize("NFKC", candidate).strip()
+        if is_safe_clarification(normalized):
+            safe.append(normalized)
+        if len(safe) == expected_candidates:
+            break
+    return safe if safe else None
+
+
+def _repair_violation_categories(violations: list[str]) -> frozenset[str]:
+    """Map validator wording to stable repair categories."""
+    categories: set[str] = set()
+    for violation in violations:
+        categories.update(_repair_violation_category(violation))
+    return frozenset(categories)
+
+
+def _repair_violation_category(violation: str) -> set[str]:
+    categories: set[str] = set()
+    if "相手の時間情報を確認できる情報がありません" in violation:
+        categories.add("unsupported_time")
+    if "返信案の過半数が相手の発言の言い換え" in violation:
+        categories.add("candidate_set_echo")
+    if "相手の継続的な状況を確認できる情報がありません" in violation:
+        categories.add("unsupported_recurrence")
+    if "相手の負荷や疲れの理由を確認できる情報がありません" in violation:
+        categories.add("unsupported_effort")
+    if "同一相手Gold" in violation or "相手の発言を要約・言い換え" in violation:
+        categories.add("contact_style")
+    if "同一相手Goldより今回の返信候補が短め" in violation:
+        categories.add("contact_length")
+    if "同一相手Goldでは会話調" in violation:
+        categories.add("contact_conversational")
+    if "『笑』や『w』" in violation:
+        categories.add("contact_laugh")
+    if "相手の発言を要約・言い換え" in violation:
+        categories.add("contact_echo")
+    if "かなり長めの傾向" in violation or "候補群と相手別Goldの文量差が大きい" in violation:
+        categories.add("contact_large_length")
+    if any(
+        phrase in violation
+        for phrase in (
+            "本人の経験を確認できる情報がありません",
+            "本人の好みを確認できる情報がありません",
+            "本人の予定・生活習慣を確認できる情報がありません",
+        )
+    ):
+        categories.add("private_experience_confirmation")
+    is_specific_grounding_violation = bool(
+        {"unsupported_recurrence", "unsupported_effort"}.intersection(categories)
+    )
+    if any(
+        phrase in violation
+        for phrase in (
+            "参照先が会話履歴から特定できません",
+            "指示語の参照先が会話履歴から特定できません",
+        )
+    ) or (
+        "状況を確認できる情報がありません" in violation
+        and not is_specific_grounding_violation
+    ):
+        categories.add("reference_clarification")
+    return categories
+
+
+def _repair_grounding_guidance(categories: frozenset[str]) -> str:
+    guidance: list[str] = []
+    if "unsupported_time" in categories:
+        guidance.append(
+            "根拠のない今日・昨日・明日などの時間表現を削除し、時間を特定しない自然な反応にしてください。"
+            "別の日時や、出来事がすでに終わったという前提に置き換えないでください。"
+        )
+    if "unsupported_recurrence" in categories:
+        guidance.append(
+            "会話で確認できない毎日・いつも・今週も等の頻度や継続性を示す表現を削除し、"
+            "確認できる今回の出来事だけに反応してください。"
+        )
+    if "unsupported_effort" in categories:
+        guidance.append(
+            "会話で確認できない負荷の強さや疲れの理由を示す表現を削除し、"
+            "確認できる疲れへの短い反応にとどめてください。"
+        )
+    if guidance:
+        guidance.append(
+            "別の頻度・時間・負荷・理由を補って置き換えないでください。"
+        )
+    return "【事実の修正】" + "".join(guidance) if guidance else ""
+
+
+def _repair_output_instruction(
+    categories: frozenset[str], candidates: int, strategy_mode: str
+) -> str:
+    if "private_experience_confirmation" in categories:
+        return (
+            "本人の経験・好み・予定・生活習慣・体質が会話履歴や本人情報で確認できません。返信候補を作らず、"
+            "アプリ利用者にだけ、聞かれた対象に絞った短い確認質問を [AI_QUESTION]質問内容[/AI_QUESTION] の形式で1つ出力してください。"
+            "別の話題や追加質問を重ねないこと。"
+            "相手に送る返信候補として確認質問を作らないこと。JSON repliesや説明文は出力しないこと。"
+        )
+    if "reference_clarification" in categories:
+        return (
+            f"参照先が不明なため、状況を推測せず、相手に送る短い確認質問を含む通常のJSON repliesを{candidates}案作ってください。"
+            "アプリ利用者向けの質問タグは使わないこと。"
+        )
+    if strategy_mode == "tapple":
+        return _repair_tapple_output_instruction(candidates)
+    reply_template = ", ".join(f'"案{index}"' for index in range(1, candidates + 1))
+    return (
+        f"すべての不備を修正し、独立した完成品として{candidates}案を作成し、"
+        f"必ず JSON形式の {{\"replies\": [{reply_template}]}} で出力してください。"
+    )
+
+
+def _repair_tapple_output_instruction(candidates: int) -> str:
+    return (
+        f"不備を修正して返信候補を必ず{candidates}件作成してください。"
+        f"repliesとstrategyは両方必須です。判断根拠が弱い場合はaction=waitとし、evidenceには会話中の相手発言を指定してください。JSON形式の例: {prompt.format_tapple_output_contract(candidates)}。"
+        f"{prompt.tapple_strategy_contract_guidance()}"
+        "actionでinviteを選ぶ場合はinvite_exampleを必ず埋め、返信候補とは別に短く低圧で断りやすい誘い方の例を1つ示してください。"
+        "人目のある公共の場所を使い、連絡先交換を提案しないでください。"
+        "invite_exampleの文面にも駅前やカフェなど公共の場所だと分かる表現を含めてください。"
+        "会話にない具体的な店名や日時を作らず、共通の活動に合う公共の場所を一般的に示せない場合はinvite以外のactionを選んでください。"
+        "会話にない自分の体験・予定・意向を事実として足さないでください。自分が見ていない写真を見た前提にしないでください。"
+        "invite以外のactionではinvite_exampleを必ずnullにしてください。"
+        "相手が『近いうちに行ってみたい』など具体的な活動を近い時期にしたいと述べ、共通の活動への関心と会話の相互性がそろい、安全面の懸念や迷いがない場合は、会う同意とは区別したうえでinviteを基本方針として選んでください。明示的に一緒に行きたいと言われるまで待つ必要はありません。短い相づちだけの場合は誘いません。"
+        "相手が直前の誘いを受け入れた場合や具体的な代替日を提案した場合は、再度誘うinviteではなくcontinueを選び、日程調整を進めてください。"
+        "直前の誘いを受け入れた場合は、各返信候補で自然に日程調整へ進んでください。都合のよい時期を尋ねるか、『日程はまた相談しよう』のように伝えます。全案を質問にせず、自分の空き日や日時も会話にない限り作らないでください。"
+        "waitまたはstopの返信候補に会う提案を含めず、stopでは将来の誘いや再連絡も提案しないでください。"
+        "相手が活動に興味を示したものの一緒に行く意思は不明なら、その興味に自然に反応してください。単なる言い換えで終えず、活動への感想や自分の関心を短く示してよいですが、同行を前提にした表現や新しい誘いに変えないでください。質問は必要な場合だけにします。"
+        "相手が挙げた活動や話題に直接つながる返信にし、無難な一般論へずらさないでください。会話にない店の特徴・周辺の変化や自分の習慣を付け足さず、自然な短い反応を不必要にEcho扱いしないでください。"
+        "相手が場所や活動に関心を示したときは、直前の自分の発言にある関心や具体的な話題と結びつけてください。訪問した事実がないのに店の雰囲気を知っているように述べず、相手の希望を一緒に行く約束へ読み替えないでください。"
+        "相手が『行ってみたい』と話したときは、その希望を受け止め、対象への自然な反応か関連する短い問いで返してください。履歴上の本人の関心は共有してよいですが、一人で行くよう勧めたり店の特徴を想像したりしないでください。"
+        "本人が直前の発言で同じ場所や活動への関心を示しているなら、その既知の関心を一度だけ共有して会話のつながりを作り、相づちだけで終えないでください。"
+        "根拠の不足を理由にstrategyを省略してはいけません。安全側のwaitを選んでください。"
+    )
+
+
+def _repair_contact_style_guidance(
+    categories: frozenset[str],
+    candidates: int,
+) -> str:
+    conversational_guidance = _repair_conversational_guidance(categories)
+    length_guidance = _repair_length_guidance(categories, candidates)
+    other_guidance = _repair_other_contact_style_guidance(categories)
+    return (
+        "【相手別スタイル修正】\n"
+        "最優先は会話で確認できる内容と事実の保持です。長さ・丁寧さ・『笑』などの文体マーカーより優先し、"
+        "スタイル修正は事実を保てる場合だけ行ってください。会話にない時間・頻度・勤務状況・原因・負荷を追加しないでください。"
+        "指摘された相手別Goldの傾向に合わせ、今回の返信に必要な部分だけを調整してください。"
+        f"{conversational_guidance}{length_guidance}{other_guidance}"
+    )
+
+
+def _repair_conversational_guidance(
+    categories: frozenset[str],
+) -> str:
+    if "contact_conversational" not in categories:
+        return ""
+    return (
+        "本人Goldに会話調の実績があるのに候補群が一般的な敬語だけなら、相手別適応ができていません。"
+        "明示トーン指定や深刻な話題でない限り、今回の会話に自然になじむ本人Gold由来の距離感を候補群へ反映してください。"
+        "語尾だけを置換した不自然な口調変更や、候補数に合わせた比率固定は避け、内容と自然さを優先してください。"
+    )
+
+
+def _repair_length_guidance(categories: frozenset[str], candidates: int) -> str:
+    if not {"contact_length", "contact_large_length"}.intersection(categories):
+        return ""
+    return (
+        "Goldの文量分布は参考にとどめ、固定目標にせず、内容に必要な分だけ返してください。"
+        "内容に沿う短い回答・反応が自然に成立するなら短文を保ってください。"
+        "内容のある状態共有を入力の短さだけで一言の労いに縮めず、本人Goldと文脈に合う反応を選んでください。"
+        "確認できる事実に沿う感想や気遣いは使えますが、固定文字数、憶測、言い換え、質問や説明による水増しは避けてください。"
+    )
+
+
+def _repair_other_contact_style_guidance(categories: frozenset[str]) -> str:
+    diversity_guidance = (
+        "自然に違いを作れる場合は反応の焦点を変えてもよいですが、似た案が自然なら無理に変えないでください。"
+        if "contact_length" in categories
+        or "contact_large_length" in categories
+        or "contact_echo" in categories
+        else ""
+    )
+    laugh_guidance = (
+        "Goldで見られる笑い表現は会話に自然な場合だけ使い、候補数を満たすために付け足さないでください。"
+        if "contact_laugh" in categories
+        else ""
+    )
+    echo_guidance = (
+        "相手の発言を要約・言い換えただけにせず、自分の反応が伝わる形にしてください。"
+        if "contact_echo" in categories
+        else ""
+    )
+    length_safety_guidance = (
+        "質問や説明を追加して長さを作らず、会話にない行動や結果を推測しないでください。"
+        if "contact_length" in categories or "contact_large_length" in categories
+        else ""
+    )
+    return f"{laugh_guidance}{diversity_guidance}{echo_guidance}{length_safety_guidance}"
 
 
 def _build_repair_messages(
@@ -411,17 +4356,35 @@ def _build_repair_messages(
     raw_output: str,
     violations: list[str],
     candidates: int,
+    strategy_mode: str = "none",
 ) -> list[dict[str, str]]:
     """修復用のメッセージリストを構築する。"""
     v_text = "\n".join(f"- {v}" for v in violations)
+    categories = _repair_violation_categories(violations)
+    output_instruction = _repair_output_instruction(categories, candidates, strategy_mode)
+    repair_guidance = (
+        _repair_contact_style_guidance(
+            categories, candidates
+        )
+        if "contact_style" in categories
+        else "※Step 17: 壊れている部分だけ直すこと。問題ない部分はそのまま残し、"
+        "文章全体を書き直さないこと（書き直すとAIっぽい説明文になりやすい）。"
+    )
+    grounding_guidance = _repair_grounding_guidance(categories)
+    echo_set_guidance = (
+        "【候補の反応修正】相手の発言の事実を繰り返すかわりに、話題に対する具体的な感想や自然な関心を表してください。"
+        "確認できない本人の経験や予定を足さず、質問や説明で水増ししないでください。"
+        if "candidate_set_echo" in categories
+        else ""
+    )
     repair_instruction = (
         f"前回の出力に以下の不備が検知されました。\n"
         f"【不備内容】\n"
         f"{v_text}\n\n"
-        f"すべての不備を修正し、独立した完成品として{candidates}案を作成し、"
-        f"必ず JSON形式の {{\"replies\": [\"案1\", \"案2\", \"案3\"]}} で出力してください。\n"
-        f"※Step 17: 壊れている部分だけ直すこと。問題ない部分はそのまま残し、"
-        f"文章全体を書き直さないこと（書き直すとAIっぽい説明文になりやすい）。"
+        f"{output_instruction}\n"
+        f"{grounding_guidance}"
+        f"{echo_set_guidance}"
+        f"{repair_guidance}"
     )
     return [
         *original_messages,
@@ -430,39 +4393,594 @@ def _build_repair_messages(
     ]
 
 
-def _align_followup_replies(replies: list[str]) -> list[str]:
-    """追いメッセージの3案を【案1: 行動報告】【案2: 軽快ツッコミ】【案3: 写真なし体験共有】の順序に確実に整列する。"""
-    if len(replies) != 3:
-        return replies
+def _rank_followup_candidates(
+    scored_items: list[dict], counterpart_msg: str = ""
+) -> list[dict]:
+    """追いメッセージ案も、体験を連想させる語ではなく品質スコア順に並べる。"""
+    for item in scored_items:
+        item["mild_issues"] = naturalness.count_mild_issues(
+            item["reply"], counterpart_msg
+        )
+    return sorted(
+        scored_items,
+        key=lambda item: (item["final"], -item.get("mild_issues", 0)),
+        reverse=True,
+    )
 
-    slot1 = None  # 行動報告
-    slot2 = None  # 軽快ツッコミ
-    slot3 = None  # 写真なし体験共有
-    unassigned = []
 
-    for r in replies:
-        is_tsukkomi = any(k in r for k in ["冬眠", "夏眠", "生きて", "バタバタ", "息抜き", "休めそう", "忙しかった", "生きてます", "暑さ", "夏バテ"])
-        is_photo_share = any(k in r for k in ["思わず共有", "今日食べた", "今日作った", "今日見つけた", "濃厚", "ボリューム", "我ながら", "美味しすぎて", "大きすぎて", "看板", "パフェ", "ラーメンが", "パスタが", "スイーツが", "デザートが", "お肉のお店"])
+def _apply_contact_length_nudge(
+    scored_items: list[dict], profile, contact_id: int | None
+) -> None:
+    """Apply a bounded same-contact Gold length tie-break without extra corpus reads."""
+    if not contact_id or profile is None or getattr(profile, "sample_count", 0) < 5:
+        return
+    for item in scored_items:
+        fit = learning.contrast.contact_length_fit(
+            item["reply"], contact_id, profile=profile
+        )
+        adjustment = round(0.01 * (fit - 0.5), 3)
+        item["contact_length_fit"] = fit
+        item["contact_length_adjustment"] = adjustment
+        item["final"] = round(item["final"] + adjustment, 3)
 
-        if is_tsukkomi and slot2 is None:
-            slot2 = r
-        elif is_photo_share and slot3 is None:
-            slot3 = r
-        elif not is_tsukkomi and not is_photo_share and slot1 is None:
-            slot1 = r
+
+def _contact_style_blended_profile(style_profiles: dict):
+    """Return recency-blended same-contact Gold only when the local Gold is dense enough."""
+    if style_profiles.get("same_contact_gold_samples", 0) < 5:
+        return None
+    contact_profile = style_profiles.get("same_contact_blended_gold_profile")
+    if not contact_profile or getattr(contact_profile, "sample_count", 0) < 5:
+        return None
+    return contact_profile
+
+
+def _contact_style_length_medians(style_profiles: dict) -> tuple[int | None, int | None]:
+    """Use recency-blended contact Gold for length guidance, with a dense-data gate."""
+    contact_profile = _contact_style_blended_profile(style_profiles)
+    global_profile = style_profiles.get("other_contact_gold_profile")
+    contact_median = getattr(contact_profile, "char_median", None) if contact_profile else None
+    global_median = (
+        getattr(global_profile, "char_median", None)
+        if global_profile and getattr(global_profile, "sample_count", 0) >= 5
+        else None
+    )
+    return contact_median, global_median
+
+
+@dataclass(frozen=True)
+class _ContactStyleRepairContext:
+    profile: learning.style.StyleProfile | None
+    same_contact_gold_median: int | None = None
+    global_gold_median: int | None = None
+    explicit_tone: str = ""
+    counterpart_message: str = ""
+    counterpart_intent: str = "report"
+    previous_self_ended_with_question: bool = False
+    conversation_context: str = ""
+
+
+def _contact_style_soft_repair_issues(
+    replies: list[str], context: _ContactStyleRepairContext
+) -> list[str]:
+    """Return one-pass soft repair guidance for a clear, well-sampled style mismatch.
+
+    These are not hard validation rules: the caller uses them only to request one
+    optional repair after an otherwise valid first response.
+    """
+    profile = context.profile
+    if (
+        len(replies) < 2
+        or profile is None
+        or profile.sample_count < 5
+    ):
+        return []
+    if re.search(
+        r"(?:入院|手術|危篤|葬儀|亡くな|亡く|悲し|不安|つら|辛い|自傷|消えたい|病気|事故)",
+        unicodedata.normalize(
+            "NFKC",
+            f"{context.counterpart_message}\n{context.conversation_context}",
+        ),
+    ):
+        return []
+
+    laugh_issues = _contact_style_laugh_issues(replies, profile)
+    register_issues = (
+        [] if context.explicit_tone else _contact_style_register_issues(replies, profile)
+    )
+    return (
+        laugh_issues
+        + register_issues
+        + _contact_style_length_issues(replies, context)
+        + _contact_style_echo_issues(replies, context)
+        + _contact_style_recommendation_overlap_issues(replies)
+    )
+
+
+def _contact_style_register_issues(
+    replies: list[str], profile: learning.style.StyleProfile
+) -> list[str]:
+    return _contact_style_conversational_issues(replies, profile) + _contact_style_polite_issues(
+        replies, profile
+    )
+
+
+def _contact_style_laugh_issues(
+    replies: list[str], profile: learning.style.StyleProfile
+) -> list[str]:
+    if not replies:
+        return []
+    laugh_marker = re.compile(r"(?:笑+|(?<![A-Za-z])[wW]+(?![A-Za-z]))")
+    laugh_reply_ratio = sum(bool(laugh_marker.search(reply or "")) for reply in replies) / len(replies)
+    # Compare coverage rather than only checking whether every candidate is
+    # marker-free. A reliable Gold pattern can use laughter consistently while
+    # the candidate set contains it in just one option; in that case, neither
+    # literal presence nor a per-option quota is the right quality signal.
+    if profile.laugh_ratio >= 0.3 and profile.laugh_ratio - laugh_reply_ratio >= 0.25:
+        coverage_guidance = (
+            "候補群では笑い表現が少数の案に限られています。"
+            if laugh_reply_ratio > 0
+            else "候補群にその温度感がありません。"
+        )
+        return [
+            "同一相手Goldでは『笑』や『w』を含む返信も自然に使われています。"
+            f"{coverage_guidance}"
+            "今回の話題に自然に合う場合はGoldの使い方を参考にしてください。"
+            "候補数を整える目的で足したり、全案へ機械的に付けたりしないでください。"
+        ]
+    if profile.laugh_ratio < 0.8 and laugh_reply_ratio == 1:
+        return [
+            "同一相手Goldでは『笑』や『w』を毎回使うわけではありませんが、候補すべてにあります。"
+            "候補数を整えるための付け外しは避け、文脈に合う自然な温度感を優先してください。"
+        ]
+    return []
+
+
+def _contact_style_tone_ratios(replies: list[str]) -> tuple[float, float]:
+    if not replies:
+        return 0.0, 0.0
+    tones = [learning.style._classify_tone_exclusive(reply or "") for reply in replies]
+    return (
+        sum(tone == "keigo" for tone in tones) / len(tones),
+        sum(tone in ("hybrid", "tame") for tone in tones) / len(tones),
+    )
+
+
+def _contact_style_conversational_issues(
+    replies: list[str], profile: learning.style.StyleProfile
+) -> list[str]:
+    # A mixed Gold profile should not be ignored just because neither individual
+    # conversational subtype reaches 60%; otherwise profiles like 41% hybrid +
+    # 11% casual accept three uniformly polite candidates without a repair.
+    if not replies or profile.hybrid_ratio + profile.tame_ratio < 0.45:
+        return []
+    _, conversational_ratio = _contact_style_tone_ratios(replies)
+    observed_ratio = profile.hybrid_ratio + profile.tame_ratio
+    if observed_ratio - conversational_ratio >= 0.5:
+        mismatch = (
+            "今回の候補はすべて丁寧な口調です。"
+            if conversational_ratio == 0
+            else "候補群の会話調は本人Goldの傾向より少なめです。"
+        )
+        return [
+            "同一相手Goldでは会話調の返信もよく使われていますが、"
+            f"{mismatch}"
+            "今回の話題に合う範囲でGoldの会話調を候補全体に反映してください。"
+            "案数を満たすための口調変更は避け、自然さと明示トーンを優先してください。"
+        ]
+    return []
+
+
+def _contact_style_polite_issues(
+    replies: list[str], profile: learning.style.StyleProfile
+) -> list[str]:
+    if not replies:
+        return []
+    polite_ratio, _ = _contact_style_tone_ratios(replies)
+    if abs(profile.keigo_ratio - polite_ratio) >= 0.65:
+        return [
+            "候補全体の丁寧さが同一相手Goldの傾向から大きく離れています。"
+            "今回の話題と明示トーンを優先しながら、Goldの丁寧さも自然な範囲で反映してください。"
+            "候補数を整えるためだけに口調を変えないでください。"
+        ]
+    return []
+
+
+def _contact_style_length_issues(
+    replies: list[str], context: _ContactStyleRepairContext
+) -> list[str]:
+    median_target = context.same_contact_gold_median
+    if median_target is None:
+        return []
+    median_reply_length = statistics.median(
+        len((reply or "").strip()) for reply in replies
+    )
+    # A short direct answer can be complete even when this contact usually writes
+    # longer messages. Do not spend a repair call expanding concise answers to
+    # short questions/proposals; substantive reports and emotional shares remain
+    # eligible for the Gold-based length check.
+    if (
+        context.counterpart_intent in {"question", "invitation", "answer_required"}
+        and len((context.counterpart_message or "").strip()) <= 24
+        and median_reply_length <= 24
+    ):
+        return []
+    if median_reply_length >= median_target * 0.7:
+        return []
+    large_relative_gap = (
+        context.global_gold_median is not None
+        and median_target >= context.global_gold_median * 1.4
+    ) or median_reply_length <= median_target * 0.6
+    if large_relative_gap:
+        length_instruction = (
+            f"候補群と相手別Goldの文量差が大きく、今回の中央値は約{round(median_reply_length)}字、"
+            f"同一相手Goldの中央値は約{median_target}字です。Goldの文量分布も参考に、今回の話題に必要な内容を返してください。"
+            "固定文字数には合わせず、短く自然に済む場面は簡潔にし、必要な感想・共感は自然な範囲で含めてください。"
+        )
+    else:
+        length_instruction = (
+            "今回の返信群は相手別Goldより少し短めです。Goldの文量分布も参考に、今回の話題に必要な内容を返してください。"
+            "固定文字数には合わせず、必要な感想・共感は自然な範囲で含め、短く自然に済む場面は簡潔にしてください。"
+        )
+    return [
+        "同一相手Goldより今回の返信候補が短めです。"
+        f"{length_instruction}"
+        "会話で確認できる事実に基づき、確認できない具体的な行動を補わないでください。"
+        "自然な一文を足せない場合は長さを維持し、固定の文字数に合わせないでください。"
+        "文字数を合わせたり、相手の発言を言い換えて水増ししたり、質問を追加したりしないでください。"
+    ]
+
+
+def _contact_style_echo_issues(
+    replies: list[str], context: _ContactStyleRepairContext
+) -> list[str]:
+    if not context.counterpart_message:
+        return []
+    has_summary_echo = any(
+        (detail := naturalness.detect_echo(reply or "", context.counterpart_message)[1])
+        and detail.get("type") in {"paraphrase_echo", "subset_echo"}
+        for reply in replies
+    )
+    if not has_summary_echo:
+        return []
+    return [
+        "候補に相手の発言を要約・言い換えただけの部分があります。"
+        "事実を再掲せず、その話題を聞いた自分の反応や感想が伝わる形に直してください。"
+    ]
+
+
+def _has_rest_recommendation(reply: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", reply or "")
+    return bool(
+        re.search(
+            r"(?:ゆっくり|のんびり|無理せず|早めに|早く|ちゃんと|しっかり|ぐっすり)?"
+            r"(?:ゆっくり|のんびり)?"
+            r"(?:(?:身体|体)を)?"
+            r"(?:休んで(?:ね|よ|ください(?:ね)?|ほしい)|"
+            r"休めて(?:ね|よ|ください(?:ね)?|ほしい)(?![ぁ-ゖァ-ヺ一-龠])|"
+            r"休め(?:たら|ると)(?:いい|嬉しい)(?:ね|な)?|"
+            r"休んだ方がいい(?:よ|ね)?|寝て(?:ね|よ|ください(?:ね)?)|"
+            r"寝た方がいい(?:よ|ね)?|寝るといい(?:よ|ね)?|"
+            r"(?:よく)?眠れるといい(?:ね|な)?|眠って(?:ね|よ|ください(?:ね)?)|"
+            r"無理しないで(?:ね|よ|ください(?:ね)?)|"
+            r"休養(?:して|を取って|をとって)(?:ね|よ|ください(?:ね)?)|"
+            r"休息を?(?:取って|とって)(?:ね|よ|ください(?:ね)?)|"
+            r"早寝して(?:ね|よ|ください(?:ね)?)|"
+            r"睡眠を?(?:しっかり|たっぷり)?(?:取って|とって)(?:ね|よ|ください(?:ね)?)|"
+            r"疲れを(?:癒やして|癒して|取って)(?:ね|よ|ください(?:ね)?)|"
+            r"疲れが取れるといい(?:ね|な)?|"
+            r"横になって(?:ね|よ|ください(?:ね)?)|リラックスして(?:ね|よ|ください(?:ね)?)|"
+            r"ゆっくりして(?:ね|よ|ください(?:ね)?)|のんびりして(?:ね|よ|ください(?:ね)?)|"
+            r"(?:ゆっくり|のんびり)過ごして(?:ね|よ|ください(?:ね)?)|"
+            r"休んでもらえたら嬉しい(?:ね|な)?)",
+            normalized,
+        )
+    )
+
+
+def _contact_style_recommendation_overlap_issues(replies: list[str]) -> list[str]:
+    """Soft-repair a three-option set when two or more repeat rest/sleep advice."""
+    if len(replies) != 3 or sum(_has_rest_recommendation(reply) for reply in replies) < 2:
+        return []
+    return [
+        "候補の複数案が休息・睡眠を勧める内容で意味が重なっています。"
+        "助言を重ねる必要はありません。助言なしの労いや共感が今回の話題に自然なら候補に含めてもよいです。"
+        "分散のために不自然な反応を作らず、確認できない理由や予定を補わないでください。"
+    ]
+
+
+def _contact_style_issue_categories(issues: list[str]) -> frozenset[str]:
+    """Normalize soft findings so a retry cannot trade one mismatch for another."""
+    categories: set[str] = set()
+    for issue in issues:
+        if "同一相手Goldより今回の返信候補が短め" in issue or "かなり長めの傾向" in issue:
+            categories.add("length")
+        elif "候補全体の丁寧さ" in issue:
+            categories.add("polite_register")
+        elif "同一相手Goldでは会話調" in issue:
+            categories.add("conversational_register")
+        elif "『笑』や『w』" in issue or "笑い傾向" in issue:
+            categories.add("laugh_marker")
+        elif "相手の発言を要約・言い換え" in issue:
+            categories.add("echo")
+        elif "候補の複数案が休息・睡眠を勧める内容" in issue:
+            categories.add("recommendation_overlap")
         else:
-            unassigned.append(r)
+            categories.add(issue)
+    return frozenset(categories)
 
-    res = [slot1, slot2, slot3]
-    for i in range(3):
-        if res[i] is None and unassigned:
-            res[i] = unassigned.pop(0)
 
-    for i in range(3):
-        if res[i] is None:
-            res[i] = replies[i]
+def _contact_style_length_score_pair(
+    previous_replies: list[str],
+    candidate_replies: list[str],
+    target_median: int,
+) -> tuple[float, float] | None:
+    lower_bound = target_median * 0.7
+    upper_bound = target_median * 1.5
+    previous_lengths = [len((reply or "").strip()) for reply in previous_replies]
+    candidate_lengths = [len((reply or "").strip()) for reply in candidate_replies]
+    previous_median = statistics.median(previous_lengths)
+    candidate_median = statistics.median(candidate_lengths)
+    if previous_median < lower_bound and candidate_median > upper_bound:
+        return None
 
-    return res
+    return (
+        statistics.mean(
+            _contact_style_length_distance(value, lower_bound, upper_bound, target_median)
+            for value in previous_lengths
+        ),
+        statistics.mean(
+            _contact_style_length_distance(value, lower_bound, upper_bound, target_median)
+            for value in candidate_lengths
+        ),
+    )
+
+
+def _contact_style_length_distance(
+    median: float, lower_bound: float, upper_bound: float, target_median: int
+) -> float:
+    if median < lower_bound:
+        return (lower_bound - median) / target_median
+    if median > upper_bound:
+        return (median - upper_bound) / target_median
+    return 0.0
+
+
+def _contact_style_echo_score_pair(
+    previous_replies: list[str], candidate_replies: list[str], counterpart_message: str
+) -> tuple[float, float]:
+    return (
+        _contact_style_average_echo(previous_replies, counterpart_message),
+        _contact_style_average_echo(candidate_replies, counterpart_message),
+    )
+
+
+def _contact_style_average_echo(replies: list[str], counterpart_message: str) -> float:
+    return statistics.mean(
+        1.0 - naturalness.detect_echo(reply or "", counterpart_message)[0]
+        for reply in replies
+    )
+
+
+def _contact_style_laugh_score_pair(
+    previous_replies: list[str], candidate_replies: list[str], target_ratio: float
+) -> tuple[float, float]:
+    return (
+        abs(_contact_style_laugh_ratio(previous_replies) - target_ratio),
+        abs(_contact_style_laugh_ratio(candidate_replies) - target_ratio),
+    )
+
+
+def _contact_style_laugh_ratio(replies: list[str]) -> float:
+    marker = re.compile(r"(?:笑+|(?<![A-Za-z])[wW]+(?![A-Za-z]))")
+    return sum(bool(marker.search(reply or "")) for reply in replies) / max(1, len(replies))
+
+
+def _contact_style_conversational_score_pair(
+    previous_replies: list[str],
+    candidate_replies: list[str],
+    profile: learning.style.StyleProfile,
+) -> tuple[float, float]:
+    target_ratio = profile.hybrid_ratio + profile.tame_ratio
+    _, previous_ratio = _contact_style_tone_ratios(previous_replies)
+    _, candidate_ratio = _contact_style_tone_ratios(candidate_replies)
+    return (
+        abs(target_ratio - previous_ratio),
+        abs(target_ratio - candidate_ratio),
+    )
+
+
+def _contact_style_polite_score_pair(
+    previous_replies: list[str], candidate_replies: list[str], target_ratio: float
+) -> tuple[float, float]:
+    return (
+        abs(target_ratio - _contact_style_tone_ratios(previous_replies)[0]),
+        abs(target_ratio - _contact_style_tone_ratios(candidate_replies)[0]),
+    )
+
+
+def _contact_style_repair_scores(
+    previous_replies: list[str],
+    candidate_replies: list[str],
+    context: _ContactStyleRepairContext,
+    categories: frozenset[str],
+) -> tuple[dict[str, float], dict[str, float]] | None:
+    score_pairs: dict[str, tuple[float, float]] = {}
+    profile = context.profile
+
+    if "length" in categories and context.same_contact_gold_median:
+        pair = _contact_style_length_score_pair(
+            previous_replies, candidate_replies, context.same_contact_gold_median
+        )
+        if pair is None:
+            return None
+        score_pairs["length"] = pair
+    if "echo" in categories and context.counterpart_message:
+        score_pairs["echo"] = _contact_style_echo_score_pair(
+            previous_replies, candidate_replies, context.counterpart_message
+        )
+    if "laugh_marker" in categories and profile:
+        score_pairs["laugh_marker"] = _contact_style_laugh_score_pair(
+            previous_replies, candidate_replies, profile.laugh_ratio
+        )
+    if "conversational_register" in categories and profile:
+        score_pairs["conversational_register"] = _contact_style_conversational_score_pair(
+            previous_replies, candidate_replies, profile
+        )
+    if "polite_register" in categories:
+        score_pairs["polite_register"] = _contact_style_polite_score_pair(
+            previous_replies,
+            candidate_replies,
+            profile.keigo_ratio if profile else 0.0,
+        )
+    if "recommendation_overlap" in categories:
+        score_pairs["recommendation_overlap"] = (
+            _contact_style_recommendation_overlap_score(previous_replies),
+            _contact_style_recommendation_overlap_score(candidate_replies),
+        )
+
+    if not score_pairs:
+        return None
+    previous_scores = {category: pair[0] for category, pair in score_pairs.items()}
+    candidate_scores = {category: pair[1] for category, pair in score_pairs.items()}
+    return previous_scores, candidate_scores
+
+
+def _contact_style_recommendation_overlap_score(replies: list[str]) -> float:
+    if len(replies) != 3:
+        return 0.0
+    # One rest suggestion is not repetition; score only the extra overlapping
+    # suggestions so a repair can make useful progress over multiple passes.
+    return float(max(0, sum(_has_rest_recommendation(reply) for reply in replies) - 1))
+
+
+def _contact_style_repair_improves(
+    previous_replies: list[str],
+    candidate_replies: list[str],
+    context: _ContactStyleRepairContext,
+    previous_issues: list[str],
+    *,
+    candidate_issues: list[str] | None = None,
+) -> bool:
+    """Accept a hard-valid follow-up with style gains and only tiny score trade-offs."""
+    previous_categories = _contact_style_issue_categories(previous_issues)
+    candidate_categories = _contact_style_issue_categories(
+        candidate_issues
+        if candidate_issues is not None
+        else _contact_style_soft_repair_issues(candidate_replies, context)
+    )
+    if not previous_categories or not candidate_categories.issubset(previous_categories):
+        return False
+    scores = _contact_style_repair_scores(
+        previous_replies, candidate_replies, context, previous_categories
+    )
+    if scores is None:
+        return False
+    if context.counterpart_message:
+        previous_quality = _contact_style_naturalness_score(
+            previous_replies,
+            context.counterpart_message,
+            counterpart_intent=context.counterpart_intent,
+            gold_question_rate=_contact_style_question_rate(
+                context.profile,
+                suppress=context.previous_self_ended_with_question,
+            ),
+        )
+        candidate_quality = _contact_style_naturalness_score(
+            candidate_replies,
+            context.counterpart_message,
+            counterpart_intent=context.counterpart_intent,
+            gold_question_rate=_contact_style_question_rate(
+                context.profile,
+                suppress=context.previous_self_ended_with_question,
+            ),
+        )
+        if candidate_quality < previous_quality - _CONTACT_STYLE_MEAN_NATURALNESS_TOLERANCE:
+            return False
+        previous_worst = _contact_style_naturalness_scores(
+            previous_replies,
+            context.counterpart_message,
+            counterpart_intent=context.counterpart_intent,
+            gold_question_rate=_contact_style_question_rate(
+                context.profile,
+                suppress=context.previous_self_ended_with_question,
+            ),
+        )
+        candidate_worst = _contact_style_naturalness_scores(
+            candidate_replies,
+            context.counterpart_message,
+            counterpart_intent=context.counterpart_intent,
+            gold_question_rate=_contact_style_question_rate(
+                context.profile,
+                suppress=context.previous_self_ended_with_question,
+            ),
+        )
+        if (
+            previous_worst
+            and candidate_worst
+            and min(candidate_worst)
+            < min(previous_worst) - _CONTACT_STYLE_WORST_NATURALNESS_TOLERANCE
+        ):
+            return False
+    previous_scores, candidate_scores = scores
+    no_material_regressions = all(
+        candidate_scores[key] <= score + _CONTACT_STYLE_SCORE_TRADEOFF_TOLERANCE
+        for key, score in previous_scores.items()
+    )
+    must_improve = all(
+        candidate_scores[key] < previous_scores[key] - 1e-9
+        for key in ("recommendation_overlap",)
+        if key in previous_scores
+    )
+    return no_material_regressions and must_improve and any(
+        candidate_scores[key] < score - 1e-9
+        for key, score in previous_scores.items()
+    )
+
+
+def _contact_style_naturalness_score(
+    replies: list[str],
+    counterpart_message: str,
+    *,
+    counterpart_intent: str = "report",
+    gold_question_rate: float | None = None,
+) -> float:
+    return statistics.mean(
+        _contact_style_naturalness_scores(
+            replies,
+            counterpart_message,
+            counterpart_intent=counterpart_intent,
+            gold_question_rate=gold_question_rate,
+        )
+    )
+
+
+def _contact_style_naturalness_scores(
+    replies: list[str],
+    counterpart_message: str,
+    *,
+    counterpart_intent: str = "report",
+    gold_question_rate: float | None = None,
+) -> list[float]:
+    return [
+        naturalness.evaluate_candidate_naturalness(
+            reply or "",
+            counterpart_message=counterpart_message,
+            conversation_ledger={"counterpart_intent": counterpart_intent},
+            recent_replies=[],
+            gold_question_rate=gold_question_rate,
+        )["score"]
+        for reply in replies
+    ]
+
+
+def _contact_style_question_rate(
+    profile: learning.style.StyleProfile | None,
+    *,
+    suppress: bool = False,
+) -> float | None:
+    if suppress or profile is None or profile.sample_count < 5:
+        return None
+    return profile.question_ratio
 
 
 def build_user_reply_pairs() -> list[dict]:
@@ -700,6 +5218,7 @@ def analyze_user_learned_style(target_contact_id: int | None = None) -> dict:
         tame_w = 0.0
 
         period_w = 0.0
+        comma_w = 0.0
         excl_w = 0.0
         warai_w = 0.0
         q_w = 0.0
@@ -728,6 +5247,8 @@ def analyze_user_learned_style(target_contact_id: int | None = None) -> dict:
 
             if "。" in text:
                 period_w += w
+            if "、" in text:
+                comma_w += w
             if "！" in text or "!" in text:
                 excl_w += w
             if has_w:
@@ -773,6 +5294,7 @@ def analyze_user_learned_style(target_contact_id: int | None = None) -> dict:
                 "tame": round(tame_w / w_sum, 2),
             },
             "period_ratio": round(period_w / w_sum, 2),
+            "comma_ratio": round(comma_w / w_sum, 2),
             "excl_ratio": round(excl_w / w_sum, 2),
             "warai_ratio": round(warai_w / w_sum, 2),
             "q_ratio": round(q_w / w_sum, 2),
@@ -798,6 +5320,7 @@ def analyze_user_learned_style(target_contact_id: int | None = None) -> dict:
         tame_r = round(local_stats["tone_ratios"]["tame"] * w_loc + global_stats["tone_ratios"]["tame"] * w_glo, 2)
 
         period_r = round(local_stats["period_ratio"] * w_loc + global_stats["period_ratio"] * w_glo, 2)
+        comma_r = round(local_stats["comma_ratio"] * w_loc + global_stats["comma_ratio"] * w_glo, 2)
         warai_r = round(local_stats["warai_ratio"] * w_loc + global_stats["warai_ratio"] * w_glo, 2)
         excl_r = round(local_stats["excl_ratio"] * w_loc + global_stats["excl_ratio"] * w_glo, 2)
         q_r = round(local_stats["q_ratio"] * w_loc + global_stats["q_ratio"] * w_glo, 2)
@@ -817,6 +5340,7 @@ def analyze_user_learned_style(target_contact_id: int | None = None) -> dict:
         tame_r = global_stats["tone_ratios"]["tame"]
 
         period_r = global_stats["period_ratio"]
+        comma_r = global_stats["comma_ratio"]
         warai_r = global_stats["warai_ratio"]
         excl_r = global_stats["excl_ratio"]
         q_r = global_stats["q_ratio"]
@@ -840,6 +5364,7 @@ def analyze_user_learned_style(target_contact_id: int | None = None) -> dict:
         primary_tone = "hybrid"
 
     period_desc = "句点「。」を使用する傾向あり" if period_r >= 0.35 else "句点「。」はほぼ使わないスタイル"
+    comma_desc = "読点「、」を使用する傾向あり" if comma_r >= 0.35 else "読点「、」はほぼ使わないスタイル"
     emoji_desc = f"1通あたり平均{avg_emojis}個（頻出: {' '.join(top_emojis)}）" if avg_emojis > 0 else "絵文字は控えめ"
     name_call_desc = f"、相手を「○○さん」と呼ぶ割合 約{int(name_call_r*100)}%" if name_call_r >= 0.15 else ""
 
@@ -847,7 +5372,7 @@ def analyze_user_learned_style(target_contact_id: int | None = None) -> dict:
         f"- ユーザー実績スタイル {sample_desc}:",
         f"  - 口調傾向: {tone_desc}",
         f"  - 文量・行数・文数: 1通あたり中央値{int(char_med)}文字（IQR: {int(char_p25)}〜{int(char_p75)}文字）、中央値{int(line_med)}行・{int(sent_med)}文",
-        f"  - 絵文字・記号: {emoji_desc}。「笑/w」使用率{int(warai_r*100)}%。「！」多用。{period_desc}",
+        f"  - 絵文字・記号: {emoji_desc}。「笑/w」使用率{int(warai_r*100)}%。「！」多用。{period_desc}。{comma_desc}",
         f"  - 会話構造: 質問で終える割合 約{int(q_r*100)}%{name_call_desc}",
         f"  - 基本姿勢: 過去の本人返信の実績・テンポを最上位のスタイル正解とし、本人らしい自然な文章を作成する",
     ]
@@ -864,6 +5389,7 @@ def analyze_user_learned_style(target_contact_id: int | None = None) -> dict:
         "hybrid_ratio": hybrid_r,
         "tame_ratio": tame_r,
         "period_ratio": period_r,
+        "comma_ratio": comma_r,
         "warai_ratio": warai_r,
         "excl_ratio": excl_r,
         "q_ratio": q_r,
@@ -1031,7 +5557,12 @@ def score_candidate_style(reply: str, profile_dict: dict) -> tuple[float, dict]:
     period_in = "。" in cleaned
     period_r = wp.get("period_ratio", 0.0)
     if (period_in and period_r >= 0.35) or (not period_in and period_r < 0.35):
-        symbol_score += 0.05
+        symbol_score += 0.025
+
+    comma_in = "、" in cleaned
+    comma_r = wp.get("comma_ratio", 0.0)
+    if (comma_in and comma_r >= 0.35) or (not comma_in and comma_r < 0.35):
+        symbol_score += 0.025
 
     warai_in = has_w
     warai_r = wp.get("warai_ratio", wp.get("laugh_ratio", 0.0))
@@ -1044,6 +5575,7 @@ def score_candidate_style(reply: str, profile_dict: dict) -> tuple[float, dict]:
         symbol_score += 0.05
     score += symbol_score
     details["symbol_score"] = round(symbol_score, 3)
+    details["comma_preference_match"] = comma_in == (comma_r >= 0.35)
 
     # 5. 質問終了一致度 (15%)
     q_in = _is_question_line(cleaned) or "？" in cleaned or "?" in cleaned
@@ -1232,7 +5764,14 @@ def _load_training_examples() -> list[str]:
     return examples
 
 
-def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = "normal") -> dict:
+def _build_context(
+    contact_id: int,
+    condition: str,
+    tone: str = "",
+    mode: str = "normal",
+    strategy_mode: str = "none",
+    candidates: int = 3,
+) -> dict:
     """AI生成に必要なコンテキストを組み立てる（AIは呼び出さない）。
 
     generate と preview の両方から利用する。
@@ -1277,11 +5816,16 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     last_contact_turn = ""
     last_contact_msg = ""
     last_contact_msg_id = None
+    last_self_msg = ""
     if messages:
         for m in reversed(messages):
             if m["sender"] == "contact":
                 last_contact_msg = m["content"]
                 last_contact_msg_id = m["id"]
+                break
+        for m in reversed(messages):
+            if m["sender"] == "self":
+                last_self_msg = m["content"]
                 break
 
     for t in reversed(turns):
@@ -1298,7 +5842,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
 
     # 2. 階層的スタイルプロファイル構築
     hierarchical_profile = learning.style.compute_hierarchical_profile(contact_id, current_phase)
-    learned_policy_block = learning.style.to_learned_policy_prompt(hierarchical_profile)
+    effective_tone = learning.style.infer_contact_tone(hierarchical_profile, tone)
 
     # 3. 2段階 Positive Reply Pairs 検索
     retrieved_pairs = learning.retrieval.retrieve_relevant_pairs(
@@ -1307,6 +5851,18 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         current_phase=current_phase,
         limit=4,
     )
+    style_reference_replies = list(dict.fromkeys(
+        [
+            str(pair.get("self_text", "")).strip()
+            for pair in retrieved_pairs
+            if pair.get("label") == "gold" and str(pair.get("self_text", "")).strip()
+        ]
+        + [
+            pair.self_turn.text.strip()
+            for pair in learning.corpus.extract_same_contact_manual_gold_pairs(contact_id, limit=10)
+            if pair.self_turn.text.strip()
+        ]
+    ))
     positive_pairs_block = learning.retrieval.to_positive_pairs_prompt_block(retrieved_pairs)
 
     # 4. Contrast Learning 差分教訓抽出
@@ -1322,23 +5878,41 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     counterpart_style_data = analyze_counterpart_style(contact_id)
 
     # 5.5 same-contact manual Gold の原文実例ブロック
-    same_contact_gold_block = learning.style.build_same_contact_gold_pairs_block(contact_id, limit=10)
+    same_contact_gold_block = ""
+    if hierarchical_profile["same_contact_gold_samples"] >= 5:
+        same_contact_gold_block = learning.style.build_same_contact_gold_pairs_block(contact_id, limit=10)
 
     # 5.55 Step 11: 最近そのまま送信された生成返信の実例（最大5件。なければ空）
-    accepted_block = learning.contrast.build_accepted_block(contact_id, limit=5)
+    same_contact_gold_count = hierarchical_profile["same_contact_gold_samples"]
+    accepted_block = (
+        learning.contrast.build_accepted_block(contact_id, limit=5)
+        if same_contact_gold_count >= 3
+        or (same_contact_gold_count == 0 and hierarchical_profile["gold_samples"] == 0)
+        else ""
+    )
     if accepted_block:
         same_contact_gold_block = (
             f"{same_contact_gold_block}\n{accepted_block}" if same_contact_gold_block else accepted_block
         )
 
-    # 5.56 Step 18: 同一相手への返信距離感サマリー（短い抽象ブロック。実績なしなら空）
-    relationship_block = learning.style.build_relationship_summary(contact_id)
-    if relationship_block:
-        same_contact_gold_block = (
-            f"{same_contact_gold_block}\n{relationship_block}" if same_contact_gold_block else relationship_block
-        )
-
     self_profile = database.get_user_profile()
+    known_self_facts = [
+        str(m["content"] or "").strip()
+        for m in messages
+        if m["sender"] == "self" and str(m["content"] or "").strip()
+    ]
+    known_self_fact_timestamps = [
+        str(m["created_at"] or "") or None
+        for m in messages
+        if m["sender"] == "self" and str(m["content"] or "").strip()
+    ]
+    if self_profile.get("my_info", "").strip():
+        known_self_facts.append(self_profile["my_info"].strip())
+        known_self_fact_timestamps.append(None)
+    user_knowledge_text = database.get_user_knowledge_text()
+    if user_knowledge_text.strip():
+        known_self_facts.append(user_knowledge_text.strip())
+        known_self_fact_timestamps.append(None)
     contact_info = {
         "name": contact["name"],
         "profile": contact["profile"],
@@ -1348,6 +5922,24 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
     # 5.6 会話状態サマリー（Conversation State Ledger）の構築
     contact_messages_dicts = [dict(m) for m in messages]
     conversation_ledger = prompt.build_conversation_state_ledger(contact_messages_dicts, condition)
+    learned_policy_block = learning.style.to_learned_policy_prompt(
+        hierarchical_profile
+    )
+    relationship_block = learning.style.build_relationship_summary(
+        contact_id,
+        requested_tone=tone,
+    )
+    same_contact_gold_profile = hierarchical_profile.get(
+        "same_contact_blended_gold_profile"
+    )
+    if (
+        hierarchical_profile.get("same_contact_gold_samples", 0) >= 5
+        and same_contact_gold_profile
+        and getattr(same_contact_gold_profile, "sample_count", 0) >= 5
+    ):
+        conversation_ledger["same_contact_gold_question_rate"] = (
+            same_contact_gold_profile.question_ratio
+        )
 
     # 5.7 Step 2: 相手直近メッセージの長さ区分（傾向情報。Hard Limit ではない）
     _length_source = (last_contact_turn or last_contact_msg or "").strip()
@@ -1359,27 +5951,37 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
         contact=contact_info,
         condition=condition,
         chat_history_text=chat_text,
-        tone=tone,
+        tone=effective_tone,
         mode=mode,
         learned_policy_block=learned_policy_block,
         positive_pairs_block=positive_pairs_block,
         contrast_block=contrast_block,
         counterpart_style_block=counterpart_style_data["summary"],
+        same_contact_reply_style_block=relationship_block,
         same_contact_gold_block=same_contact_gold_block,
+        same_contact_gold_samples=hierarchical_profile["same_contact_gold_samples"],
         conversation_ledger=conversation_ledger,
         counterpart_length_tier=counterpart_length_tier,
         counterpart_length_chars=counterpart_length_chars,
+        strategy_mode=strategy_mode,
+        candidates=candidates,
         my_info=self_profile.get("my_info", ""),
-        user_knowledge=database.get_user_knowledge_text(),
+        user_knowledge=user_knowledge_text,
     )
 
     return {
         "cfg": cfg,
+        "effective_tone": effective_tone,
         "custom_knowledge": custom_knowledge,
         "system_prompt": system_prompt,
         "chat_text": chat_text,
+        "chat_messages": [dict(message) for message in messages],
         "last_contact_msg": last_contact_msg,
         "last_contact_msg_id": last_contact_msg_id,
+        "last_self_msg": last_self_msg,
+        "known_self_facts": known_self_facts,
+        "known_self_fact_timestamps": known_self_fact_timestamps,
+        "style_reference_replies": style_reference_replies,
         "current_phase": current_phase,
         "pieces": {
             "phase": current_phase,
@@ -1390,6 +5992,7 @@ def _build_context(contact_id: int, condition: str, tone: str = "", mode: str = 
             "conversation_ledger": conversation_ledger,
             "counterpart_length_tier": counterpart_length_tier,
             "counterpart_length_chars": counterpart_length_chars,
+            "relationship_guidance": relationship_block,
             "accepted_block": accepted_block,
             "self_profile": self_profile,
             "contact": contact_info,
@@ -1484,37 +6087,6 @@ def _apply_diversity_nudge(scored_items: list[dict]) -> None:
             item["final"] = round(item["final"] - 0.02, 3)
 
 
-def _needs_question_free_variety(
-    *,
-    replies: list[str],
-    candidates: int,
-    intent: str,
-    has_unresolved_question: bool,
-    condition: str,
-    mode: str,
-) -> bool:
-    """Step 16 §22: 質問不要なのに全案質問つきの場合のみ True（soft repair 用）。
-
-    - candidates > 1（単一候補の質問は正当）の場合のみ
-    - intent が report/reaction/emotional_share で未解決質問なしが条件
-    - condition で質問を求める場合・followup（役割固定）は対象外
-    - 質問禁止ではなく、少なくとも1案の質問なし化を促す
-    """
-    if candidates <= 1 or mode == "followup":
-        return False
-    if intent not in ("report", "reaction", "emotional_share"):
-        return False
-    if has_unresolved_question:
-        return False
-    if any(k in (condition or "") for k in ("質問して", "質問あり", "質問入り", "質問を入れて")):
-        return False
-    if not replies:
-        return False
-    return all(
-        naturalness.count_meaningful_questions(r)["informative"] >= 1 for r in replies
-    )
-
-
 def _create_or_update_batch(
     *,
     contact_id: int,
@@ -1553,7 +6125,32 @@ def _create_or_update_batch(
         conn.commit()
         return batch_id
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            # commit後のclose失敗でbatch_idを返せなくなると、後続失敗時に終端化できない。
+            logger.exception("Failed to close generation batch creation connection")
+
+
+def _mark_batch_failed(batch_id: int) -> None:
+    """失敗した生成バッチを終端状態にする。更新失敗で元の生成エラーは隠さない。"""
+    conn = None
+    try:
+        conn = database.get_conn()
+        conn.execute(
+            "UPDATE generation_batches SET outcome = 'generation_failed' "
+            "WHERE id = ? AND outcome = 'pending'",
+            (batch_id,),
+        )
+        conn.commit()
+    except Exception:
+        logger.exception("Failed to mark generation batch as failed: batch_id=%s", batch_id)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                logger.exception("Failed to close batch failure update connection: batch_id=%s", batch_id)
 
 
 def _record_history(
@@ -1605,7 +6202,14 @@ def _record_history(
 @router.post("/generate/preview")
 def preview_generation(body: GenerateRequest):
     """AIを呼び出さずに、今回AIへ渡される内容を確認する（API Key等は含めない）。"""
-    ctx = _build_context(body.contact_id, body.condition, body.tone, body.mode)
+    ctx = _build_context(
+        body.contact_id,
+        body.condition,
+        body.tone,
+        body.mode,
+        body.strategy_mode,
+        body.candidates,
+    )
     rules = prompt.load_knowledge_texts("rules", ctx["custom_knowledge"] or None)
     references = prompt.load_knowledge_texts("references", ctx["custom_knowledge"] or None)
     learning_materials = prompt.cap_learning(
@@ -1621,6 +6225,8 @@ def preview_generation(body: GenerateRequest):
     return {
         "provider": ctx["cfg"]["provider"],
         "model": ctx["cfg"]["model"],
+        "requested_tone": body.tone or "auto",
+        "effective_tone": ctx.get("effective_tone") or "auto",
         "system_prompt": ctx["system_prompt"],
         "rules": rules,
         "references": references,
@@ -1688,9 +6294,111 @@ def get_learning_diagnostics():
 
 @router.post("/generate")
 def generate(body: GenerateRequest):
-    ctx = _build_context(body.contact_id, body.condition, body.tone, body.mode)
+    batch_state: dict[str, int] = {}
+    try:
+        return _generate_with_batch_tracking(body, batch_state)
+    except Exception:
+        batch_id = batch_state.get("batch_id")
+        if batch_id is not None:
+            _mark_batch_failed(batch_id)
+        raise
+
+
+def _build_initial_generation_messages(
+    ctx: dict[str, Any],
+    *,
+    mode: str,
+    candidates: int,
+    strategy_mode: str,
+) -> list[dict[str, str]]:
+    return prompt.build_initial_generation_messages(
+        system_prompt=ctx["system_prompt"],
+        chat_history_text=ctx["chat_text"],
+        candidates=candidates,
+        mode=mode,
+        strategy_mode=strategy_mode,
+    )
+
+
+def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, int]):
+    ctx = _build_context(
+        body.contact_id,
+        body.condition,
+        body.tone,
+        body.mode,
+        body.strategy_mode,
+        body.candidates,
+    )
     cfg = ctx["cfg"]
     provider = factory.get_provider(cfg["provider"], cfg["api_key"])
+    active_provider = provider
+    active_cfg = cfg
+    using_fallback = False
+    is_quota_model_pair = (
+        cfg.get("provider") == "gemini"
+        and cfg.get("model") == "gemini-3.5-flash-lite"
+        and cfg.get("fallback_provider") == "gemini"
+        and cfg.get("fallback_model") == "gemini-3.1-flash-lite"
+    )
+    secondary_api_key = (cfg.get("secondary_api_key") or "").strip()
+    quota_attempts: list[tuple[Any, dict[str, Any], str]] = []
+    configured_attempts = cfg.get("quota_attempts")
+    attempt_start_index = cfg.get("quota_attempt_start_index", 0)
+    if (
+        isinstance(configured_attempts, list)
+        and configured_attempts
+        and isinstance(attempt_start_index, int)
+        and 0 <= attempt_start_index < len(configured_attempts)
+        and all(
+            isinstance(attempt, dict)
+            and attempt.get("provider") == "gemini"
+            and isinstance(attempt.get("model"), str)
+            and isinstance(attempt.get("api_key"), str)
+            and attempt.get("api_key")
+            and isinstance(attempt.get("account"), str)
+            for attempt in configured_attempts
+        )
+    ):
+        provider_by_key = {(cfg["provider"], cfg["api_key"]): provider}
+        for attempt in configured_attempts:
+            key = attempt["api_key"]
+            provider_key = (attempt["provider"], key)
+            attempt_provider = provider_by_key.get(provider_key)
+            if attempt_provider is None:
+                attempt_provider = factory.get_provider(*provider_key)
+                provider_by_key[provider_key] = attempt_provider
+            attempt_cfg = dict(
+                cfg,
+                provider=attempt["provider"],
+                model=attempt["model"],
+                api_key=key,
+            )
+            quota_attempts.append(
+                (attempt_provider, attempt_cfg, attempt["account"])
+            )
+        active_provider, active_cfg, _account = quota_attempts[attempt_start_index]
+    elif (
+        is_quota_model_pair
+        and secondary_api_key
+        and secondary_api_key != (cfg.get("api_key") or "").strip()
+    ):
+        primary_fallback_cfg = dict(
+            cfg,
+            model=cfg["fallback_model"],
+            api_key=cfg["api_key"],
+        )
+        secondary_provider = factory.get_provider("gemini", secondary_api_key)
+        secondary_primary_cfg = dict(cfg, api_key=secondary_api_key)
+        secondary_fallback_cfg = dict(
+            secondary_primary_cfg,
+            model=cfg["fallback_model"],
+        )
+        quota_attempts = [
+            (provider, cfg, "primary"),
+            (provider, primary_fallback_cfg, "primary"),
+            (secondary_provider, secondary_primary_cfg, "secondary"),
+            (secondary_provider, secondary_fallback_cfg, "secondary"),
+        ]
     system_prompt = ctx["system_prompt"]
     chat_text = ctx["chat_text"]
 
@@ -1701,6 +6409,7 @@ def generate(body: GenerateRequest):
         condition=body.condition,
         revision_instruction=body.revision_instruction,
     )
+    batch_state["batch_id"] = batch_id
 
     if body.revision_instruction.strip() or body.original_generated.strip():
         msgs = prompt.build_revision_messages(
@@ -1709,28 +6418,101 @@ def generate(body: GenerateRequest):
             condition=body.condition,
             original_generated=body.original_generated,
             revision_instruction=body.revision_instruction,
+            strategy_mode=body.strategy_mode,
+            candidates=body.candidates,
         )
     else:
-        msgs = prompt.build_initial_generation_messages(
-            system_prompt=system_prompt,
-            chat_history_text=chat_text,
-            candidates=body.candidates,
+        msgs = _build_initial_generation_messages(
+            ctx,
             mode=body.mode,
+            candidates=body.candidates,
+            strategy_mode=body.strategy_mode,
         )
 
     def _call_ai(messages: list[dict[str, str]]) -> str:
+        nonlocal active_provider, active_cfg, using_fallback
+
         def _invoke():
-            return provider.generate(
-                model=cfg["model"],
+            return active_provider.generate(
+                model=active_cfg["model"],
                 messages=messages,
-                temperature=cfg["temperature"],
-                max_tokens=cfg["max_tokens"],
-                json_mode=body.candidates > 1,
+                temperature=active_cfg["temperature"],
+                max_tokens=active_cfg["max_tokens"],
+                json_mode=body.candidates > 1 or body.strategy_mode == "tapple",
             )
 
         try:
             return _invoke()
         except AIError as exc:
+            if exc.code == "rate_limit" and quota_attempts:
+                current_index = next(
+                    (
+                        index
+                        for index, (_candidate_provider, candidate_cfg, _account) in enumerate(quota_attempts)
+                        if candidate_cfg.get("api_key") == active_cfg.get("api_key")
+                        and candidate_cfg.get("model") == active_cfg.get("model")
+                    ),
+                    -1,
+                )
+                if current_index < 0:
+                    raise HTTPException(
+                        status_code=502,
+                        detail={"code": exc.code, "message": exc.message},
+                    )
+                last_quota_error = exc
+                for next_provider, next_cfg, next_account in quota_attempts[current_index + 1 :]:
+                    active_provider = next_provider
+                    active_cfg = next_cfg
+                    using_fallback = True
+                    logger.warning(
+                        "Gemini quota exhausted; trying account=%s model=%s",
+                        next_account,
+                        next_cfg["model"],
+                    )
+                    try:
+                        return _invoke()
+                    except AIError as next_exc:
+                        if next_exc.code != "rate_limit":
+                            logger.warning("Gemini fallback failed: code=%s", next_exc.code)
+                            raise HTTPException(
+                                status_code=502,
+                                detail={"code": next_exc.code, "message": next_exc.message},
+                            )
+                        last_quota_error = next_exc
+
+                logger.warning("Gemini quota fallbacks exhausted")
+                raise HTTPException(
+                    status_code=502,
+                    detail={"code": last_quota_error.code, "message": last_quota_error.message},
+                )
+
+            # Production defaults switch from Gemini 3.5 Flash Lite to 3.1
+            # Flash Lite as soon as the primary quota is exhausted. Keep the
+            # generic retry/fallback policy unchanged for every other setup.
+            if exc.code == "rate_limit" and is_quota_model_pair and not using_fallback:
+                fb = factory.get_fallback(cfg)
+                if fb is None:
+                    raise HTTPException(
+                        status_code=502,
+                        detail={"code": exc.code, "message": exc.message},
+                    )
+                fb_provider, fb_cfg = fb
+                active_provider = fb_provider
+                active_cfg = fb_cfg
+                using_fallback = True
+                logger.warning(
+                    "Gemini primary rate limit reached; switching to fallback model %s",
+                    fb_cfg["model"],
+                )
+                try:
+                    return _invoke()
+                except AIError as fb_exc:
+                    logger.warning("fallback failed: code=%s", fb_exc.code)
+                    raise HTTPException(
+                        status_code=502,
+                        detail={"code": fb_exc.code, "message": fb_exc.message},
+                    )
+
             delays = {"empty_response": (2, 4), "rate_limit": (8, 16)}.get(exc.code)
             if delays is None:
                 logger.warning("AI generation failed: code=%s", exc.code)
@@ -1744,48 +6526,163 @@ def generate(body: GenerateRequest):
                 except AIError as exc2:
                     last_exc = exc2
             else:
-                fb = factory.get_fallback(cfg) if last_exc.code in ("rate_limit", "empty_response") else None
+                fb = (
+                    factory.get_fallback(cfg)
+                    if not using_fallback and last_exc.code in ("rate_limit", "empty_response")
+                    else None
+                )
                 if fb is None:
                     logger.warning("AI generation failed: code=%s", last_exc.code)
                     raise HTTPException(status_code=502, detail={"code": last_exc.code, "message": last_exc.message})
                 fb_provider, fb_cfg = fb
                 logger.warning("primary %s exhausted, trying fallback %s", last_exc.code, fb_cfg["provider"])
+                active_provider = fb_provider
+                active_cfg = fb_cfg
+                using_fallback = True
                 try:
-                    return fb_provider.generate(
-                        model=fb_cfg["model"],
-                        messages=messages,
-                        temperature=fb_cfg["temperature"],
-                        max_tokens=fb_cfg["max_tokens"],
-                        json_mode=body.candidates > 1,
-                    )
+                    return _invoke()
                 except AIError as fb_exc:
                     logger.warning("fallback failed: code=%s", fb_exc.code)
                     raise HTTPException(status_code=502, detail={"code": fb_exc.code, "message": fb_exc.message})
 
     contact_name = ctx.get("pieces", {}).get("contact", {}).get("name", "")
+    latest_counterpart_message = ctx.get("last_contact_msg", "")
+    has_unresolved_status_query = _unresolved_status_query(latest_counterpart_message)
+    known_self_facts = ctx.get("known_self_facts", [])
+    needs_private_experience_confirmation = _needs_private_experience_confirmation(
+        latest_counterpart_message,
+        known_self_facts,
+    )
+
+    def may_return_private_question(question_text: str | None) -> bool:
+        if not question_text:
+            return False
+        if not has_unresolved_status_query:
+            return True
+        return needs_private_experience_confirmation and _is_private_question_for_unknown_experience(
+            question_text,
+            latest_counterpart_message,
+            known_self_facts,
+        )
+
+    def contact_style_context() -> _ContactStyleRepairContext:
+        style_profiles = ctx["pieces"].get("style_profile", {})
+        same_contact_median, global_median = _contact_style_length_medians(
+            style_profiles
+        )
+        return _ContactStyleRepairContext(
+            profile=_contact_style_blended_profile(style_profiles),
+            same_contact_gold_median=same_contact_median,
+            global_gold_median=global_median,
+            explicit_tone=body.tone,
+            counterpart_message=ctx.get("last_contact_msg", ""),
+            counterpart_intent=(
+                (ctx["pieces"].get("conversation_ledger", {}) or {}).get(
+                    "counterpart_intent"
+                )
+                or "report"
+            ),
+            previous_self_ended_with_question=bool(
+                (ctx["pieces"].get("conversation_ledger", {}) or {}).get(
+                    "prev_self_ended_with_question"
+                )
+            ),
+            conversation_context="\n".join(
+                str(message.get("content", ""))
+                for message in (ctx.get("chat_messages") or [])[-6:]
+                if isinstance(message, dict)
+            ),
+        )
+
+    def contact_style_issues_for(replies: list[str]) -> list[str]:
+        if body.strategy_mode == "tapple" or not replies:
+            return []
+        signature = tuple(replies)
+        if signature not in contact_style_issue_cache:
+            contact_style_issue_cache[signature] = _contact_style_soft_repair_issues(
+                replies, contact_style_context()
+            )
+        return list(contact_style_issue_cache[signature])
+
+    def validate_contact_style_followup(raw_output: str) -> tuple[list[str], list[str], bool]:
+        if may_return_private_question(_extract_ai_question(raw_output)):
+            return [], [], True
+        parsed = _parse_replies_strict(
+            raw_output, body.candidates, strategy_mode=body.strategy_mode
+        )
+        if parsed:
+            parsed = [
+                ensure_has_question(
+                    sanitize_reply_text(
+                        reply,
+                        current_datetime=datetime.now(),
+                        contact_name=contact_name,
+                    ),
+                    condition=body.condition,
+                    contact_name=contact_name,
+                )
+                for reply in parsed
+            ]
+        violations = validate_candidate_replies(
+            parsed,
+            body.candidates,
+            tone=ctx.get("effective_tone") or body.tone,
+            condition=body.condition,
+            mode=body.mode,
+            current_datetime=datetime.now(timezone.utc),
+            last_self_message=ctx.get("last_self_msg", "")
+            if body.mode == "followup"
+            else "",
+            counterpart_message=ctx.get("last_contact_msg", ""),
+            known_self_facts=ctx.get("known_self_facts", []),
+            known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
+            chat_history_text=ctx.get("chat_text", ""),
+            strategy_mode=body.strategy_mode,
+            conversation_messages=ctx.get("chat_messages", []),
+            style_reference_replies=ctx.get("style_reference_replies", []),
+        )
+        return parsed, violations, False
 
     MAX_ATTEMPTS = 3
     final_parsed_replies = None
+    final_strategy_raw = None
+    style_only_fallback_replies = None
+    contact_style_issue_cache: dict[tuple[str, ...], list[str]] = {}
+    style_repair_api_attempted = False
     last_violations = []
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             raw = _call_ai(msgs)
         except HTTPException:
+            if style_only_fallback_replies:
+                final_parsed_replies = style_only_fallback_replies
+                final_strategy_raw = None
+                break
             raise
         except Exception as exc:
             logger.warning("Attempt %d _call_ai failed: %s", attempt, exc)
             if attempt == MAX_ATTEMPTS:
+                if style_only_fallback_replies:
+                    final_parsed_replies = style_only_fallback_replies
+                    final_strategy_raw = None
+                    break
                 raise HTTPException(status_code=502, detail={"code": "ai_call_failed", "message": "AIサービスの呼び出しに失敗しました。"})
             continue
 
         # 1. AI_QUESTION 完全一致検知
         question_text = _extract_ai_question(raw)
-        if question_text:
+        if may_return_private_question(question_text):
+            if style_only_fallback_replies:
+                final_parsed_replies = style_only_fallback_replies
+                final_strategy_raw = None
+                break
             return {"replies": [], "history_ids": [], "question": question_text}
 
         # 2. Strict Parse & Auto-Sanitize (勝手に自動修正して不備を解消)
-        parsed_replies = _parse_replies_strict(raw, body.candidates)
+        parsed_replies = _parse_replies_strict(
+            raw, body.candidates, strategy_mode=body.strategy_mode
+        )
         if parsed_replies:
             parsed_replies = [
                 sanitize_reply_text(r, current_datetime=datetime.now(), contact_name=contact_name)
@@ -1796,56 +6693,79 @@ def generate(body: GenerateRequest):
                 for r in parsed_replies
             ]
 
+        tapple_strategy = (
+            _parse_tapple_strategy(raw, ctx.get("chat_messages", []))
+            if body.strategy_mode == "tapple"
+            else None
+        )
+
         violations = validate_candidate_replies(
             parsed_replies,
             body.candidates,
-            tone=body.tone,
+            tone=ctx.get("effective_tone") or body.tone,
             condition=body.condition,
             mode=body.mode,
-            current_datetime=datetime.now(),
+            current_datetime=datetime.now(timezone.utc),
+            last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
+            counterpart_message=ctx.get("last_contact_msg", ""),
+            known_self_facts=ctx.get("known_self_facts", []),
+            known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
+            chat_history_text=ctx.get("chat_text", ""),
+            strategy_mode=body.strategy_mode,
+            tapple_action=tapple_strategy.action if tapple_strategy else None,
+            conversation_messages=ctx.get("chat_messages", []),
+            style_reference_replies=ctx.get("style_reference_replies", []),
         )
+        if body.strategy_mode == "tapple":
+            violations.extend(_tapple_strategy_output_violations(tapple_strategy))
 
-        # Step 16 §22: 初回のみ、質問不要なのに全案質問つきなら soft repair を促す。
-        # repair 後の再検証は Hard のみ（質問なし化はベストエフォート）。
         if (
-            attempt == 1
-            and not violations
+            not violations
             and parsed_replies
-            and len(parsed_replies) == body.candidates
+            and body.strategy_mode != "tapple"
         ):
-            _ledger = ctx["pieces"].get("conversation_ledger", {}) or {}
-            if _needs_question_free_variety(
-                replies=parsed_replies,
-                candidates=body.candidates,
-                intent=(_ledger.get("counterpart_intent") or "report"),
-                has_unresolved_question=bool(_ledger.get("unresolved_question")),
-                condition=body.condition,
-                mode=body.mode,
-            ):
-                violations = [
-                    "3案すべてに相手への質問が含まれています。今回の会話では質問が不要なため、"
-                    "少なくとも1案は質問なしの自然な返信（相槌・共感・一言・労い）にしてください。"
-                    "（質問すること自体は禁止しません）"
-                ]
+            style_issues = contact_style_issues_for(parsed_replies)
+            if style_issues and not style_repair_api_attempted:
+                style_only_fallback_replies = parsed_replies
+                violations = style_issues
+                style_repair_api_attempted = True
 
         # 違反がなければ即合格
         if not violations and parsed_replies and len(parsed_replies) == body.candidates:
             final_parsed_replies = parsed_replies
+            final_strategy_raw = raw
             break
 
         # 3. 違反がある場合は1回 Repair を試行
         if not parsed_replies:
-            violations = [f"出力が正しいJSON形式（{{\"replies\": [...]}}）または期待される{body.candidates}案の形式になっていません。"]
+            if question_text and has_unresolved_status_query:
+                violations = [
+                    "参照先が会話履歴から特定できません。状況を推測せず、相手に送る短い確認質問を通常のJSON repliesに含めてください。"
+                ]
+            else:
+                violations = [f"出力が正しいJSON形式（{{\"replies\": [...]}}）または期待される{body.candidates}案の形式になっていません。"]
         logger.info("Attempt %d validation failed: %s. Attempting repair...", attempt, violations)
 
-        repair_msgs = _build_repair_messages(msgs, raw, violations, body.candidates)
+        repair_msgs = _build_repair_messages(
+            msgs,
+            raw,
+            violations,
+            body.candidates,
+            strategy_mode=body.strategy_mode,
+        )
         try:
             repair_raw = _call_ai(repair_msgs)
             repair_question = _extract_ai_question(repair_raw)
-            if repair_question:
+            if may_return_private_question(repair_question):
+                if style_only_fallback_replies:
+                    final_parsed_replies = style_only_fallback_replies
+                    final_strategy_raw = None
+                    break
                 return {"replies": [], "history_ids": [], "question": repair_question}
 
-            repair_parsed = _parse_replies_strict(repair_raw, body.candidates)
+            repair_parsed = _parse_replies_strict(
+                repair_raw, body.candidates, strategy_mode=body.strategy_mode
+            )
             if repair_parsed:
                 repair_parsed = [
                     sanitize_reply_text(r, current_datetime=datetime.now(), contact_name=contact_name)
@@ -1855,17 +6775,159 @@ def generate(body: GenerateRequest):
                     ensure_has_question(r, condition=body.condition, contact_name=contact_name)
                     for r in repair_parsed
                 ]
+            repair_strategy = (
+                _parse_tapple_strategy(repair_raw, ctx.get("chat_messages", []))
+                if body.strategy_mode == "tapple"
+                else None
+            )
+            repair_strategy_matches_replies = True
 
             repair_violations = validate_candidate_replies(
                 repair_parsed,
                 body.candidates,
-                tone=body.tone,
+                tone=ctx.get("effective_tone") or body.tone,
                 condition=body.condition,
                 mode=body.mode,
-                current_datetime=datetime.now(),
+                current_datetime=datetime.now(timezone.utc),
+                last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
+                counterpart_message=ctx.get("last_contact_msg", ""),
+                known_self_facts=ctx.get("known_self_facts", []),
+                known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
+                chat_history_text=ctx.get("chat_text", ""),
+                strategy_mode=body.strategy_mode,
+                tapple_action=repair_strategy.action if repair_strategy else None,
+                conversation_messages=ctx.get("chat_messages", []),
+                style_reference_replies=ctx.get("style_reference_replies", []),
             )
+            if body.strategy_mode == "tapple":
+                repair_violations.extend(
+                    _tapple_strategy_output_violations(repair_strategy)
+                )
+            if (
+                repair_violations
+                and _is_reference_clarification_only_failure(repair_violations)
+            ):
+                safe_clarifications = _build_safe_reference_clarification_candidates(
+                    repair_parsed,
+                    body.candidates,
+                    counterpart_message=ctx.get("last_contact_msg", ""),
+                    known_self_facts=ctx.get("known_self_facts", []),
+                    chat_history_text=ctx.get("chat_text", ""),
+                    tone=ctx.get("effective_tone") or body.tone,
+                    condition=body.condition,
+                    current_datetime=datetime.now(timezone.utc),
+                    mode=body.mode,
+                )
+                if safe_clarifications:
+                    repair_parsed = safe_clarifications
+                    repair_strategy_matches_replies = False
+                    repair_violations = validate_candidate_replies(
+                        repair_parsed,
+                        body.candidates,
+                        tone=ctx.get("effective_tone") or body.tone,
+                        condition=body.condition,
+                        mode=body.mode,
+                        current_datetime=datetime.now(timezone.utc),
+                        last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
+                        counterpart_message=ctx.get("last_contact_msg", ""),
+                        known_self_facts=ctx.get("known_self_facts", []),
+                        known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
+                        chat_history_text=ctx.get("chat_text", ""),
+                        strategy_mode=body.strategy_mode,
+                        tapple_action=None,
+                        conversation_messages=ctx.get("chat_messages", []),
+                        style_reference_replies=ctx.get("style_reference_replies", []),
+                    )
+            style_baseline_is_current_repair = False
+            if (
+                not repair_violations
+                and repair_parsed
+                and len(repair_parsed) == body.candidates
+                and body.strategy_mode != "tapple"
+            ):
+                repaired_style_issues = contact_style_issues_for(repair_parsed)
+                if repaired_style_issues and not style_only_fallback_replies:
+                    # Keep the first hard-valid repair with a style mismatch as the
+                    # safe fallback before attempting any optional rewrite.
+                    style_only_fallback_replies = repair_parsed
+                    style_baseline_is_current_repair = True
+
             if not repair_violations and repair_parsed and len(repair_parsed) == body.candidates:
+                if style_only_fallback_replies:
+                    if style_baseline_is_current_repair:
+                        # The hard-validation repair itself is the baseline; compare
+                        # optional style follow-ups against it, never against invalid text.
+                        initial_style_issues = contact_style_issues_for(repair_parsed)
+                    else:
+                        initial_style_issues = contact_style_issues_for(
+                            style_only_fallback_replies
+                        )
+                    if not style_baseline_is_current_repair and not _contact_style_repair_improves(
+                        style_only_fallback_replies,
+                        repair_parsed,
+                        contact_style_context(),
+                        initial_style_issues,
+                        candidate_issues=contact_style_issues_for(repair_parsed),
+                    ):
+                        logger.info(
+                            "Initial contact-style repair did not improve the hard-valid baseline; keeping the baseline replies"
+                        )
+                        repair_parsed = style_only_fallback_replies
+                        repair_strategy_matches_replies = False
+                        repair_raw = ""
+                    else:
+                        remaining_style_issues = contact_style_issues_for(repair_parsed)
+                        followup_msgs = repair_msgs
+                        for followup_pass in range(2):
+                            if not remaining_style_issues:
+                                break
+                            next_msgs = _build_repair_messages(
+                                followup_msgs,
+                                repair_raw,
+                                remaining_style_issues,
+                                body.candidates,
+                                strategy_mode=body.strategy_mode,
+                            )
+                            try:
+                                followup_raw = _call_ai(next_msgs)
+                                followup_parsed, followup_violations, is_private_question = (
+                                    validate_contact_style_followup(followup_raw)
+                                )
+                                if (
+                                    is_private_question
+                                    or followup_violations
+                                    or not followup_parsed
+                                    or len(followup_parsed) != body.candidates
+                                ):
+                                    break
+                                followup_style_issues = contact_style_issues_for(
+                                    followup_parsed
+                                )
+                                if not _contact_style_repair_improves(
+                                    repair_parsed,
+                                    followup_parsed,
+                                    contact_style_context(),
+                                    remaining_style_issues,
+                                    candidate_issues=followup_style_issues,
+                                ):
+                                    break
+                                repair_parsed = followup_parsed
+                                repair_raw = followup_raw
+                                remaining_style_issues = followup_style_issues
+                                followup_msgs = next_msgs
+                                logger.info(
+                                    "Optional contact-style follow-up pass %d improved remaining mismatch dimensions; %d remain",
+                                    followup_pass + 1,
+                                    len(remaining_style_issues),
+                                )
+                            except Exception as followup_exc:
+                                logger.warning(
+                                    "Optional contact-style follow-up failed; keeping the best hard-valid replies: %s",
+                                    followup_exc,
+                                )
+                                break
                 final_parsed_replies = repair_parsed
+                final_strategy_raw = repair_raw if repair_strategy_matches_replies else None
                 break
             else:
                 last_violations = repair_violations or violations
@@ -1874,15 +6936,20 @@ def generate(body: GenerateRequest):
             logger.warning("Attempt %d repair AI call failed: %s. Rejecting all and retrying clean...", attempt, exc)
             last_violations = violations
 
-    # 万が一のフォールバック（ユーザーに0件エラー報告を出さず必ず案を届ける）
+    # Hard validation を通過した候補がない場合、不正候補を成功扱いで返さない。
+    if not final_parsed_replies and style_only_fallback_replies:
+        logger.info("Soft contact-style repair did not produce a replacement; returning the hard-valid initial replies")
+        final_parsed_replies = style_only_fallback_replies
+
     if not final_parsed_replies:
-        if parsed_replies and len(parsed_replies) == body.candidates:
-            final_parsed_replies = parsed_replies
-        elif 'repair_parsed' in locals() and repair_parsed and len(repair_parsed) == body.candidates:
-            final_parsed_replies = repair_parsed
-        else:
-            logger.warning("All retry attempts exhausted: %s. Using parsed fallback.", last_violations)
-            final_parsed_replies = parsed_replies or (repair_parsed if 'repair_parsed' in locals() and repair_parsed else [])
+        logger.warning("All retry attempts exhausted without valid candidates: %s", last_violations)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "candidate_validation_failed",
+                "message": "生成結果が検証基準を満たしませんでした。条件を変えて再度お試しください。",
+            },
+        )
 
     parsed_replies = [
         ensure_has_question(
@@ -1893,8 +6960,8 @@ def generate(body: GenerateRequest):
         for r in (final_parsed_replies or [])
     ]
 
-    # 4. 括弧の除去と1文1行改行の保証
-    replies = [prompt.format_one_sentence_per_line(prompt.strip_brackets(r)) for r in parsed_replies]
+    # 4. 括弧などの出力ノイズだけ除去する。文の改行は生成結果を保ち、強制整形しない。
+    replies = [prompt.strip_brackets(r) for r in parsed_replies]
 
     # 5. Soft Style Scoring ＋ Naturalness Scoring と並べ替え（Step 4）
     # score_candidate_style() は維持し、その後に evaluate_candidate_naturalness() を
@@ -1906,10 +6973,19 @@ def generate(body: GenerateRequest):
     counterpart_msg = ctx.get("last_contact_msg", "") or ""
     # Step 17-R6 §3: 質問必要性（NECESSARY/OPTIONAL/FORCED）を事前判定。FORCED は軽く順位を下げる。
     _r6_intent = (ledger.get("counterpart_intent") or "report").strip() or "report"
+    _r6_same_contact_profile = _contact_style_blended_profile(
+        ctx["pieces"].get("style_profile", {})
+    )
+    _r6_gold_question_rate = getattr(
+        _r6_same_contact_profile, "question_ratio", None
+    )
+    if ledger.get("prev_self_ended_with_question"):
+        _r6_gold_question_rate = None
     _r6_necessity = question_necessity(
         counterpart_msg,
         _r6_intent,
         has_unresolved_question=bool(ledger.get("unresolved_question")),
+        gold_question_rate=_r6_gold_question_rate,
     )
     scored_items = []
     for r in replies:
@@ -1920,6 +6996,7 @@ def generate(body: GenerateRequest):
             conversation_ledger=ledger,
             recent_replies=recent_self_replies,
             style_char_median=style_median,
+            gold_question_rate=_r6_gold_question_rate,
         )
         final = naturalness.combine_candidate_scores(s_val, nat["score"])
         # Step 9: 同一相手の修正プロファイルへの適合度を微調整として加算（±0.05）。
@@ -1934,7 +7011,11 @@ def generate(body: GenerateRequest):
         final = round(final + 0.06 * (sent_sim - 0.5), 3)
         # Step 18 §18-19: 同一相手Goldのトーン適合を最下位項として加算（±0.02）。
         # Gold 3件未満は中立。Context/Human/Personal Gold より下位。
-        tone_fit = learning.contrast.contact_tone_fit(r, body.contact_id)
+        tone_fit = learning.contrast.contact_tone_fit(
+            r,
+            body.contact_id,
+            profile=ctx["pieces"]["style_profile"].get("same_contact_blended_gold_profile"),
+        )
         final = round(final + 0.04 * (tone_fit - 0.5), 3)
         # Step 17-R6 §3: FORCED（不要な文脈での質問）は軽く順位を下げる。質問そのものは禁止しない。
         _r6_q = naturalness.count_meaningful_questions(r)
@@ -1948,12 +7029,17 @@ def generate(body: GenerateRequest):
             "question_forced": _r6_forced,
         })
 
-    # 通常モードのみ最終スコア降順ソート（followupモードは役割スロット固定のため順序を整列）
+    # Length evidence is computed once per context and remains the weakest, bounded tie-break.
+    _apply_contact_length_nudge(
+        scored_items,
+        _contact_style_blended_profile(ctx["pieces"]["style_profile"]),
+        body.contact_id,
+    )
+
+    # 通常モードと追いメッセージの両方で品質スコアを優先する。
     if body.mode == "followup":
-        # 3つの役割を正確な順序（案1: 行動報告, 案2: 軽快ツッコミ, 案3: 写真なし体験共有）に分類・配置
-        sorted_replies = _align_followup_replies([item["reply"] for item in scored_items])
-        by_reply = {item["reply"]: item for item in scored_items}
-        ordered_items = [by_reply.get(r, scored_items[i]) for i, r in enumerate(sorted_replies)]
+        ordered_items = _rank_followup_candidates(scored_items, counterpart_msg)
+        sorted_replies = [item["reply"] for item in ordered_items]
         style_scores = [item["score"] for item in ordered_items]
         naturalness_scores = [item["naturalness"] for item in ordered_items]
         human_fit_scores = [item["human_fit"] for item in ordered_items]
@@ -1977,31 +7063,36 @@ def generate(body: GenerateRequest):
     # 6. 履歴保存（ソート後の順序で各候補を個別に保存、batch_id を付与）
     history_ids = _record_history(
         contact_id=body.contact_id,
-        provider=cfg["provider"],
-        model=cfg["model"],
+        provider=active_cfg["provider"],
+        model=active_cfg["model"],
         condition=body.condition,
         replies=sorted_replies,
         revision_instruction=body.revision_instruction,
         original_generated=body.original_generated,
-        tone=body.tone,
+        tone=ctx.get("effective_tone") or body.tone,
         counterpart_message=ctx.get("last_contact_msg", ""),
         batch_id=batch_id,
     )
 
     # 6.5 自動評価の保存（人間評価列は NULL のまま。後から POST /api/evaluations で付与）
-    _save_auto_evaluations(
-        batch_id=batch_id,
-        history_ids=history_ids,
-        ordered_items=ordered_items,
-        counterpart_intent=(ledger.get("counterpart_intent") or "report"),
-    )
+    try:
+        _save_auto_evaluations(
+            batch_id=batch_id,
+            history_ids=history_ids,
+            ordered_items=ordered_items,
+            counterpart_intent=(ledger.get("counterpart_intent") or "report"),
+        )
+    except Exception:
+        # 履歴保存済みの返信自体は利用可能。補助的な評価保存だけの失敗で
+        # 生成を失敗扱いにすると、履歴があるのにbatchだけ失敗状態になる。
+        logger.exception("Failed to save auto evaluations: batch_id=%s", batch_id)
 
-    effective_tone = body.tone or (
+    effective_tone = ctx.get("effective_tone") or body.tone or (
         "hybrid" if getattr(user_style_profile_data, "hybrid_ratio", 0.5) >= 0.5
         else ("keigo" if getattr(user_style_profile_data, "keigo_ratio", 0.0) >= 0.5 else "tame")
     )
 
-    return {
+    response = {
         "replies": sorted_replies,
         "history_ids": history_ids,
         "style_scores": style_scores,
@@ -2016,5 +7107,22 @@ def generate(body: GenerateRequest):
         "effective_tone": effective_tone,
         "tone_validation": "passed",
     }
+    if body.strategy_mode == "tapple":
+        # Keep a conservative strategy available even when the provider omits or
+        # malforms optional metadata, so the UI can always show a safe next step.
+        strategy = (
+            _parse_tapple_strategy(final_strategy_raw, ctx.get("chat_messages", []))
+            if final_strategy_raw is not None
+            else None
+        )
+        if strategy is None:
+            fallback_strategy = _build_safe_tapple_fallback_strategy(
+                ctx.get("chat_messages", [])
+            )
+            if fallback_strategy is not None:
+                response["strategy"] = fallback_strategy.model_dump()
+        else:
+            response["strategy"] = strategy.model_dump()
+    return response
 
 

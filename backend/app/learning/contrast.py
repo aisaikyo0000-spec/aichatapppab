@@ -485,7 +485,7 @@ def sent_profile_similarity(candidate: str, contact_id: int | None) -> float:
     return round(max(0.0, min(1.0, (len_sim + sent_sim + q_sim) / 3.0)), 3)
 
 
-def contact_tone_fit(candidate: str, contact_id: int | None) -> float:
+def contact_tone_fit(candidate: str, contact_id: int | None, *, profile=None) -> float:
     """同一相手Goldのトーン・笑・絵文字への適合度（Step 18 §18）。
 
     ranking の最下位項（Same-contact adaptation）。Gold 3件未満なら 0.5（中立）。
@@ -495,11 +495,12 @@ def contact_tone_fit(candidate: str, contact_id: int | None) -> float:
         return 0.5
     from . import style as style_mod
 
-    gold_pairs = style_mod.corpus.extract_same_contact_manual_gold_pairs(contact_id, limit=10)
-    texts = [p.self_turn.text for p in gold_pairs if not p.excluded]
-    if len(texts) < 3:
+    if profile is None:
+        gold_pairs = style_mod.corpus.extract_same_contact_manual_gold_pairs(contact_id, limit=10)
+        texts = [p.self_turn.text for p in gold_pairs if not p.excluded]
+        profile = style_mod.compute_style_metrics(texts)
+    if profile.sample_count < 3:
         return 0.5
-    prof = style_mod.compute_style_metrics(texts)
     cand = (candidate or "").strip()
     # トーン一致（keigo/hybrid/tame の最多区分と比較）
     import re as _re
@@ -514,15 +515,38 @@ def contact_tone_fit(candidate: str, contact_id: int | None) -> float:
         cand_tone = "tame"
     else:
         cand_tone = "hybrid"
-    tone_rates = {"keigo": prof.keigo_ratio, "hybrid": prof.hybrid_ratio, "tame": prof.tame_ratio}
+    tone_rates = {"keigo": profile.keigo_ratio, "hybrid": profile.hybrid_ratio, "tame": profile.tame_ratio}
     tone_sim = tone_rates.get(cand_tone, 0.0)
     # 笑・絵文字の有無一致
     cand_laugh = 1 if ("笑" in cand or "w" in cand) else 0
-    laugh_sim = 1.0 - abs(cand_laugh - prof.laugh_ratio)
+    laugh_sim = 1.0 - abs(cand_laugh - profile.laugh_ratio)
     cand_emoji = 1 if style_mod.EMOJI_PATTERN.search(cand) else 0
-    emoji_rate = min(prof.emoji_avg_count, 1.0)
+    emoji_rate = min(profile.emoji_avg_count, 1.0)
     emoji_sim = 1.0 - abs(cand_emoji - emoji_rate)
     return round(max(0.0, min(1.0, (tone_sim + laugh_sim + emoji_sim) / 3.0)), 3)
+
+
+def contact_length_fit(candidate: str, contact_id: int | None, *, profile=None) -> float:
+    """同一相手への本人Goldの文量傾向との弱い適合度。
+
+    Gold 5件未満は中立。文脈や自然さを上書きする目標文字数ではなく、
+    候補の質が近い場合にだけ使う補助シグナル。
+    """
+    if not contact_id:
+        return 0.5
+    from . import style as style_mod
+
+    if profile is None:
+        gold_pairs = style_mod.corpus.extract_same_contact_manual_gold_pairs(contact_id, limit=10)
+        texts = [p.self_turn.text.strip() for p in gold_pairs if not p.excluded and p.self_turn.text.strip()]
+        profile = style_mod.compute_style_metrics(texts)
+    if profile.sample_count < 5:
+        return 0.5
+    median_length = max(int(profile.char_median), 1)
+    candidate_length = len((candidate or "").strip())
+    # 余裕幅を設け、わずかな文字数差やGold中央値への過剰追従を避ける。
+    scale = max(median_length, 20)
+    return round(max(0.0, min(1.0, 1.0 - abs(candidate_length - median_length) / scale)), 3)
 
 
 # --- Step 12: データ不足時の観測統計（ランキング変更なし） ---

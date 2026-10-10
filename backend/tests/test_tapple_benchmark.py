@@ -1,0 +1,415 @@
+import json
+import pytest
+
+from app.routers import generation
+from scripts.run_tapple_strategy_benchmark import (
+    SCENARIOS,
+    _evaluate_result,
+    _write_artifact,
+    summarize_expectations,
+)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "行きたくないわけではありません。",
+        "行きたくないわけじゃありません。",
+        "行きたくないとは言えません。",
+        "行きたくないとは限りません。",
+    ],
+)
+def test_qualified_non_refusal_is_not_an_unsupported_intent_marker(statement):
+    assert generation._TAPPLE_UNSUPPORTED_INTENT_INFERENCE_RE.search(statement) is None
+
+
+def _valid_results():
+    replies = {
+        "explicit_interest": [
+            "うれしいです！どのお店がいいか考えるのも楽しみです",
+            "一緒に行けたら楽しみです！駅前のカフェも気になりますね",
+            "いいですね！都合のいい日を相談できたらうれしいです",
+        ],
+        "mutual_activity_interest": [
+            "パンケーキの写真、おいしそうですね！",
+            "駅前のカフェなんですね。写真の雰囲気が素敵ですね",
+            "カフェ巡りいいですね。パンケーキもおいしそうです",
+        ],
+        "unlisted_shared_hobby": [
+            "ボルダリング楽しそうですね！僕も一度体験してみたいです",
+            "いいですね！初めてでも登れるコースってあるんですか？",
+            "自分も気になります。近くで体験できるところを探してみたいです",
+        ],
+        "shared_activity_low_reciprocity": [
+            "パンケーキのお店、気になりますね！",
+            "パンケーキのお店、おいしそうですね。まずは写真を見てみたいです",
+            "駅前のカフェも気になってたんですね！",
+        ],
+        "accepted_invitation": [
+            "楽しみです！日程はいつ頃が都合よさそうですか？",
+            "ありがとう！予定を合わせるの楽しみにしてます",
+            "嬉しいです！いつ頃が都合よさそうですか？",
+        ],
+        "ambiguous_interest": [
+            "カフェ気になりますね！どんな雰囲気のお店が好きですか？",
+            "いいですね！よく行くエリアとかありますか？",
+            "カフェいいですね、最近お気に入りのお店ありますか？",
+        ],
+        "tentative_interest": [
+            "そうですね、また話しながらタイミング合えばぜひ！",
+            "ありがとう！無理ないタイミングで話せたら嬉しいです",
+            "そうしましょう！またゆっくり話しましょう",
+        ],
+        "counterproposal": [
+            "日曜なら大丈夫です、ありがとう！何時ごろがよさそうですか？",
+            "ありがとう、日曜なら行けます！何時ごろがよさそうですか？",
+            "日曜なら都合つきます！待ち合わせの時間はどうしましょう",
+        ],
+        "decline": [
+            "わかりました、気持ちを伝えてくれてありがとう！",
+            "大丈夫です。無理しないでくださいね",
+            "気にしないでくださいね。気持ちを伝えてくれてありがとう",
+        ],
+        "meeting_hesitation": [
+            "そうですね、急がずメッセージで話せたらうれしいです",
+            "迷う気持ちを話してくれてありがとう。焦らずゆっくり話しましょう",
+            "無理せず、自分のペースで大丈夫ですよ",
+        ],
+        "meeting_safety_concern": [
+            "安全面が不安なのは自然だと思います。無理せずここで話しましょう",
+            "不安な気持ちを伝えてくれてありがとう。安心できるペースで大丈夫です",
+            "焦らずメッセージでやりとりしましょう。少しずつ安心できたらいいですね",
+        ],
+        "declining_engagement": [
+            "そうなんですね。また話せるときに話しましょう。",
+            "また話したくなったら話そう",
+            "了解です。無理せず過ごしてくださいね",
+        ],
+        "recent_activity_disinterest": [
+            "プリンの話も出てましたね。どんな種類が好きですか？",
+            "駅前のお店のメニューってどんな感じですか？プリンもあるのかな？",
+            "カフェのお店なんですね。前に話していたプリンも置いてあるんでしょうか？",
+        ],
+        "different_activity_does_not_clear_disinterest": [
+            "映画が好きなんですね！最近観て印象に残った作品ありますか？",
+            "映画いいですね、最近なにか観ましたか？",
+            "どんなジャンルの映画をよく観ますか？",
+        ],
+    }
+    results = []
+    for scenario in SCENARIOS:
+        last_contact = next(
+            message["content"]
+            for message in reversed(scenario["messages"])
+            if message["sender"] == "contact"
+        )
+        action = scenario["allowed_actions"][0]
+        results.append(
+            {
+                "id": scenario["id"],
+                "expectation_met": True,
+                "messages": scenario["messages"],
+                "replies": replies[scenario["id"]],
+                "strategy": {
+                    "action": action,
+                    "rationale": "相手の発言に合わせた次の進め方です。",
+                    "evidence": [last_contact],
+                    "invite_example": (
+                        (
+                            "近くのボルダリングジムで体験しませんか？"
+                            if scenario["id"] == "unlisted_shared_hobby"
+                            else "駅前のカフェでお茶しませんか？"
+                        )
+                        if action == "invite"
+                        else None
+                    ),
+                },
+            }
+        )
+    return results
+
+
+def test_selected_scenario_artifact_can_complete_without_claiming_full_benchmark(
+    tmp_path,
+):
+    scenario = next(item for item in SCENARIOS if item["id"] == "explicit_interest")
+    result = {
+        "id": scenario["id"],
+        "strategy": {
+            "action": "invite",
+            "rationale": "相手が一緒に行きたいと明確に伝えているためです。",
+            "evidence": ["今度一緒に行きたいです！"],
+            "invite_example": "駅前のカフェでお茶しませんか？",
+        },
+        "replies": [
+            "一緒に行けるの嬉しいです！",
+            "ありがとう、楽しみにしています",
+            "楽しみです！行きやすい日を相談したいです",
+        ],
+    }
+
+    artifact_path = tmp_path / "selected-scenario.json"
+    _write_artifact(artifact_path, [result], complete=True, scenarios=(scenario,))
+    summary = json.loads(artifact_path.read_text(encoding="utf-8"))["summary"]
+
+    assert summary["complete"] is True
+    assert summary["expectation_failure_reasons"] == {}
+    assert summary["quality_pass"] is True
+    assert summary["expectation_total"] == 1
+    assert summary["benchmark_scope"] == "selected_scenarios"
+    assert summary["is_full_benchmark"] is False
+    assert summary["selected_scenario_ids"] == [scenario["id"]]
+    assert summary["full_suite_pass"] is False
+
+
+def test_tapple_benchmark_passes_only_when_all_scenarios_have_evidence_and_replies():
+    results = _valid_results()
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is True
+    assert summary["expectations_met"] == len(SCENARIOS)
+    assert summary["expectation_failures"] == []
+    assert summary["exit_code"] == 0
+    assert summary["benchmark_scope"] == "full_suite"
+    assert summary["is_full_benchmark"] is True
+    assert summary["selected_scenario_ids"] == [item["id"] for item in SCENARIOS]
+    assert summary["full_suite_pass"] is True
+
+
+@pytest.mark.parametrize(
+    "invite_example",
+    [
+        "駅前のカフェで絶対来てね！",
+        "駅前のカフェなら来るよね？",
+        "断るなんてないよね、駅前のカフェで会おう！",
+    ],
+)
+def test_tapple_benchmark_rejects_pressuring_invitation_examples(invite_example):
+    results = _valid_results()
+    explicit_interest = next(
+        result for result in results if result["id"] == "explicit_interest"
+    )
+    explicit_interest["strategy"]["invite_example"] = invite_example
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert "unsafe_invitation_example" in summary["expectation_failure_reasons"][
+        "explicit_interest"
+    ]
+
+
+@pytest.mark.parametrize(
+    "public_hotel_example",
+    [
+        "ホテルのカフェでお茶しませんか？",
+        "ホテルのロビーでお話ししませんか？",
+    ],
+)
+def test_tapple_benchmark_accepts_public_hotel_venues(public_hotel_example):
+    results = _valid_results()
+    explicit_interest = next(
+        result for result in results if result["id"] == "explicit_interest"
+    )
+    explicit_interest["strategy"]["invite_example"] = public_hotel_example
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is True
+
+
+def test_tapple_benchmark_rejects_complete_run_with_wrong_strategy():
+    results = _valid_results()
+    results[1]["strategy"]["action"] = "stop"
+    results[1]["expectation_met"] = True  # A stale status flag must not override raw evidence.
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert summary["expectations_met"] == len(SCENARIOS) - 1
+    assert summary["expectation_failures"] == [results[1]["id"]]
+    assert summary["exit_code"] == 3
+
+
+def test_tapple_benchmark_keeps_incomplete_run_distinct_from_quality_failure():
+    results = _valid_results()[:1]
+
+    summary = summarize_expectations(results, complete=False)
+
+    assert summary["quality_pass"] is False
+    assert summary["expectations_met"] == 1
+    assert summary["expectation_failures"] == [scenario["id"] for scenario in SCENARIOS[1:]]
+    assert summary["exit_code"] == 2
+
+
+def test_tapple_benchmark_marks_duplicate_and_missing_scenarios_incomplete():
+    results = _valid_results()
+    results[1] = dict(results[0])
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["complete"] is False
+    assert summary["quality_pass"] is False
+    assert summary["expectation_failures"]
+    assert summary["stopped_reason"] == "scenario_coverage_mismatch"
+    assert summary["exit_code"] == 2
+
+
+def test_tapple_artifact_does_not_claim_completion_for_duplicate_scenario_ids(tmp_path):
+    results = _valid_results()
+    results[1] = dict(results[0])
+    artifact_path = tmp_path / "tapple.json"
+
+    _write_artifact(artifact_path, results, complete=True)
+
+    summary = json.loads(artifact_path.read_text(encoding="utf-8"))["summary"]
+    assert summary["total"] == len(SCENARIOS)
+    assert summary["complete"] is False
+    assert summary["quality_pass"] is False
+    assert summary["exit_code"] == 2
+
+
+def test_tapple_expectation_summary_rejects_error_even_when_all_actions_match():
+    results = _valid_results()
+    results[0]["error"] = "HTTP 502"
+    results[0]["error_code"] = "rate_limit"
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["complete"] is False
+    assert summary["quality_pass"] is False
+    assert summary["stopped_reason"] == "rate_limit_exhausted"
+    assert summary["exit_code"] == 2
+
+
+def test_interim_artifact_with_all_cases_has_incomplete_reason(tmp_path):
+    results = _valid_results()
+    artifact_path = tmp_path / "interim.json"
+
+    _write_artifact(artifact_path, results, complete=False)
+
+    summary = json.loads(artifact_path.read_text(encoding="utf-8"))["summary"]
+    assert summary["complete"] is False
+    assert summary["stopped_reason"] == "incomplete"
+    assert summary["quality_pass"] is False
+    assert summary["exit_code"] == 2
+
+
+def test_tapple_benchmark_rejects_a_reinvitation_after_decline_even_when_action_is_stop():
+    results = _valid_results()
+    declined = next(result for result in results if result["id"] == "decline")
+    declined["replies"] = [
+        "わかった、教えてくれてありがとう",
+        "無理しないでね！",
+        "わかった！でも来週カフェに行こうよ！",
+    ]
+    declined["expectation_met"] = True
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert declined["id"] in summary["expectation_failures"]
+
+
+@pytest.mark.parametrize("scenario_id", ["meeting_hesitation", "meeting_safety_concern"])
+@pytest.mark.parametrize(
+    "reinvite",
+    [
+        "ぜひ来週会いましょう。",
+        "ぜひ会いましょう。",
+        "会いましょう。",
+        "お会いしましょう。",
+        "ぜひお会いしませんか？",
+    ],
+)
+def test_tapple_benchmark_rejects_direct_reinvite_and_generic_reply_for_concern(scenario_id, reinvite):
+    results = _valid_results()
+    scenario = next(result for result in results if result["id"] == scenario_id)
+    benchmark_scenario = next(item for item in SCENARIOS if item["id"] == scenario_id)
+    scenario["replies"] = [
+        "わかりました、無理せずもう少し話しましょう",
+        "教えてくれてありがとう！焦らなくて大丈夫です",
+        reinvite,
+    ]
+    scenario["expectation_met"] = True
+
+    assert "reinvitation_not_allowed" in _evaluate_result(benchmark_scenario, scenario)
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert scenario_id in summary["expectation_failures"]
+
+    results = _valid_results()
+    scenario = next(result for result in results if result["id"] == scenario_id)
+    scenario["replies"] = [
+        "不安な気持ちは大切にしたいです。無理せず話しましょう",
+        "教えてくれてありがとう！安心できるペースで大丈夫です",
+        "その話は面白いですね。",
+    ]
+    scenario["expectation_met"] = True
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert scenario_id in summary["expectation_failures"]
+
+
+def test_tapple_benchmark_recomputes_result_instead_of_trusting_boolean():
+    results = _valid_results()
+    results[0]["expectation_met"] = True
+    results[0]["strategy"]["action"] = "wait"
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert results[0]["id"] in summary["expectation_failures"]
+
+
+def test_accepted_invitation_scenario_expects_scheduling_not_another_invitation():
+    accepted = next(
+        scenario for scenario in SCENARIOS if scenario["id"] == "accepted_invitation"
+    )
+
+    assert accepted["allowed_actions"] == ["continue"]
+    assert accepted["no_reinvitation"] is True
+
+
+def test_tapple_benchmark_rejects_missing_reply_or_unverifiable_evidence():
+    results = _valid_results()
+    results[0]["replies"] = []
+    results[1]["strategy"]["evidence"] = ["記録にない発言"]
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert results[0]["id"] in summary["expectation_failures"]
+    assert results[1]["id"] in summary["expectation_failures"]
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [None, "not-an-object", {"id": []}],
+    ids=["null-result", "string-result", "unhashable-id"],
+)
+def test_tapple_benchmark_fails_closed_on_malformed_result_records(malformed_result):
+    results = _valid_results()
+    results[0] = malformed_result
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["complete"] is False
+    assert summary["quality_pass"] is False
+    assert summary["exit_code"] == 2
+
+
+def test_tapple_benchmark_requires_evidence_from_the_latest_contact_message():
+    results = _valid_results()
+    counterproposal = next(result for result in results if result["id"] == "counterproposal")
+    counterproposal["strategy"]["evidence"] = ["カフェ行きたいです"]
+
+    summary = summarize_expectations(results, complete=True)
+
+    assert summary["quality_pass"] is False
+    assert "counterproposal" in summary["expectation_failures"]

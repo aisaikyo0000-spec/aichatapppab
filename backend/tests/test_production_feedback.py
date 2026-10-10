@@ -105,7 +105,7 @@ def test_ai_like_combination(client, monkeypatch):
         name = "fake"
 
         def generate(self, *, model, messages, temperature, max_tokens, json_mode=False):
-            return _json.dumps({"replies": ["それは眠そう", "眠いよね", "ゆっくり休んで"]})
+            return _json.dumps({"replies": ["それは眠そう", "早めに休んでね", "ゆっくり休んで"]})
 
         def available_models(self):
             return []

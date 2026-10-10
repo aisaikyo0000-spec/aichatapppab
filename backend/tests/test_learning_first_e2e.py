@@ -250,8 +250,8 @@ def test_soft_style_scoring_and_candidate_sorting(client, monkeypatch):
             # 案3: 超長文（中スコア）
             return json.dumps({"replies": [
                 "カフェいいですね！\nどんなカフェですか？",
-                "カフェ巡りいいですね！\n最近美味しい珈琲探してました笑\nおすすめのお店ありますか？",
-                "カフェ行ってきたんですね。\n私もよく休日に行くんですけど、最近は渋谷の新しいお店が気になってます。\n今度行ってみようと思いますが、普段どのあたり行かれますか？",
+                "カフェ巡りいいですね！\n最近新しいお店探してました笑\nおすすめのお店ありますか？",
+                "カフェ行ってきたんですね。\n落ち着いた雰囲気のお店だとゆっくりできそうですね。\nおすすめのお店があったら、今度ぜひ教えてください！",
             ]})
 
         def available_models(self):
@@ -332,9 +332,10 @@ def test_build_initial_generation_messages_no_legacy_soft_rules():
     assert "1文1行" not in user_content
     assert "「。」不使用" not in user_content
     assert "顔絵文字0〜2個" not in user_content
-    assert "【USER LEARNED STYLE PROFILE】" in user_content
-    assert "【RETRIEVED USER REPLY PAIRS】" in user_content
-    assert "3案作成" in user_content
+    # Learned style belongs in the system prompt, not the per-request user instruction.
+    assert "【USER LEARNED STYLE PROFILE】" not in user_content
+    assert "【RETRIEVED USER REPLY PAIRS】" not in user_content
+    assert "独立した返信案を3つ作ってください" in user_content
 
 
 def test_self_generation_execution_path_clean_from_legacy_rules(client):

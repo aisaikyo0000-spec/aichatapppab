@@ -64,6 +64,14 @@ export interface GenerationResult {
   effective_tone?: string
   tone_validation?: string
   style_scores?: number[]
+  strategy?: TappleStrategy
+}
+
+export interface TappleStrategy {
+  action: 'continue' | 'clarify' | 'invite' | 'wait' | 'stop'
+  rationale: string
+  evidence: string[]
+  invite_example?: string | null
 }
 
 export type Sendability = 'sendable' | 'minor_edit' | 'major_edit' | 'rejected'
@@ -104,6 +112,8 @@ export interface UserProfile {
 export interface GenerationPreview {
   provider: string
   model: string
+  requested_tone?: string
+  effective_tone?: string
   rules: string[]
   references: string[]
   learning_materials: string[]

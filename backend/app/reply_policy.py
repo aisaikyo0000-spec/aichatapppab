@@ -82,6 +82,7 @@ def question_necessity(
 ) -> str:
     """質問必要性を needed / optional / unnecessary で判定する。
 
+    短い状態共有への質問も一律で不要扱いせず、Gold傾向を弱い根拠として反映する。
     Gold（同一相手の質問率）が低い場合は optional を unnecessary へ一段階下げる。
     ただし回答が必要な場合は下げない。
     """
@@ -90,10 +91,7 @@ def question_necessity(
         return "needed"
     if not t or _CLOSING.search(t) or _GREETING.match(t):
         return "unnecessary"
-    if counterpart_intent in ("reaction", "emotional_share") and len(t) <= 20:
-        level = "unnecessary"
-    else:
-        level = "optional"
+    level = "optional"
     if level == "optional" and gold_question_rate is not None and gold_question_rate < 0.25:
         return "unnecessary"
     return level

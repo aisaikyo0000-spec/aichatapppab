@@ -313,6 +313,7 @@ def evaluate_candidate_naturalness(
     conversation_ledger: dict[str, Any] | None = None,
     recent_replies: list[str] | None = None,
     style_char_median: float | None = None,
+    gold_question_rate: float | None = None,
 ) -> dict[str, Any]:
     """候補の自然性を決定論的に評価する。
 
@@ -351,11 +352,11 @@ def evaluate_candidate_naturalness(
     signals["reaction_questions"] = q["reaction"]
 
     # Step 14: 質問必要性の推定（NEEDED/OPTIONAL/UNNECESSARY）。
-    # Gold質問率は ledger にないため未指定（既存の意図別方針と重複させない）。
     necessity = question_necessity(
         cp,
         intent,
         has_unresolved_question=bool(ledger.get("unresolved_question")),
+        gold_question_rate=gold_question_rate,
     )
     signals["question_necessity"] = necessity
 

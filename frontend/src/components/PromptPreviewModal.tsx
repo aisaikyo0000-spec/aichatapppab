@@ -26,6 +26,18 @@ function formatProfile(p: GenerationPreview['self_profile']): string {
   return lines.join('\n') || '（未設定）'
 }
 
+function toneLabel(tone?: string): string {
+  switch (tone) {
+    case 'keigo': return '敬語'
+    case 'hybrid': return '混合'
+    case 'tame': return 'タメ口'
+    case '':
+    case 'auto':
+    case undefined: return '自動'
+    default: return tone
+  }
+}
+
 function Section({ title, body }: { title: string; body: string }) {
   return (
     <div>
@@ -44,6 +56,10 @@ export default function PromptPreviewModal({ preview, onClose }: Props) {
         <p className="text-xs text-gray-500">
           Provider: <span className="font-semibold text-gray-700">{preview.provider}</span> / Model:{' '}
           <span className="font-semibold text-gray-700">{preview.model}</span>
+        </p>
+        <p className="text-xs text-gray-500">
+          口調: <span className="font-semibold text-gray-700">指定 {toneLabel(preview.requested_tone)}</span>{' '}
+          → <span className="font-semibold text-gray-700">適用 {toneLabel(preview.effective_tone)}</span>
         </p>
         <Section title="【CURRENT REQUEST】今回の返信条件" body={preview.condition || '（指定なし）'} />
         <Section

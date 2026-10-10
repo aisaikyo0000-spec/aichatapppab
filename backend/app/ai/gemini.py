@@ -23,6 +23,9 @@ DEFAULT_TIMEOUT = 90.0
 
 # 推論(thinking)が出力トークンを消費するため、最低限の出力を確保する。
 MIN_MAX_TOKENS = 2048
+QUOTA_FALLBACK_MODELS = frozenset(
+    {"gemini-3.5-flash-lite", "gemini-3.1-flash-lite"}
+)
 
 
 class GeminiProvider(AIProvider):
@@ -111,12 +114,20 @@ class GeminiProvider(AIProvider):
                 )
 
             body_text = resp.text or ""
-            logger.info("Gemini API response: status=%d, body=%s", resp.status_code, body_text[:500])
+            # Response bodies may include prompts, personal messages, or generated replies.
+            logger.info("Gemini API response: status=%d", resp.status_code)
 
             try:
                 return self._parse_response(resp, body_text)
             except AIError as e:
-                if e.code == "rate_limit" and attempt < self.MAX_RETRIES - 1:
+                # The production 3.5 Flash Lite -> 3.1 Flash Lite route switches
+                # models/accounts as soon as quota is exhausted. Repeating
+                # either quota-chain model only delays fallback and spends RPD.
+                if (
+                    e.code == "rate_limit"
+                    and model not in QUOTA_FALLBACK_MODELS
+                    and attempt < self.MAX_RETRIES - 1
+                ):
                     delay = self.RETRY_BASE_DELAY * (2 ** attempt)
                     logger.info("Rate limit hit, retrying in %.1f s (attempt %d/%d)", delay, attempt + 1, self.MAX_RETRIES)
                     time.sleep(delay)
@@ -137,8 +148,10 @@ class GeminiProvider(AIProvider):
 
     def _parse_response(self, resp: httpx.Response, body_text: str) -> str:
         """APIレスポンスを解析し、テキストを返す。エラー場合はAIErrorを送出。"""
+        body_lower = body_text.lower()
         if resp.status_code == 401 or (
-            resp.status_code == 400 and "api key" in body_text.lower()
+            resp.status_code == 400
+            and ("api key" in body_lower or "invalid auth key" in body_lower)
         ):
             raise AIError(
                 "API Keyが正しくありません。Google AI Studioで発行したGemini API Keyを確認してください。",
@@ -162,7 +175,7 @@ class GeminiProvider(AIProvider):
                     code="rate_limit",
                 )
             raise AIError(
-                f"AI APIエラーが発生しました。(HTTP {resp.status_code}) {body_text[:200]}",
+                f"AI APIエラーが発生しました。(HTTP {resp.status_code})",
                 code="provider_error",
             )
 
@@ -179,7 +192,7 @@ class GeminiProvider(AIProvider):
                     code="rate_limit",
                 )
             if error_msg:
-                logger.warning("Gemini API error in response body: %s", error_msg)
+                raise AIError("Gemini APIからエラーが返されました。", code="provider_error")
 
         try:
             content = data["choices"][0]["message"]["content"]

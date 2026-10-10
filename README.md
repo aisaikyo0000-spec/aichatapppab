@@ -1,8 +1,10 @@
-# Matching Reply Assistant 完全仕様書（Conversation-Learned Reply System v3.1）
+# Matching Reply Assistant 旧仕様メモ（v3.1）
 
-本書は、**Matching Reply Assistant** の最新コードベース、データベース構造、REST API、AIプロンプト生成エンジン、学習優先型アーキテクチャ（v3.1）、フロントエンドUI、および運用仕様を網羅した**正本（Source of Truth）となる完全仕様書**である。
+> このREADMEは旧v3.1時点の記録で、現行仕様の正本ではありません。モデル設定、API、DB、画面の説明には現在の実装と異なる箇所があります。現行の挙動はコードと[返信生成分析資料](docs/development/current-generation-analysis.md)、[進捗・運用記録](docs/LIAISON.md)で確認してください。
 
-本書は、従来の固定ルールによる機械的一律制約を完全撤廃し、**「ユーザー自身が実際に手入力・送信した実メッセージ履歴（Gold/Silver）を最優先の正解として学習・抽出し、階層スタイルプロファイル、対照学習（不採用AI案 vs 手入力）、2段階検索（Phase/品質/トピック一致）によって本人らしい自然な会話返信を生成する『Conversation-Learned Reply System v3.1』」**の仕様を定義する。
+本書には、Matching Reply Assistantの旧アーキテクチャ、データベース構造、REST API、プロンプト生成、学習方式、画面、運用仕様を記録しています。以下の説明を現在の実装や設定の根拠として使わないでください。
+
+アプリは、利用者が相手のメッセージを手動で貼り付け、返信候補を確認した後、マッチングアプリへ手動で戻す運用を前提にしています。外部サービスとの自動接続や自動送信は行いません。
 
 ---
 

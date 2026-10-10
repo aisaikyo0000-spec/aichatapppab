@@ -1,0 +1,158 @@
+"""API credential-file parsing tests; test fixtures never use real credentials."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import httpx
+import pytest
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+from api_key_file import read_gemini_api_key
+import check_tapple_api_connectivity as connectivity
+from check_tapple_api_connectivity import _make_probe_provider
+
+
+@pytest.mark.parametrize(
+    "model", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+)
+def test_connectivity_probe_sends_only_one_request_on_quota_error(monkeypatch, model):
+    provider = _make_probe_provider("test-key")
+    requested_models = []
+
+    def send_rate_limit_response(_headers, payload):
+        requested_models.append(payload["model"])
+        return httpx.Response(429, text="quota exceeded")
+
+    monkeypatch.setattr(provider, "_send_request", send_rate_limit_response)
+
+    with pytest.raises(connectivity.AIError) as exc_info:
+        provider.generate(
+            model=model,
+            messages=[],
+            temperature=0.0,
+            max_tokens=128,
+        )
+
+    assert exc_info.value.code == "rate_limit"
+    assert requested_models == [model]
+
+
+def test_reads_gemini_api_key_from_env_assignment(tmp_path):
+    key_file = tmp_path / ".env"
+    key_file.write_text('OTHER=value\nGEMINI_API_KEY="AQ.test-token"\n', encoding="utf-8")
+
+    assert read_gemini_api_key(key_file) == "AQ.test-token"
+
+
+def test_reads_a_single_raw_credential_line(tmp_path):
+    key_file = tmp_path / "gemini2.md"
+    key_file.write_text("\nAQ.test-token\n", encoding="utf-8")
+
+    assert read_gemini_api_key(key_file) == "AQ.test-token"
+
+
+def test_rejects_ambiguous_multiline_raw_file(tmp_path):
+    key_file = tmp_path / "ambiguous.md"
+    key_file.write_text("AQ.first\nAQ.second\n", encoding="utf-8")
+
+    assert read_gemini_api_key(key_file) == ""
+
+
+def test_missing_file_returns_empty_without_exposing_path_content(tmp_path):
+    assert read_gemini_api_key(tmp_path / "missing") == ""
+
+
+class _FakeProvider:
+    def __init__(self, api_key):
+        self.api_key = api_key
+
+
+def test_uses_secondary_key_only_after_both_primary_models_are_rate_limited(monkeypatch):
+    primary = _FakeProvider("primary-key")
+    secondary = _FakeProvider("secondary-key")
+    calls = []
+
+    def probe(provider, model):
+        calls.append((provider.api_key, model))
+        if provider is primary:
+            raise connectivity.AIError("limited", code="rate_limit")
+        return True
+
+    monkeypatch.setattr(connectivity, "_probe", probe)
+    result = connectivity._select_available_model(
+        primary, secondary, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"
+    )
+
+    assert result == ("gemini-3.5-flash-lite", "secondary", None)
+    assert calls == [
+        ("primary-key", "gemini-3.5-flash-lite"),
+        ("primary-key", "gemini-3.1-flash-lite"),
+        ("secondary-key", "gemini-3.5-flash-lite"),
+    ]
+
+
+def test_does_not_use_secondary_key_for_non_quota_errors(monkeypatch):
+    primary = _FakeProvider("primary-key")
+    secondary = _FakeProvider("secondary-key")
+    calls = []
+
+    def probe(provider, model):
+        calls.append((provider.api_key, model))
+        raise connectivity.AIError("service error", code="provider_error")
+
+    monkeypatch.setattr(connectivity, "_probe", probe)
+    result = connectivity._select_available_model(
+        primary, secondary, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"
+    )
+
+    assert result == (None, "primary", "provider_error")
+    assert calls == [("primary-key", "gemini-3.5-flash-lite")]
+
+
+def test_uses_secondary_fallback_model_when_secondary_primary_is_rate_limited(monkeypatch):
+    primary = _FakeProvider("primary-key")
+    secondary = _FakeProvider("secondary-key")
+    calls = []
+
+    def probe(provider, model):
+        calls.append((provider.api_key, model))
+        if provider is primary or model == "gemini-3.5-flash-lite":
+            raise connectivity.AIError("limited", code="rate_limit")
+        return True
+
+    monkeypatch.setattr(connectivity, "_probe", probe)
+    result = connectivity._select_available_model(
+        primary, secondary, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"
+    )
+
+    assert result == ("gemini-3.1-flash-lite", "secondary", None)
+    assert calls == [
+        ("primary-key", "gemini-3.5-flash-lite"),
+        ("primary-key", "gemini-3.1-flash-lite"),
+        ("secondary-key", "gemini-3.5-flash-lite"),
+        ("secondary-key", "gemini-3.1-flash-lite"),
+    ]
+
+
+def test_does_not_probe_secondary_when_keys_are_identical(monkeypatch):
+    primary = _FakeProvider("same-key")
+    secondary = _FakeProvider("same-key")
+    calls = []
+
+    def probe(provider, model):
+        calls.append((provider.api_key, model))
+        raise connectivity.AIError("limited", code="rate_limit")
+
+    monkeypatch.setattr(connectivity, "_probe", probe)
+    result = connectivity._select_available_model(
+        primary, secondary, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"
+    )
+
+    assert result == (None, "primary", "rate_limit")
+    assert calls == [
+        ("same-key", "gemini-3.5-flash-lite"),
+        ("same-key", "gemini-3.1-flash-lite"),
+    ]

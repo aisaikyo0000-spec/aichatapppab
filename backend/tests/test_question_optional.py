@@ -63,7 +63,7 @@ def test_c_answering_direct_question_is_not_blocked():
         conversation_ledger=ledger,
     )
     assert "相手からの直近質問（要回答）: 明日何時にする？" in sysp
-    assert "相手が明確な質問をしている場合は" in sysp
+    assert "相手の明確な質問にはまず答える" in sysp
 
 
 def test_d_no_forced_three_step_structure_for_short_message():
@@ -84,8 +84,109 @@ def test_d_no_forced_three_step_structure_for_short_message():
     assert "質問を省いた案は不正" not in sysp
     assert "反応→自己開示→質問" not in sysp
     assert "【COUNTERPART MESSAGE LENGTH】" in sysp
-    assert "短いリアクション" in sysp
-    assert "Hard Limit ではない" in sysp
+    assert "REPLY CONTENT CHOICE" in sysp
+    assert "短いリアクション" not in sysp
+    assert "返信の長さは話題・会話状況・本人のGlobal Goldを参考に" not in sysp
+
+
+def test_short_input_and_contact_gold_length_remain_advisory():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事で疲れた",
+        same_contact_gold_samples=6,
+        same_contact_gold_block="同一相手Goldの文量中央値は109字",
+        counterpart_length_tier="short",
+        counterpart_length_chars=7,
+    )
+
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
+    assert "返信内容が自然に完結する長さを選び" not in sysp
+    assert "Goldに近づけるために話題を広げたりしないこと" not in sysp
+
+
+def test_extremely_short_input_does_not_override_contact_gold_length():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: え",
+        same_contact_gold_samples=6,
+        counterpart_length_tier="short",
+        counterpart_length_chars=1,
+    )
+
+    assert "【COUNTERPART MESSAGE LENGTH】相手の直近メッセージ: 約1文字" in sysp
+    assert "ごく短い相づち・挨拶" not in sysp
+    assert "REPLY CONTENT CHOICE" in sysp
+    assert "2行以上の返信は避ける" not in sysp
+
+
+def test_counterpart_short_style_is_not_a_reply_length_target():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事で疲れた",
+        same_contact_gold_samples=6,
+        same_contact_gold_block="同一相手Goldの文量中央値は109字",
+        counterpart_style_block="相手は短文中心です",
+        counterpart_length_tier="short",
+        counterpart_length_chars=7,
+    )
+
+    assert "【CONTACT GOLD LENGTH】" not in sysp
+    assert "【COUNTERPART MESSAGE LENGTH】" in sysp
+    assert "返信内容が自然に完結する長さを選び" not in sysp
+    assert "相手が短文中心の場合、説明的な長文にせず短く返すこと" not in sysp
+    assert "温度感を距離感の補助情報として扱う" in sysp
+    assert "20〜30%程度" not in sysp
+
+
+def test_medium_incoming_does_not_force_same_line_count_for_contact_gold():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事が忙しくて疲れた",
+        same_contact_gold_samples=6,
+        same_contact_gold_block="同一相手Goldの文量中央値は109字",
+        counterpart_length_tier="medium",
+        counterpart_length_chars=12,
+    )
+
+    assert "【CONTACT GOLD LENGTH】" not in sysp
+    assert "【COUNTERPART MESSAGE LENGTH】" in sysp
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
+    assert "2〜3行程度の自然な返信を基本とすること" not in sysp
+
+
+def test_medium_incoming_without_contact_gold_does_not_force_two_or_three_lines():
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事が忙しくて疲れた",
+        same_contact_gold_samples=0,
+        counterpart_length_tier="medium",
+        counterpart_length_chars=30,
+    )
+
+    assert "2〜3行程度の自然な返信を基本とすること" not in sysp
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
+
+
+def test_prompt_keeps_contact_gold_median_from_observed_relationship_summary():
+    relationship_summary = "本人Goldの文量中央値（観測値）: 109文字。Global Gold中央値: 64文字。"
+    sysp = prompt.build_system_prompt(
+        contact={"name": "相手", "profile": ""},
+        condition="",
+        chat_history_text="相手: 仕事で疲れた",
+        same_contact_gold_samples=6,
+        same_contact_reply_style_block=relationship_summary,
+        counterpart_length_tier="short",
+        counterpart_length_chars=7,
+    )
+
+    assert "本人Goldの文量中央値（観測値）: 109文字" in sysp
+    assert "Global Gold中央値: 64文字" in sysp
+    assert "本人Goldの文量傾向を参考にしつつ" in sysp
 
 
 def test_e_all_three_without_questions_pass():
@@ -142,7 +243,7 @@ def _patch_fake_provider(monkeypatch, replies):
 def test_e2e_case1_short_sleepy_no_expansion(client, monkeypatch):
     """ケース1: 相手「眠い」→ 長文＋質問にならず、そのまま返ること。"""
     cid = _setup_contact_with_message(client, "確認相手1", "眠い")
-    _patch_fake_provider(monkeypatch, ["それは眠そう", "眠いよね", "ゆっくり休んで"])
+    _patch_fake_provider(monkeypatch, ["それは眠そう", "早めに休んでね", "ゆっくり休んで"])
 
     r = client.post("/api/generate", json={"contact_id": cid, "condition": "", "candidates": 3})
     assert r.status_code == 200

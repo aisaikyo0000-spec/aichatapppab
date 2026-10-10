@@ -2556,7 +2556,15 @@ def test_tapple_invite_action_requires_each_candidate_to_make_a_low_pressure_inv
     assert bool(action_violations) is expects_action_mismatch
 
 
-def test_tapple_invitation_must_target_the_discussed_activity():
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "カフェいいですね、今度一緒に映画を見に行きませんか？",
+        "カフェも気になりますし、今度映画を見に行きませんか？",
+        "今度カフェでお茶して、そのあと映画を見に行きませんか？",
+    ],
+)
+def test_tapple_invitation_must_target_the_discussed_activity(reply):
     history = [
         {"sender": "contact", "content": "駅前に気になるカフェがあるんです"},
         {"sender": "self", "content": "僕もそのカフェが気になってます"},
@@ -2564,7 +2572,7 @@ def test_tapple_invitation_must_target_the_discussed_activity():
     ]
 
     violations = validate_candidate_replies(
-        ["カフェいいですね。今度一緒に映画を見に行きませんか？"],
+        [reply],
         1,
         counterpart_message=history[-1]["content"],
         conversation_messages=history,

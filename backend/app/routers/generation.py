@@ -4175,6 +4175,8 @@ def _repair_violation_categories(violations: list[str]) -> frozenset[str]:
 
 def _repair_violation_category(violation: str) -> set[str]:
     categories: set[str] = set()
+    if "本人の未確認の希望を追加しています" in violation:
+        categories.add("unsupported_personal_desire")
     if "相手の時間情報を確認できる情報がありません" in violation:
         categories.add("unsupported_time")
     if "返信案の過半数が相手の発言の言い換え" in violation:
@@ -4223,6 +4225,11 @@ def _repair_violation_category(violation: str) -> set[str]:
 
 def _repair_grounding_guidance(categories: frozenset[str]) -> str:
     guidance: list[str] = []
+    if "unsupported_personal_desire" in categories:
+        guidance.append(
+            "本人が明示していない希望を断定しないでください。"
+            "誘いが必要な場面では本人の希望を事実として述べず、相手の意向を尋ねる質問形の誘いにしてください。"
+        )
     if "unsupported_time" in categories:
         guidance.append(
             "根拠のない今日・昨日・明日などの時間表現を削除し、時間を特定しない自然な反応にしてください。"

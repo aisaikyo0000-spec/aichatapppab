@@ -145,8 +145,8 @@ def test_tapple_prompt_keeps_reply_grounded_when_invite_is_recommended():
     instruction = messages[1]["content"]
     assert "会話にない自分の体験・予定・意向を事実として足さない" in instruction
     assert "自分が見ていない写真を見た前提にしない" in instruction
-    assert "action=inviteの場合、各返信候補にも低圧な誘いを含めてください" in instruction
-    assert "単なる関心への反応で終える指示は、action=invite以外の場合に適用" in instruction
+    assert "action=inviteの場合、各返信候補にも会話で根拠づけられる低圧な誘いを含め" in instruction
+    assert "action=continueやwaitなどinvite以外の場合に" in instruction
 
 
 def test_tapple_prompts_require_a_safe_example_for_invite():
@@ -4902,7 +4902,7 @@ def test_tapple_prompt_requires_strategy_and_action_consistent_replies():
     assert "strategyは必須" in instruction
     assert "waitまたはstop" in instruction
     assert "返信候補も会う提案を含めない" in instruction
-    assert "一緒に行く意思は不明" in instruction
+    assert "invite以外の場合に、相手の活動への関心はあるが一緒に行く意思が不明" in instruction
     assert "相手が挙げた活動や話題に直接つながる返信" in instruction
     assert "店の雰囲気を知っているように述べず" in instruction
     assert "一人で行くよう勧めたり" in instruction

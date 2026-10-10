@@ -220,6 +220,7 @@ def test_explicit_interest_fixture_is_not_already_an_accepted_invitation():
     )
     assert any(
         turn["sender"] == "self"
+        and "カフェ" in turn["content"]
         and generation._TAPPLE_ACTIVITY_INTEREST_RE.search(turn["content"])
         for turn in scenario["messages"]
     )

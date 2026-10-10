@@ -650,7 +650,8 @@ def build_system_prompt(
         contact_info += f"\n相手のプロフィール（※補助参考情報）:\n{contact_profile}"
 
     history_parts = [
-        "【CHAT HISTORY】\n【CONTACT & CHAT HISTORY】現在までの会話履歴（唯一の事実ソース）",
+        "【CHAT HISTORY】\n【CONTACT & CHAT HISTORY】現在までの会話履歴（相手の発言と会話の事実の根拠。本人の事実は、本人設定・SELFの履歴・本人Gold実績で確認できる情報も、既存のFACT BOUNDARYなどの条件に従って使える）\n"
+        "相手の現在の状況は最新発言と、現在も続いていると会話で確認できる情報を根拠にする。過去の履歴やGoldの時点・忙しさ・予定を、現在の状況として引き継がない。過去の情報に触れる場合は、その時点の話として扱う。",
         contact_info,
     ]
 

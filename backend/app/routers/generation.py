@@ -4677,8 +4677,71 @@ def _repair_violation_categories(violations: list[str]) -> frozenset[str]:
     return frozenset(categories)
 
 
+def _collect_gold_copy_salvage_candidates(
+    replies: list[str],
+    violations: list[str],
+    *,
+    expected_candidates: int,
+    validation_kwargs: dict[str, Any],
+    candidate_pool: list[str],
+    strategy_mode: str,
+    style_fallback_active: bool,
+) -> None:
+    """Collect individually valid replies only from an exact-count, copy-only batch."""
+    if (
+        strategy_mode == "tapple"
+        or style_fallback_active
+        or len(replies) != expected_candidates
+        or not violations
+        or any(
+            _repair_violation_category(violation) != {"gold_reply_copy"}
+            for violation in violations
+        )
+    ):
+        return
+
+    seen = {
+        unicodedata.normalize("NFKC", reply).strip()
+        for reply in candidate_pool
+    }
+    for reply in replies:
+        if not isinstance(reply, str) or not reply.strip():
+            continue
+        key = unicodedata.normalize("NFKC", reply).strip()
+        if key in seen:
+            continue
+        singleton_violations = validate_candidate_replies(
+            [reply], expected_candidates=1, **validation_kwargs
+        )
+        if not singleton_violations:
+            candidate_pool.append(reply)
+            seen.add(key)
+
+
+def _validated_gold_copy_salvage_batch(
+    candidate_pool: list[str],
+    *,
+    expected_candidates: int,
+    validation_kwargs: dict[str, Any],
+    strategy_mode: str = "none",
+) -> list[str] | None:
+    """Take the first complete pooled batch only if unchanged hard validation passes."""
+    if strategy_mode == "tapple" or len(candidate_pool) < expected_candidates:
+        return None
+    candidate_batch = candidate_pool[:expected_candidates]
+    if validate_candidate_replies(
+        candidate_batch,
+        expected_candidates=expected_candidates,
+        **validation_kwargs,
+    ):
+        return None
+    return list(candidate_batch)
+
+
 def _repair_violation_category(violation: str) -> set[str]:
     categories: set[str] = set()
+    if "過去のGold返信をコピーしています" in violation:
+        categories.add("gold_reply_copy")
     if "本人の未確認の希望を追加しています" in violation:
         categories.add("unsupported_personal_desire")
     if "相手の時間情報を確認できる情報がありません" in violation:
@@ -7222,6 +7285,8 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
     contact_style_issue_cache: dict[tuple[str, ...], list[str]] = {}
     style_repair_api_attempted = False
     last_violations = []
+    gold_copy_candidate_pool: list[str] = []
+    salvage_validation_kwargs: dict[str, Any] | None = None
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -7359,22 +7424,25 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
             )
             repair_strategy_matches_replies = True
 
+            repair_validation_kwargs = {
+                "tone": ctx.get("effective_tone") or body.tone,
+                "condition": body.condition,
+                "mode": body.mode,
+                "current_datetime": datetime.now(timezone.utc),
+                "last_self_message": ctx.get("last_self_msg", "")
+                if body.mode == "followup" else "",
+                "counterpart_message": ctx.get("last_contact_msg", ""),
+                "known_self_facts": ctx.get("known_self_facts", []),
+                "known_self_fact_timestamps": ctx.get("known_self_fact_timestamps", []),
+                "chat_history_text": ctx.get("chat_text", ""),
+                "strategy_mode": body.strategy_mode,
+                "tapple_action": repair_strategy.action if repair_strategy else None,
+                "conversation_messages": ctx.get("chat_messages", []),
+                "style_reference_replies": ctx.get("style_reference_replies", []),
+            }
+            salvage_validation_kwargs = repair_validation_kwargs
             repair_violations = validate_candidate_replies(
-                repair_parsed,
-                body.candidates,
-                tone=ctx.get("effective_tone") or body.tone,
-                condition=body.condition,
-                mode=body.mode,
-                current_datetime=datetime.now(timezone.utc),
-                last_self_message=ctx.get("last_self_msg", "") if body.mode == "followup" else "",
-                counterpart_message=ctx.get("last_contact_msg", ""),
-                known_self_facts=ctx.get("known_self_facts", []),
-                known_self_fact_timestamps=ctx.get("known_self_fact_timestamps", []),
-                chat_history_text=ctx.get("chat_text", ""),
-                strategy_mode=body.strategy_mode,
-                tapple_action=repair_strategy.action if repair_strategy else None,
-                conversation_messages=ctx.get("chat_messages", []),
-                style_reference_replies=ctx.get("style_reference_replies", []),
+                repair_parsed, body.candidates, **repair_validation_kwargs
             )
             if body.strategy_mode == "tapple":
                 repair_violations.extend(
@@ -7513,7 +7581,20 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
                 break
             else:
                 last_violations = repair_violations or violations
-                logger.info("Attempt %d repair failed. Rejecting all candidates and retrying from clean state...", attempt)
+                _collect_gold_copy_salvage_candidates(
+                    repair_parsed,
+                    repair_violations,
+                    expected_candidates=body.candidates,
+                    validation_kwargs=repair_validation_kwargs,
+                    candidate_pool=gold_copy_candidate_pool,
+                    strategy_mode=body.strategy_mode,
+                    style_fallback_active=bool(style_only_fallback_replies),
+                )
+                logger.info(
+                    "Attempt %d repair batch rejected; retrying generation with %d individually validated candidates retained in the request-local pool",
+                    attempt,
+                    len(gold_copy_candidate_pool),
+                )
         except Exception as exc:
             logger.warning("Attempt %d repair AI call failed: %s. Rejecting all and retrying clean...", attempt, exc)
             last_violations = violations
@@ -7522,6 +7603,30 @@ def _generate_with_batch_tracking(body: GenerateRequest, batch_state: dict[str, 
     if not final_parsed_replies and style_only_fallback_replies:
         logger.info("Soft contact-style repair did not produce a replacement; returning the hard-valid initial replies")
         final_parsed_replies = style_only_fallback_replies
+
+    if (
+        not final_parsed_replies
+        and not style_only_fallback_replies
+        and gold_copy_candidate_pool
+        and salvage_validation_kwargs is not None
+        and body.strategy_mode != "tapple"
+    ):
+        salvaged_replies = _validated_gold_copy_salvage_batch(
+            gold_copy_candidate_pool,
+            expected_candidates=body.candidates,
+            validation_kwargs=salvage_validation_kwargs,
+            strategy_mode=body.strategy_mode,
+        )
+        # This is a hard-valid fallback after the normal attempts are exhausted.
+        # Soft style issues do not turn into a new hard rejection here, matching
+        # the existing hard-valid fallback policy without adding another API call.
+        if salvaged_replies:
+            final_parsed_replies = salvaged_replies
+            final_strategy_raw = None
+            logger.info(
+                "Returning %d candidates from the request-local Gold-copy salvage pool after full batch validation",
+                len(salvaged_replies),
+            )
 
     if not final_parsed_replies:
         logger.warning("All retry attempts exhausted without valid candidates: %s", last_violations)

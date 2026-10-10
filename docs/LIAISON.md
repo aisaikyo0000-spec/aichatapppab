@@ -764,3 +764,72 @@ Contactの実API v10は3相手・9返信の生成を完了した。Aは短く砕
 改善を確認できなかったため、今回の修復指示と再試行の変更は採用せず、生成コードを`5453f76`の状態へ戻した。試験コードとテストは一時フォルダに退避したので復元できる。維持した変更は`247818a`の診断記録改善だけ。v12〜v15はBのみの原因切り分けであり、Contact Bench全体の受け入れ結果には使わない。API制限ではなく生成・修復の課題が残る。次は生のGold例が定型文のコピーを促す経路を、本人の文体学習を失わない方法で切り分ける。
 
 試験変更を戻した後の全backendは1,671件成功、既存警告2件。追加2件は採用した診断記録のテスト。独立レビューでも、試験helper・category・テストが残っておらず、診断改善だけを維持していることを確認した。frontendは変更がなく、直近buildは成功。Step 18-R4の品質受け入れは未達のまま。
+
+## 2026-10-10 再開確認：候補poolとB限定実APIレビュー
+
+再開時にGitHub `main`の`a75ba76`とfork作業branchの`7bf045d`を確認した。未コミットの候補pool変更と専用テストは作業checkoutに保持している。今回の全backend suiteは**1,679 passed / 2 existing warnings**（127.43秒）。frontend build、`compileall`、`git diff --check`もPASS。今回の再確認でproduction/testコードに追加変更はない。
+
+B限定の実API artifact v16は1件の生成が完了し、返却候補の最終hard validationもPASSした。一方、独立した本文レビューは**FAIL**。3案は労いと休息提案に偏り、自然さと候補間の差が不足していた。artifactでは`style_check_invocations=0`、`quality_review.status=manual_review_required`、`adaptation_pass=false`。生成・validator通過を文章品質の合格とは扱わない。候補本文やキーは資料へ転載しない。
+
+プロンプトの読取レビューでは、通常返信に候補同士の意味重複を明示的に避ける指示が見当たらず、その指示は追撃文用promptに限られていた。通常返信にも、毎回同じ労いで始めない方針はある。一方で「似た案が自然なら無理に変えない」と許容している。Goldコピーだけを指摘するrepairでは、壊れた箇所だけ直して他は保つ指示が使われ、候補差を補う指示は追加されない。これはv16の候補偏りを説明し得る仮説だが、artifactに実際のprompt dumpがないため原因とは断定しない。改善指示の追加が有効かも未測定である。
+
+A/B/C全体の受け入れ、最新70ケース、Tapple全ケースは未完了。Step 18-R4は未完成で、`main`への反映や今回の資料公開も行っていない。
+
+## 2026-10-10 B限定v17：通常返信の候補差指示を試行
+
+通常返信だけに候補間の意味重複を避ける指示を加える比較を、Temp上のmonkeypatchで1 run試した。wrapperのcompileと独立PythonレビューはPASS。実APIは4回HTTP 200の後、5回目にprovider 503となり、アプリ応答は502 `provider_error`。artifactは`aichat-contact-B-normal-diversity-v17-20261010.json`で、生成未完了（`complete=false`）。独立本文評価に使える完了出力がなく、改善効果は未測定である。503を理由にprompt指示が無効とは結論づけない。
+
+この比較は採用せず、追加の実API呼び出しを停止した。production、evaluator、threshold、key設定は変更していない。Bの文章品質、A/B/C全体の受け入れ、最新70ケース、Tapple全ケースは未完了。Step 18-R4は未完成。
+
+### 候補pool診断ログの補足
+
+候補poolのbatch却下時に保持候補数を、全候補の再検証を通過してsalvageした場合に返却候補数を記録する診断ログを追加した。本文や秘密は出力しない。freshな独立Pythonレビュー、`diff check`、`compileall`はPASS。ログのみの変更で機能挙動は変えず、新規テストは追加していない。
+## 2026-10-10 B限定v18：候補差指示の実API確認
+
+通常返信用の候補意味重複回避を含む比較で、実APIは6回HTTP 200、Bの1件を完了した。返却候補のpool最終hard validationはPASS。独立本文レビューは**FAIL**。v16より休息を勧める候補は減り、短い受け止めと気遣いの候補が出たが、最初の2案は「お仕事お疲れ様」の時制違いに近く、選択肢としての意味差が不足する。3案目の「お疲れ様ですね」はやや不自然で、休息を促す表現も硬い。平均16.3字はBのGold中央値23字より短い。artifactはaichat-contact-B-normal-diversity-v18-20261010.json。complete=trueとhard validation通過は本文品質の合格を示さない。
+
+実験用のprompt変更は本番に反映していない。今回の結果だけでは候補差指示の効果を確定できない。次は本番コードを変更せず、同一条件の対照と候補差指示ありを比較し、最初の2案のような同義候補が減るかを確認する。A/B/C全体の品質受け入れ、最新70ケース、Tapple全ケースは未完了。Step 18-R4は未完成。
+## 2026-10-10 B限定v19：候補pool全体の独立レビュー
+
+traceとreportを照合した。初期生成は全て労い・休息提案の周辺にあり、「今週も」「今夜」「ずっと忙しかった」など確認できない期間・努力の追加でhard validationに落ちた。repair案は根拠のない情報を削る一方、「お仕事お疲れ様です／でした」から休息を勧める型へさらに寄った。copy-only repairからpoolへ入った5候補も、完全一致文字列を除くだけで意味上の重複は残った。挿入順の先頭3件が返却され、休息提案が2案を占めた。したがって意味幅の不足は、初期案の焦点の狭さに始まり、repairで強まり、poolのexact-text重複排除と先頭3件採用で残ったと判断する。traceはこれらの本文と挿入順を示すが、validatorが意味幅を直接評価した証拠ではない。
+
+返却候補はBの丁寧語・絵文字なしの傾向に合う。平均21.3字はGold平均22.7字に近い一方、1案は仕事が終わったと受け取れる過去形、残る2案は休息提案の言い換えに近い。うち「お疲れ様ですね」の用法は不自然さが残り、助言表現もやや硬い。返信本文の自然さ・意味差は**FAIL**。実APIは6回HTTP 200、run complete、final hard validation PASSだが、style checkerは未実行でquality_reviewはmanual_review_required。生成完了とhard validator通過を品質合格とは扱わない。本文は転載しない。
+
+意味差を見てpool候補を選ぶ案は今後の検討候補にとどめる。5件全体にも十分異なる反応があるとは確認できておらず、重複選択を実装する根拠はまだない。hard gateは追加せず、v20以降の同一条件の実測を見て判断する。A/B/C全体、最新70ケース、Tapple全ケースは未完了で、Step 18-R4は未完成。
+## 2026-10-10 B限定v20：primary 3.1・通常promptの本文レビュー
+
+B限定runはprimary Gemini 3.1 Flash Liteを使い、通常のproduction promptで実施した。実APIは3回HTTP 200、生成完了。通常hard repairが通ったため候補pool salvageは発動していないが、機能自体は有効なまま。返却候補のhard validationはPASSし、独立本文レビューもB限定の送信可能性・Gold適合で**PASS**。丁寧語・絵文字なしはBの合成Goldに合い、平均25.3字もGold中央値23字に近い。候補1と3はともに休息を勧めるが、1は体を休める気遣い、3は無理をしない助言を添えている。候補2は疲れが取れることを願う。通常promptは同じ話題で似た案を自然に返すことを許容しており、この差を理由にFAILとはしない。
+
+style checkerはecho、length、recommendation_overlapを検出した。任意のstyle repairはhard validationを通ったものの、quality gateが新しいstyle mismatchとして棄却し、元のhard-valid候補群を返した。reportのadaptation_pass=false / manual_review_requiredは自動判定の状態であり、このB限定の独立本文レビューPASSとは別に記録する。v16（Gemini 3.5、pool salvage経由）より平均文量がGoldに近い。v16とv20は同じproduction promptだが、Geminiのモデルとrepair経路が異なるため差の原因は特定できない。
+
+独立本文レビューはこのB限定runの判定であり、Contact Bench全体のadaptation_passを変更しない。次はproduction promptとpool設定を変更せず、通常hard repairが通った場合のprimary 3.1・同じB条件で再現性を確認する。A/B/C全体、最新70ケース、Tapple全ケースは未完了で、Step 18-R4は未完成。
+
+## 2026-10-10 会話履歴の見出しと事実根拠の整合
+
+productionの`prompt.py`で、会話履歴を「唯一の事実ソース」とする見出しを修正した。本人の事実には、既存のFACT BOUNDARYなどの条件に従って本人設定・SELF履歴・本人Gold実績も使えることを明記した。相手の現在の状況は最新発言と、現在も続くと会話で確認できる情報を根拠にする。過去の履歴やGoldにある時点・忙しさ・予定を現在へ引き継がず、過去の話として扱う指示も加えた。
+
+この差分の新しい独立PythonレビューはPASS。関連する既存テストは771件成功、既存警告2件だった。validator、評価器、閾値、候補poolは今回変更していない。見出し修正による本文品質への効果は未評価。B限定v21の実API確認と全backendテストを実行中で、結果は完了後に追記する。
+
+v20の独立本文レビューはB限定PASSを維持する。同じ話題で似た案が自然な場合も許容する通常promptに従い、話題が共通すること自体をFAIL基準にしない。A/B/C全体、最新70ケース、Tapple全ケースは未完了であり、Step 18-R4は未完成。
+
+### B限定v21の独立本文レビュー
+
+primary Gemini 3.5 Flash Liteで実APIを3回呼び出し、すべてHTTP 200でBの生成が完了した。通常hard repairの候補群を返し、候補poolは使っていない。任意のstyle repairはhard validationを通過したが、新しいstyle mismatchを理由に品質ゲートで棄却された。返却候補の最終hard validationはPASS。reportは`aichat-contact-B-history-grounding-v21-20261010.json`、traceは`aichat-contact-B-candidate-trace-v21-20261010.json`。
+
+reportとtraceを照合した独立本文レビューは、B限定の送信可能性・Gold適合でPASS。丁寧語・絵文字なしはBに合い、3案とも自然に送れる。文量は28・33・32字で、Gold中央値23字より長めだが、労いと助言の2文で過剰な長文にはなっていない。温かくして早めに休む、何もせず過ごす、無理をせず体を休めるという違いがある。全案が休息を勧める内容でも、同じ話題を自然に扱うこと自体をFAIL理由にしない。「まずは何もしないで」はやや強い助言、「どうか」は少し改まった表現であり、改善余地として残す。「お疲れ様でした」は慣用的な労いとして読めるため、仕事が終わった事実の断定と自動的に扱わない。
+
+artifactの`adaptation_pass=false`と`manual_review_required`は変更していない。v20とはモデル、v16とは返却までの経路が違うため、今回の結果から見出し修正の改善効果は特定できない。Bの単一runの本文レビューであり、A/B/C全体、最新70ケース、Tapple全ケースの受け入れは未完了。Step 18-R4は未完成。
+
+### 見出し修正後の全体確認
+
+現在のコードで全backendテストは1,679件成功、既存警告2件、94.33秒、終了コード0。`compileall`と`git diff --check`もPASS。Contact A/B/Cの実API確認v22は実行中で、全体の生成結果と独立本文レビューはまだ完了していない。
+
+## 2026-10-10 Contact A/B/C v22の独立本文レビュー
+
+artifactは`aichat-contact-ABC-history-grounding-v22-20261010.json`。primary Gemini 3.5 Flash LiteでA・B・Cの生成が完了し、API応答13回はすべてHTTP 200だった。内訳はAが3回、Bが6回、Cが4回。返却候補のhard validationは3相手ともPASS。自動品質状態は`manual_review_required`、`adaptation_pass=false`のまま維持する。
+
+独立本文レビューはAがPASS、BがFAIL、CがPASSで、全体は2/3。Aは5〜8字で全案に笑があり、短く砕けた合成Goldに合う。3案の違いは仕事への言及と強調の有無に限られ、選択幅は狭い。ただし短い労いが自然な文脈であり、似た案を許容する通常promptに従って、語句差だけという理由でFAILにはしない。Cは10・17・21字で、敬語と会話調が混在するGoldに合う。労い、大変さへの共感、休息提案という違いがあり、いずれも送信可能と判断した。
+
+Bは丁寧語・絵文字なしで自然に読めるが、10・10・27字のうち2案はほぼ同義の単独挨拶にとどまり、3案目だけが労いと休息への気遣いを含む。Gold6例の中央値23字に対し、2案ではBの丁寧な文量と反応の広がりを十分に再現していない。短文を禁止する判定ではなく、3候補をまとめて見たBへの適合と選択肢の不足を理由にFAILとした。同じ話題や質問がないこと自体はFAIL理由にしない。v20とv21のB限定PASSは各runの判定として維持するが、v22では再現したとは扱わない。
+
+Aはstyle repairを採用し、Cは通常hard repairを返した。A/Cのstyle診断は`no_mismatch`。Bは候補poolから返却され、style checkerは`not_run`である。診断の通過・未実行状態と本文レビューを区別する。Contact全体の受け入れは未達で、最新70ケースとTapple全ケースも未完了。見出し修正の改善効果はこの結果から確定できず、Step 18-R4は未完成。

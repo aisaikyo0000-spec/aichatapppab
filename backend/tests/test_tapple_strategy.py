@@ -147,6 +147,8 @@ def test_tapple_prompt_keeps_reply_grounded_when_invite_is_recommended():
     assert "自分が見ていない写真を見た前提にしない" in instruction
     assert "action=inviteの場合、各返信候補にも会話で根拠づけられる低圧な誘いを含め" in instruction
     assert "action=continueやwaitなどinvite以外の場合に" in instruction
+    assert "invite_exampleをコピーせず" in instruction
+    assert "低圧な誘いは確定した予定や訪問経験の主張ではなく、相手の意向を尋ねる提案" in instruction
 
 
 def test_tapple_prompts_require_a_safe_example_for_invite():
